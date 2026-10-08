@@ -377,8 +377,7 @@ Supply this selected context through App Service; provider-managed conversation
 history must not silently append excluded turns, cross-user content, or older
 safety state. Do not blindly reuse a provider conversation or chain
 `previous_response_id` around the application's selection and retention limits.
-Test that the implementation enforces these controls through the selected New
-Foundry API; this is wiring validation, not a capability-discovery prerequisite.
+Verify the selected New Foundry API supports these controls before use.
 Ordinary conversation text is not automatically consolidated into a durable
 preference: only the approved recipe-behavior learning pipeline may do that.
 
@@ -434,15 +433,3 @@ claim that the tests already exist:
   unsaved recipe notes across responsive layout changes.
 - Reproducible dependency installation, startup and offline checks inside WSL 2
   and Linux CI without relying on native Windows-only runtime behavior.
-
-## 9. Follow-on implementation
-
-This Markdown outline is not an implemented OpenAPI specification or a complete
-set of typed request, response, and persistence schemas. Machine-readable
-schemas, fixtures, dependency files, and validation tooling are deferred.
-
-Follow-on typed schema/API implementation must name the nested ingredient,
-instruction, shopping-item, nutrition, and source-reference wire fields; finalize
-the failed-turn retry payload, pending-operation response fields, and remaining
-stable error codes; and provide complete public-response and internal-record
-DTOs. Those unresolved wire choices are not frozen by this outline.
