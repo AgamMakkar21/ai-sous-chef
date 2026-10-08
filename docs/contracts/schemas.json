@@ -1,0 +1,327 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AI Sous Chef MVP contract definitions",
+  "description": "Version 1 definitions extracted from api-and-schemas.md. Select a $defs entry; this is not a permissive root payload schema. Stored projections intentionally leave internal metadata unspecified.",
+  "not": {},
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "shortText": { "type": "string", "maxLength": 100 },
+    "quantity": {
+      "type": ["number", "null"],
+      "exclusiveMinimum": 0,
+      "maximum": 1000000,
+      "multipleOf": 0.001
+    },
+    "knownQuantity": {
+      "allOf": [{ "$ref": "#/$defs/quantity" }, { "type": "number" }]
+    },
+    "unit": {
+      "enum": ["g", "kg", "ml", "l", "tsp", "tbsp", "cup", "oz", "lb", "item", "piece", "bunch", "can", "package", null]
+    },
+    "rating": { "enum": ["liked", "fine", "disliked"] },
+    "processingStatus": { "enum": ["notEligible", "pending", "processing", "completed", "failed"] },
+    "sendStatus": { "enum": ["pending", "completed", "failed", "outcomeUnknown"] },
+    "explicitPreferences": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allergies": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/shortText" } },
+        "dietaryRestrictions": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/shortText" } },
+        "likes": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/shortText" } },
+        "dislikes": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/shortText" } },
+        "preferredCuisines": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/shortText" } },
+        "spicePreference": { "enum": ["none", "mild", "medium", "hot"] },
+        "cookingSkill": { "enum": ["beginner", "intermediate", "advanced"] },
+        "typicalTimeBudgetMinutes": { "type": "integer", "minimum": 5, "maximum": 240 },
+        "nutritionGoals": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/shortText" } }
+      }
+    },
+    "onboardingInput": {
+      "allOf": [
+        { "$ref": "#/$defs/explicitPreferences" },
+        { "required": ["allergies", "dietaryRestrictions", "likes", "dislikes", "preferredCuisines", "spicePreference", "cookingSkill", "typicalTimeBudgetMinutes", "nutritionGoals"] }
+      ]
+    },
+    "preferencePatch": {
+      "allOf": [{ "$ref": "#/$defs/explicitPreferences" }, { "minProperties": 1 }]
+    },
+    "groceryInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "$ref": "#/$defs/shortText" },
+        "quantity": { "$ref": "#/$defs/quantity" },
+        "unit": { "$ref": "#/$defs/unit" }
+      }
+    },
+    "groceryPatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "name": { "$ref": "#/$defs/shortText" },
+        "quantity": { "$ref": "#/$defs/knownQuantity" },
+        "unit": { "$ref": "#/$defs/unit" }
+      }
+    },
+    "grocery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["groceryId", "name", "quantity", "unit", "updatedAt"],
+      "properties": {
+        "groceryId": { "$ref": "#/$defs/uuid" },
+        "name": { "$ref": "#/$defs/shortText" },
+        "ingredientId": { "type": "string" },
+        "quantity": { "$ref": "#/$defs/quantity" },
+        "unit": { "$ref": "#/$defs/unit" },
+        "updatedAt": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "sendInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["content"],
+      "properties": { "content": { "type": "string", "maxLength": 4000 } }
+    },
+    "saveInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generatedRecipeId"],
+      "properties": { "generatedRecipeId": { "$ref": "#/$defs/uuid" } }
+    },
+    "reasonInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "reason": { "type": "string", "maxLength": 2000 } }
+    },
+    "feedbackInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rating"],
+      "properties": {
+        "rating": { "$ref": "#/$defs/rating" },
+        "note": { "type": "string", "maxLength": 2000 }
+      }
+    },
+    "pageQuery": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 20 },
+        "cursor": { "type": "string" }
+      }
+    },
+    "problem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "title", "status", "detail", "code", "traceId", "errors"],
+      "properties": {
+        "type": { "type": "string", "format": "uri" },
+        "title": { "type": "string" },
+        "status": { "enum": [400, 401, 403, 404, 409, 412, 413, 422, 428, 429, 500, 502, 503, 504] },
+        "detail": { "type": "string" },
+        "code": { "type": "string" },
+        "traceId": { "type": "string" },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["field", "code"],
+            "properties": { "field": { "type": "string" }, "code": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "learnedCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["insightKey", "insight", "confidence", "evidenceCount", "supportingCookedCount", "supportUnits", "oppositionUnits", "source", "lastUpdated", "latestEvidenceAt", "policyVersion"],
+      "properties": {
+        "insightKey": { "$ref": "#/$defs/shortText" },
+        "insight": { "type": "string", "maxLength": 240 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "evidenceCount": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "supportingCookedCount": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "supportUnits": { "type": "integer", "minimum": 0, "maximum": 300 },
+        "oppositionUnits": { "type": "integer", "minimum": 0, "maximum": 300 },
+        "source": { "const": "recipe_feedback" },
+        "lastUpdated": { "$ref": "#/$defs/timestamp" },
+        "latestEvidenceAt": { "$ref": "#/$defs/timestamp" },
+        "policyVersion": { "type": "string" }
+      }
+    },
+    "storedBase": {
+      "type": "object",
+      "required": ["id", "userId", "schemaVersion", "createdAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid" },
+        "userId": { "type": "string", "minLength": 1 },
+        "schemaVersion": { "const": 1 },
+        "createdAt": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "usersProfile": {
+      "description": "Stored Users.profile projection, not a public profile or browser mutation.",
+      "allOf": [{ "$ref": "#/$defs/storedBase" }],
+      "required": ["updatedAt", "onboardingCompleted", "groceries", "explicitPreferences", "learnedPreferences"],
+      "properties": {
+        "updatedAt": { "$ref": "#/$defs/timestamp" },
+        "onboardingCompleted": { "type": "boolean" },
+        "groceries": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/grocery" } },
+        "explicitPreferences": { "$ref": "#/$defs/explicitPreferences" },
+        "learnedPreferences": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/learnedCandidate" } }
+      },
+      "if": { "properties": { "onboardingCompleted": { "const": true } } },
+      "then": { "properties": { "explicitPreferences": { "$ref": "#/$defs/onboardingInput" } } }
+    },
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["messageId", "role", "entityId", "content", "timestamp"],
+      "properties": {
+        "messageId": { "$ref": "#/$defs/uuid" },
+        "role": { "enum": ["user", "assistant"] },
+        "entityId": { "type": "string" },
+        "content": { "type": "string", "maxLength": 4000 },
+        "timestamp": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "chatConversation": {
+      "description": "Stored ChatHistory.conversation projection; concurrency metadata remains internal.",
+      "allOf": [{ "$ref": "#/$defs/storedBase" }],
+      "required": ["conversationId", "title", "nextTurnIndex", "updatedAt"],
+      "properties": {
+        "conversationId": { "$ref": "#/$defs/uuid" },
+        "title": { "$ref": "#/$defs/shortText" },
+        "nextTurnIndex": { "type": "integer", "minimum": 0 },
+        "updatedAt": { "$ref": "#/$defs/timestamp" }
+      },
+      "not": { "required": ["turns"] }
+    },
+    "chatTurn": {
+      "description": "Stored ChatHistory.turn projection; id is the stable turnId.",
+      "allOf": [{ "$ref": "#/$defs/storedBase" }],
+      "required": ["conversationId", "turnIndex", "status", "messages", "updatedAt"],
+      "properties": {
+        "conversationId": { "$ref": "#/$defs/uuid" },
+        "turnIndex": { "type": "integer", "minimum": 0 },
+        "status": { "$ref": "#/$defs/sendStatus" },
+        "updatedAt": { "$ref": "#/$defs/timestamp" },
+        "messages": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "prefixItems": [
+            { "allOf": [{ "$ref": "#/$defs/message" }, { "properties": { "role": { "const": "user" } } }] },
+            { "allOf": [{ "$ref": "#/$defs/message" }, { "properties": { "role": { "const": "assistant" } } }] }
+          ],
+          "items": false
+        }
+      },
+      "if": { "properties": { "status": { "const": "completed" } } },
+      "then": { "properties": { "messages": { "minItems": 2 } } },
+      "else": { "properties": { "messages": { "maxItems": 1 } } }
+    },
+    "recipeSnapshot": {
+      "description": "Generated recipe projection. Nested ingredient/nutrition/source DTO field names are not invented here; their semantic requirements remain in section 5.",
+      "type": "object",
+      "required": ["generatedRecipeId", "occasionId", "title", "servings", "minutes", "skill", "fitReasons", "ingredients", "instructions", "shoppingItems", "nutrition", "sources", "safetyProfileRevision"],
+      "properties": {
+        "generatedRecipeId": { "$ref": "#/$defs/uuid" },
+        "occasionId": { "$ref": "#/$defs/uuid" },
+        "supersedesRecipeId": { "$ref": "#/$defs/uuid" },
+        "title": { "type": "string", "maxLength": 160 },
+        "servings": { "type": "integer", "minimum": 1, "maximum": 20 },
+        "minutes": { "type": "integer", "minimum": 1, "maximum": 1440 },
+        "skill": { "enum": ["beginner", "intermediate", "advanced"] },
+        "fitReasons": { "type": "array", "maxItems": 10, "items": { "type": "string", "maxLength": 240 } },
+        "ingredients": { "type": "array", "maxItems": 30, "items": { "type": "object" } },
+        "instructions": { "type": "array", "maxItems": 30, "items": { "type": "object" } },
+        "shoppingItems": { "type": "array", "items": { "type": "object" } },
+        "nutrition": {
+          "type": "object",
+          "required": ["status"],
+          "properties": { "status": { "enum": ["known", "partial", "unavailable"] } }
+        },
+        "sources": { "type": "array", "maxItems": 12, "items": { "type": "object" } },
+        "safetyProfileRevision": { "type": "string" }
+      },
+      "not": { "anyOf": [{ "required": ["cookedAt"] }, { "required": ["rating"] }, { "required": ["historyId"] }] }
+    },
+    "recipeHistory": {
+      "description": "Stored RecipeHistory.recipe projection; generated output is deliberately copied into an immutable snapshot.",
+      "allOf": [{ "$ref": "#/$defs/storedBase" }],
+      "required": ["historyId", "occasionId", "generatedRecipeId", "snapshot", "accepted", "savedAt", "cookedAt", "rating", "note", "feedbackRevision", "processingStatus", "updatedAt"],
+      "properties": {
+        "historyId": { "$ref": "#/$defs/uuid" },
+        "occasionId": { "$ref": "#/$defs/uuid" },
+        "generatedRecipeId": { "$ref": "#/$defs/uuid" },
+        "snapshot": { "$ref": "#/$defs/recipeSnapshot" },
+        "accepted": { "const": true },
+        "savedAt": { "$ref": "#/$defs/timestamp" },
+        "cookedAt": { "anyOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+        "rating": { "anyOf": [{ "$ref": "#/$defs/rating" }, { "type": "null" }] },
+        "note": { "type": ["string", "null"], "maxLength": 2000 },
+        "feedbackRevision": { "type": "integer", "minimum": 0 },
+        "processingStatus": { "$ref": "#/$defs/processingStatus" },
+        "updatedAt": { "$ref": "#/$defs/timestamp" }
+      },
+      "if": { "properties": { "rating": { "type": "null" } } },
+      "then": { "properties": { "feedbackRevision": { "const": 0 }, "note": { "type": "null" } } },
+      "else": { "properties": { "cookedAt": { "$ref": "#/$defs/timestamp" }, "feedbackRevision": { "minimum": 1 } } }
+    },
+    "feedbackRevision": {
+      "description": "Stored feedback revision projection; each note edit supersedes its previous interpretation.",
+      "allOf": [{ "$ref": "#/$defs/storedBase" }],
+      "required": ["historyId", "occasionId", "feedbackRevision", "rating", "note"],
+      "properties": {
+        "historyId": { "$ref": "#/$defs/uuid" },
+        "occasionId": { "$ref": "#/$defs/uuid" },
+        "feedbackRevision": { "type": "integer", "minimum": 1 },
+        "rating": { "$ref": "#/$defs/rating" },
+        "note": { "type": ["string", "null"], "maxLength": 2000 }
+      }
+    },
+    "behavior": {
+      "description": "Stored intentional behavior projection; not itself proof of cooking.",
+      "allOf": [{ "$ref": "#/$defs/storedBase" }],
+      "required": ["occasionId", "generatedRecipeId", "kind", "behaviorRevision"],
+      "properties": {
+        "occasionId": { "$ref": "#/$defs/uuid" },
+        "generatedRecipeId": { "$ref": "#/$defs/uuid" },
+        "historyId": { "$ref": "#/$defs/uuid" },
+        "kind": { "enum": ["saved", "rejected", "revisionRequested"] },
+        "reason": { "type": "string", "maxLength": 2000 },
+        "behaviorRevision": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "evidenceAssertion": {
+      "description": "Processing evidence projection, never a browser input or growing Users array. Validate note excerpts and revisions against owned current history.",
+      "type": "object",
+      "required": ["occasionId", "insightKey"],
+      "properties": {
+        "historyId": { "$ref": "#/$defs/uuid" },
+        "generatedRecipeId": { "$ref": "#/$defs/uuid" },
+        "occasionId": { "$ref": "#/$defs/uuid" },
+        "insightKey": { "$ref": "#/$defs/shortText" },
+        "feedbackRevision": { "type": "integer", "minimum": 1 },
+        "behaviorRevision": { "type": "integer", "minimum": 1 },
+        "excerpt": { "type": "string", "maxLength": 2000 }
+      },
+      "anyOf": [{ "required": ["historyId"] }, { "required": ["generatedRecipeId"] }],
+      "not": { "required": ["feedbackRevision", "behaviorRevision"] },
+      "oneOf": [{ "required": ["feedbackRevision", "historyId"] }, { "required": ["behaviorRevision"] }]
+    }
+  }
+}
