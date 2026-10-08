@@ -11,10 +11,8 @@ generation and feedback-based personalization. These contracts keep application
 state, agent execution, and asynchronous learning distinct.
 
 The product baseline is *[AI Sous Chef - Detailed Technical Overview](../references/technical-overview.md)*,
-sections 1-59, and *[AI Sous Chef Architecture Diagram (1).pdf](../references/architecture-diagram.pdf)*.
-The diagram version reviewed
-on 2026-10-02 has SHA-256
-`b4ce91fa507e33605600d112b9eb6544e37ab653abaf331a87663600667feba1`.
+sections 1-59, and the [AI Sous Chef architecture diagram](../references/architecture-diagram.png).
+The diagram is retained as a PNG rendered from the supplied single-page PDF.
 Its components, model assignments, and preference-read boundary are reflected
 below. Diagram alignment is not evidence of deployed service availability.
 
@@ -30,7 +28,7 @@ or 180-day learning window.
 This ADR and the [API/schema outline](../contracts/api-and-schemas.md) define the
 proposed design, not a claim that the application or integrations are implemented.
 The overview summarizes product intent with its original section numbering;
-the architecture PDF is preserved as supplied. These contracts govern the
+the architecture diagram is included as an image. These contracts govern the
 precise implementation choices.
 
 ## 1. Architecture that implementation must preserve

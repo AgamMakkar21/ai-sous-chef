@@ -3,11 +3,11 @@
 A concise overview of the architecture and three-tab product experience.
 Section numbers are preserved for reference. The [architecture decisions](../adr/0001-mvp-contracts.md)
 and [API/schema contract](../contracts/api-and-schemas.md) define precise implementation
-rules; the [architecture diagram](architecture-diagram.pdf) shows the service boundaries.
+rules; the [architecture diagram](architecture-diagram.png) shows the service boundaries.
 
-[![Supplied AI Sous Chef architecture diagram](architecture-diagram.png)](architecture-diagram.pdf)
+[![Supplied AI Sous Chef architecture diagram](architecture-diagram.png)](architecture-diagram.png)
 
-The PNG is a rendered preview of the unchanged, single-page PDF. The diagram's
+The PNG is rendered from the supplied single-page PDF. The diagram's
 logical "Read User Preference" arrow is mediated by App Service, as specified
 in [the ADR's memory boundary](../adr/0001-mvp-contracts.md#agent-memory-and-the-diagrams-read-boundary).
 

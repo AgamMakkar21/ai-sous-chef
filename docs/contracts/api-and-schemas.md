@@ -435,55 +435,14 @@ claim that the tests already exist:
 - Reproducible dependency installation, startup and offline checks inside WSL 2
   and Linux CI without relying on native Windows-only runtime behavior.
 
-## 9. Machine-readable contract fixtures
+## 9. Follow-on implementation
 
-[schemas.json](schemas.json) contains JSON Schema Draft 2020-12 definitions for
-the specified input fields, explicit and learned state, versioned stored-record
-projections, recipe lifecycle, and safe errors. Select a named `$defs` entry;
-the root intentionally rejects payloads so that selecting no contract cannot
-silently pass validation.
-
-[api-fixtures.json](api-fixtures.json) encodes all 19 operations above, shared
-headers/statuses, pagination and byte ceilings, positive/negative input examples,
-and learning-threshold examples. The health path is outside `/api/v1`.
-The revision operation uses the source conversation's turn/send semantics.
-Fixtures are synthetic and contain no credentials or real user data.
-
-These are focused contract fixtures, **not a generated OpenAPI specification,
-complete persistence DTOs, or an implementation**. Stored projections leave
-internal concurrency, processing, and provenance metadata open. The nested
-recipe ingredient/instruction/nutrition/source objects retain the semantic
-requirements in section 5 rather than inventing an alternative nested API.
-Input schemas reject unrecognized fields and are separate from stored projections;
-never expose a persistence record as a public response.
+This Markdown outline is not an implemented OpenAPI specification or a complete
+set of typed request, response, and persistence schemas. Machine-readable
+schemas, fixtures, dependency files, and validation tooling are deferred.
 
 Follow-on typed schema/API implementation must name the nested ingredient,
 instruction, shopping-item, nutrition, and source-reference wire fields; finalize
 the failed-turn retry payload, pending-operation response fields, and remaining
 stable error codes; and provide complete public-response and internal-record
-DTOs. Those unresolved wire choices are not frozen by these projections.
-
-Validate trimmed strings by Unicode code point, reject nonfinite numbers, and
-use decimal arithmetic for the three-place quantity rule. Enforce JSON byte
-ceilings separately. Schema acceptance does not establish ingredient safety,
-user ownership, current evidence, cooked confirmation, immutable snapshots,
-authorization, ETags, cursor authenticity, or transaction correctness.
-`runtimeAssertions` lists the principal integration-test obligations.
-
-Run the focused documentation/fixture checks from the repository root.
-The [documentation-only dependency pins](../../scripts/requirements-docs.txt)
-include the PDF renderer version used for the pixel comparison; they do not
-select application dependencies. In a WSL 2/Linux Python environment:
-
-```sh
-python -m venv /tmp/ai-sous-chef-docs
-. /tmp/ai-sous-chef-docs/bin/activate
-python -m pip install -r scripts/requirements-docs.txt
-python scripts/validate_contracts.py
-```
-
-For normal development, run this in WSL 2 or Linux. The check uses no Azure
-credentials, application dependencies, model calls, or live capability probes.
-It renders Markdown with tables, checks local links/anchors and fenced JSON,
-validates fixtures and boundary examples, and verifies the unchanged PDF hash
-and its PNG preview. It does not claim browser/application or deployment testing.
+DTOs. Those unresolved wire choices are not frozen by this outline.
