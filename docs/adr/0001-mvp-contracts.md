@@ -217,7 +217,7 @@ requires migration, not an in-place configuration flip.
 | Python baseline | CPython 3.12.x for backend and learning worker |
 | Foundry baseline | New Foundry only; Python SDK 2.x and Responses/Conversations as defined above |
 | Frontend build baseline | Node.js 24 LTS; npm |
-| Python dependencies | `pip` installation; `pip-tools` generates hash-pinned runtime and development requirements from `pyproject.toml`; no `uv` |
+| Python dependencies | `pip` installation; `pip-tools` generates exact-version-pinned runtime and development requirements from `pyproject.toml`; no `uv` |
 | JavaScript dependencies | Committed `package-lock.json`; reproducible installation with `npm ci` |
 | Python quality | Ruff formatting/linting, mypy, pytest and HTTPX |
 | Frontend quality | ESLint, TypeScript checking, Vitest and React Testing Library |

@@ -24,7 +24,7 @@ cd ai-sous-chef
 git switch ana/asc-03-python-scaffold
 python3.12 -m venv .venv
 source .venv/bin/activate
-python -m pip install --require-hashes -r requirements-dev.txt
+python -m pip install -r requirements-dev.txt
 python -m pip install --no-build-isolation --no-deps -e .
 cp .env.local.example .env.local
 export ASC_ENVIRONMENT=local
@@ -106,7 +106,7 @@ routing remain separate work.
 
 ## Reproducible dependencies
 
-`pyproject.toml` pins direct dependencies. `pip-tools` generates hash-pinned
+`pyproject.toml` pins direct dependencies. `pip-tools` generates exact-version-pinned
 runtime and development lockfiles; the dev lock is constrained by the runtime
 lock. New Foundry is pinned to `azure-ai-projects==2.8.0`, with
 `azure-identity==1.26.0` and `openai==3.27.0`; no classic Agents client or second
@@ -119,7 +119,7 @@ environment and rerun the checks:
 
 ```bash
 bash scripts/lock.sh
-python -m pip install --require-hashes -r requirements-dev.txt
+python -m pip install -r requirements-dev.txt
 python -m pip check
 ```
 
