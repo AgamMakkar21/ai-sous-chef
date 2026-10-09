@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling==1.32.4"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ai-sous-chef"
+version = "0.1.0"
+description = "AI Sous Chef web/API application"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi==0.143.0",
+    "pydantic-settings==2.15.0",
+    "uvicorn==0.54.0",
+    "azure-ai-projects==2.8.0",
+    "azure-identity==1.26.0",
+    "openai==3.27.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "editables==0.5",
+    "hatchling==1.32.4",
+    "httpx==0.28.1",
+    "mypy==2.4.0",
+    "pip-tools==7.6.2",
+    "pytest==9.1.1",
+    "ruff==0.16.10",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["backend/src/sous_chef"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+files = ["backend/src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["backend/src"]
+addopts = "-q"
