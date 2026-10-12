@@ -166,6 +166,43 @@ The dataset card declares no license, so `license` is `unspecified`. Do not comm
 `data/` or raw dataset content, and do not redistribute the corpus until the license
 is confirmed.
 
+## Allergy and dietary validation
+
+`sous_chef.domain.food_safety.validate_ingredients(profile, ingredients)` checks a
+final ingredient list against stored allergies and strict diets. It uses plain code and
+a reviewed catalog (`domain/ingredient_catalog.py`, `CATALOG_VERSION`). No model decides
+safety.
+
+It returns one verdict:
+
+- `blocked`: an ingredient contains a restricted trait, such as peanut oil for a peanut
+  allergy or chicken stock for a vegetarian.
+- `needs_clarification`: an ingredient is unknown, only partly recognized, may contain a
+  restricted trait (such as plain `stock` or `curry paste`), or a restriction is not
+  supported. Nothing here counts as safe.
+- `pass`: every ingredient is recognized and none conflicts. Each finding names the line,
+  catalog ingredient ID and restriction.
+
+Rules to know:
+
+- Pass ingredient names only, without quantities or units. Every word must be explained
+  by the catalog or a preparation word, so `2 cups spinach` needs clarification.
+- Pass every ingredient in the final recipe, including substitutions, sauces, oils and
+  garnishes.
+- A profile with no allergies or diets has nothing to violate, so it always passes.
+- Dislikes are reported in `dislike_matches` and never change the verdict. The profile
+  rejects unknown fields, so a request cannot add an override.
+- Supported restrictions: FDA Big 9 (peanut, tree nut, nut, milk/dairy/lactose, egg,
+  gluten/wheat, soy, fish, shellfish, seafood, sesame) and diets (vegetarian, vegan, pescatarian).
+  Specific food allergies outside the FDA list (e.g., peach, kiwi) are matched directly by word/token
+  and blocked on violation. Any unsupported abstract diet (such as keto or halal) returns
+  `needs_clarification`.
+- Not covered: manufacturing cross-contact, ingredient-bearing instructions, and
+  foods outside the catalog. Coconut is treated as tree-nut-free. Vegetarian does not
+  check for rennet. Do not describe a `pass` as a guarantee of safety.
+
+Grow the catalog through reviewed pull requests and bump `CATALOG_VERSION`.
+
 ## Azure infrastructure
 
 The [Bicep foundation](infra/README.md) defines environment-specific Log Analytics
