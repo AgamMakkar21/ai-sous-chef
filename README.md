@@ -56,6 +56,14 @@ python -m pytest
 Tests use offline probes and generated frontend fixtures; no Azure account,
 credentials or network access are needed.
 
+## Pull request quality checks
+
+PRs targeting `dev` or `main` run formatting/lint, strict type checking,
+unit/API contract tests, installed-wheel smoke checks, and offline infrastructure
+tests. See [CI setup and required-check wiring](docs/ci.md) for exact check names,
+local commands, safety boundaries, and the administrator's enforcement checklist.
+This workflow validates code only; it does not deploy to Azure.
+
 ## Configuration and readiness
 
 Set `ASC_ENVIRONMENT` in the process environment to `local`, `dev`, or `prod`.
