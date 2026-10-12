@@ -123,6 +123,41 @@ python -m pip install -r requirements-dev.txt
 python -m pip check
 ```
 
+## Recipe corpus ingestion
+
+Issue ASC-28. This builds a small, local recipe corpus for later retrieval (ASC-29).
+It reads only the leading bytes of the pinned `untitledwebsite123/food-recipes`
+revision, never the whole 700 MB file. Run it in the activated WSL virtual environment:
+
+```bash
+python -m sous_chef.ingest_recipes --rows 100
+```
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `--rows` | `100` | Source rows to read, 1 to 1000 |
+| `--output-dir` | `data/corpus` | Where the output is written |
+| `--revision` | pinned commit in `adapters/recipe_source.py` | Dataset commit to read |
+| `--source-file` | none | Read a local CSV instead of fetching |
+
+Output, in git-ignored `data/corpus/`:
+
+- `recipes.jsonl`: one normalized recipe per line, with a stable `source_id`
+  (`hf-food-recipes-<RecipeId>`) and `provenance` (dataset, revision, row, publisher,
+  author, license, attribution).
+- `report.json`: rows read, accepted, rejected counts by reason, and each rejection.
+
+Rerunning the same slice and revision gives byte-identical files with no duplicates.
+Rows are rejected for an invalid ID, missing name, ingredients or instructions,
+unparseable ingredients, or a repeated source ID or repeated content. The source often
+lists different numbers of quantities and ingredient names. Those recipes keep their
+names, drop quantities, and carry `quantities_aligned: false`. Nutrition columns are
+not copied; USDA is the nutrition source.
+
+The dataset card declares no license, so `license` is `unspecified`. Do not commit
+`data/` or raw dataset content, and do not redistribute the corpus until the license
+is confirmed.
+
 ## Azure infrastructure
 
 The [Bicep foundation](infra/README.md) defines environment-specific Log Analytics

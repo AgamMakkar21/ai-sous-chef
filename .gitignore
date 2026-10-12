@@ -11,6 +11,7 @@ build/
 .env
 .env.*
 !.env.*.example
+data/
 node_modules/
 frontend/dist/
 backend/src/sous_chef/static/
