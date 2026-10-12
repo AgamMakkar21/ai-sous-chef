@@ -44,6 +44,6 @@ plugins = ["pydantic.mypy"]
 files = ["backend/src", "tests"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests/unit", "tests/integration"]
 pythonpath = ["backend/src"]
 addopts = "-q"
