@@ -91,4 +91,14 @@ passed all five checks. A
 failed `CI / lint` for an unused import (F401) and `CI / tests` for the deliberate
 fixture assertion; the other three checks passed. The probe was then removed.
 This verifies workflow rejection, not merge enforcement; the administrator
-steps above remain necessary.
+steps above describe the enforcement setup.
+
+After removing the probe and updating to Node 24 Actions, the
+[final clean run](https://github.com/AgamMakkar21/ai-sous-chef/actions/runs/38296521071)
+passed all five checks. On 2026-10-12, the owner authorized activating
+[`PR-approval-main-dev`](https://github.com/AgamMakkar21/ai-sous-chef/rules/24673928).
+GitHub's effective-rules API confirmed both branches require all five checks
+from GitHub Actions, up-to-date branches, one peer approval, dismissal of stale
+approvals, and approval of the most recent push. Deletion/force pushes are blocked
+and the bypass list is empty. No peer approval was fabricated: the live
+approve-then-push exercise still requires the other collaborator.
