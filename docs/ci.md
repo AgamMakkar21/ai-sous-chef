@@ -82,3 +82,13 @@ separately reviewed PR. Reference #4 without an auto-closing keyword on the
 feature-to-dev PR. Keep the issue open until the team's release/completion
 criteria are met. Board transitions are Backlog -> Ready after prerequisites,
 then In progress -> In review; a green run alone is not completion.
+
+## Recorded workflow acceptance
+
+The [initial clean PR run](https://github.com/AgamMakkar21/ai-sous-chef/actions/runs/38296256982)
+passed all five checks. A
+[temporary failure-probe run](https://github.com/AgamMakkar21/ai-sous-chef/actions/runs/38296357949)
+failed `CI / lint` for an unused import (F401) and `CI / tests` for the deliberate
+fixture assertion; the other three checks passed. The probe was then removed.
+This verifies workflow rejection, not merge enforcement; the administrator
+steps above remain necessary.
