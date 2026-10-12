@@ -123,6 +123,14 @@ python -m pip install -r requirements-dev.txt
 python -m pip check
 ```
 
+## Azure infrastructure
+
+The [Bicep foundation](infra/README.md) defines environment-specific Log Analytics
+and Application Insights resources. Local development provisions nothing.
+Templates do not deploy on their own; provisioning requires an explicitly approved
+subscription, resource group, region, and reviewed Azure what-if. Application
+hosting, databases, agents, and instrumentation are separate work.
+
 ## MVP contracts
 
 - [Architecture and implementation decisions](docs/adr/0001-mvp-contracts.md)
