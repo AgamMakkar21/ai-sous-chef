@@ -177,6 +177,11 @@ recipe occasion/lineage.
 All stored records include `id`, `userId`, `schemaVersion`, and `createdAt`.
 Mutable records include `updatedAt` and concurrency metadata.
 The three product containers use `/userId`; internal leases are separate.
+Persist the unprefixed record-kind discriminator as `recordKind` (`profile`,
+`conversation`, `turn`, `sendOperation`, `recipe`, `behavior`, `feedbackRevision`,
+or `processing`). Feedback/processing provenance uses `sourceId` for its owned
+source-record reference. The [Cosmos storage contract](../../infra/cosmos.md)
+defines the immutable lease key, scalar/composite indexes, and deployment checks.
 Histories are unbounded collections of bounded records, not unbounded records.
 This proposal favors user-scoped access for the small MVP, not unlimited storage
 in one logical partition. The ADR documents logical-partition capacity and a
