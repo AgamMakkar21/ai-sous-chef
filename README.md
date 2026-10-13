@@ -21,14 +21,14 @@ mkdir -p ~/repos
 cd ~/repos
 git clone https://github.com/AgamMakkar21/ai-sous-chef.git
 cd ai-sous-chef
-git switch ana/asc-03-python-scaffold
+git switch dev
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
 python -m pip install --no-build-isolation --no-deps -e .
 cp .env.local.example .env.local
 export ASC_ENVIRONMENT=local
-python -m uvicorn sous_chef.app:create_app --factory --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn sous_chef.app:create_app --factory --host 0.0.0.0 --port 8000 --reload --no-access-log
 ```
 
 GitHub authentication is required for a private checkout; use your approved
@@ -97,6 +97,52 @@ Live mode deliberately returns **not ready** until real adapters are implemented
 Valid configuration alone is not proof of connectivity. Later integration tickets
 must supply a real `ReadinessProbe` to the app factory; they must not substitute
 the local double or claim the stub validates Azure connectivity.
+
+## Privacy-safe MVP logging
+
+Every HTTP request receives a server-generated random `X-Trace-ID`, also used as
+`traceId` in problem responses. Incoming IDs are not trusted or echoed. Completion
+and failure logs are JSON with only `event`, `trace_id`, HTTP `status`,
+`duration_ms` and, for failures, an allowlisted `error_category`. Readiness
+warnings use the same request ID. Use the ID to find a failed request, not a
+user's email or the content of their chat.
+
+Application startup installs a **process-wide** log-record policy before loading
+settings or constructing SDK clients. Only typed operational events retain
+metadata. Other application, SDK and server messages become a generic
+`diagnostic` event with a fixed `sdk`/`runtime` source and their log severity;
+raw messages, arguments, URLs, extra fields, stack traces and exception text are
+discarded before logging handlers see them. This intentionally sacrifices raw
+SDK/debug diagnostics for the MVP. Use `operational_event` for new operational
+events; do not log profiles, prompts, responses, tool arguments or notes.
+Keep Uvicorn access logging disabled as shown above; raw access logs are not a
+supported monitoring source, even though the in-process policy sanitizes them.
+
+Raw AI-content capture cannot be enabled in the MVP. In local, dev and prod,
+startup enforces these process variables and disables Azure SDK tracing:
+
+| Process variable | Enforced value |
+| --- | --- |
+| `AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED` | `false` |
+| `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` | `false` |
+| `OTEL_SDK_DISABLED` | `true` |
+| `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER`, `OTEL_LOGS_EXPORTER` | `none` |
+
+Set these variables in the shell/App Service configuration **before launch** as
+well; do not put non-`ASC_` keys in the application `.env` files. Launch plain
+Uvicorn, not `opentelemetry-instrument` or an Application Insights automatic
+tracing agent. Startup rejects an already-installed tracing provider: changing
+environment flags cannot retroactively make existing instrumentation safe.
+Disable App Service's automatic Application Insights agent and avoid proxy/web
+server access-log collection of raw URLs. The logging policy protects this
+Python process, not logs produced by an upstream hosting service.
+
+No browser analytics SDK or telemetry script is installed by this scaffold.
+Future frontend analytics must use fixed event names, never form/chat/notes
+content, user identifiers or current URLs. Nothing here enables browser tracking
+or a distributed-tracing platform. Monitoring retention/access remain governed
+by [the infrastructure policy](infra/README.md); protected capture and dashboards
+are deferred beyond the MVP.
 
 ## Extension boundaries
 

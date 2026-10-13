@@ -1,9 +1,7 @@
 import asyncio
-import logging
 
 from sous_chef.domain.readiness import DependencyUnavailable, ReadinessProbe
-
-logger = logging.getLogger(__name__)
+from sous_chef.telemetry import ErrorCategory, Event, operational_event
 
 
 class ReadinessService:
@@ -16,9 +14,13 @@ class ReadinessService:
             async with asyncio.timeout(self._timeout_seconds):
                 await self._probe.check()
         except DependencyUnavailable:
-            logger.warning("readiness_dependency_unavailable")
+            operational_event(
+                Event.READINESS_UNAVAILABLE, category=ErrorCategory.DEPENDENCY_UNAVAILABLE
+            )
             return False
         except TimeoutError:
-            logger.warning("readiness_deadline_exceeded")
+            operational_event(
+                Event.READINESS_TIMEOUT, category=ErrorCategory.DEPENDENCY_UNAVAILABLE
+            )
             return False
         return True
