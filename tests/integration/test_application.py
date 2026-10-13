@@ -81,6 +81,9 @@ def test_hosted_scaffold_is_not_ready_without_live_adapters(environment: str) ->
         cosmos_endpoint="https://cosmos.example.invalid/",
         cosmos_database="test",
         foundry_project_endpoint="https://foundry.example.invalid/api/projects/test",
+        foundry_orchestrator_deployment="orchestrator",
+        foundry_recipe_nutrition_deployment="recipe-nutrition",
+        foundry_extraction_deployment="extraction",
     )
     with TestClient(create_app(settings)) as test_client:
         assert test_client.get("/health").status_code == 200

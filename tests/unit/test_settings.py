@@ -41,6 +41,31 @@ def test_live_settings_are_required() -> None:
         Settings(environment="prod", adapter_mode="live")
 
 
+def test_live_requires_every_foundry_deployment_name() -> None:
+    with pytest.raises(ConfigurationError) as error:
+        Settings(
+            environment="dev",
+            adapter_mode="live",
+            cosmos_endpoint="https://cosmos.example.invalid/",
+            cosmos_database="test-database",
+            foundry_project_endpoint="https://foundry.example.invalid/api/projects/test",
+            foundry_orchestrator_deployment="orchestrator",
+        )
+    message = str(error.value)
+    assert "ASC_FOUNDRY_RECIPE_NUTRITION_DEPLOYMENT" in message
+    assert "ASC_FOUNDRY_EXTRACTION_DEPLOYMENT" in message
+    assert "ASC_FOUNDRY_ORCHESTRATOR_DEPLOYMENT" not in message
+
+
+def test_invalid_deployment_name_is_not_exposed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ASC_ENVIRONMENT", "local")
+    monkeypatch.setenv("ASC_ADAPTER_MODE", "local")
+    monkeypatch.setenv("ASC_FOUNDRY_EXTRACTION_DEPLOYMENT", "secret invalid/name")
+    with pytest.raises(ConfigurationError, match="ASC_FOUNDRY_EXTRACTION_DEPLOYMENT") as error:
+        load_settings()
+    assert "secret invalid" not in str(error.value)
+
+
 @pytest.mark.parametrize("environment", ["local", "dev", "prod"])
 def test_selected_file_and_environment_override(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, environment: str
@@ -51,6 +76,9 @@ def test_selected_file_and_environment_override(
         "ASC_COSMOS_ENDPOINT=https://cosmos.example.invalid/\n"
         "ASC_COSMOS_DATABASE=test-database\n"
         "ASC_FOUNDRY_PROJECT_ENDPOINT=https://foundry.example.invalid/api/projects/test\n"
+        "ASC_FOUNDRY_ORCHESTRATOR_DEPLOYMENT=orchestrator\n"
+        "ASC_FOUNDRY_RECIPE_NUTRITION_DEPLOYMENT=recipe-nutrition\n"
+        "ASC_FOUNDRY_EXTRACTION_DEPLOYMENT=extraction\n"
         "ASC_READINESS_TIMEOUT_SECONDS=1\n"
     )
     (tmp_path / ".env").write_text("ASC_ADAPTER_MODE=local\n")

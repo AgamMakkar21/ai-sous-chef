@@ -10,6 +10,9 @@ class ConfigurationError(RuntimeError):
     """An actionable configuration error containing no supplied values."""
 
 
+_DEPLOYMENT_NAME = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="ASC_", extra="forbid", frozen=True, hide_input_in_errors=True
@@ -22,6 +25,15 @@ class Settings(BaseSettings):
     cosmos_endpoint: HttpUrl | None = Field(default=None, repr=False)
     cosmos_database: str | None = Field(default=None, min_length=1, max_length=255, repr=False)
     foundry_project_endpoint: HttpUrl | None = Field(default=None, repr=False)
+    foundry_orchestrator_deployment: str | None = Field(
+        default=None, pattern=_DEPLOYMENT_NAME, repr=False
+    )
+    foundry_recipe_nutrition_deployment: str | None = Field(
+        default=None, pattern=_DEPLOYMENT_NAME, repr=False
+    )
+    foundry_extraction_deployment: str | None = Field(
+        default=None, pattern=_DEPLOYMENT_NAME, repr=False
+    )
 
     @model_validator(mode="after")
     def validate_environment(self) -> Self:
@@ -37,6 +49,15 @@ class Settings(BaseSettings):
                     ("ASC_COSMOS_ENDPOINT", self.cosmos_endpoint),
                     ("ASC_COSMOS_DATABASE", self.cosmos_database),
                     ("ASC_FOUNDRY_PROJECT_ENDPOINT", self.foundry_project_endpoint),
+                    (
+                        "ASC_FOUNDRY_ORCHESTRATOR_DEPLOYMENT",
+                        self.foundry_orchestrator_deployment,
+                    ),
+                    (
+                        "ASC_FOUNDRY_RECIPE_NUTRITION_DEPLOYMENT",
+                        self.foundry_recipe_nutrition_deployment,
+                    ),
+                    ("ASC_FOUNDRY_EXTRACTION_DEPLOYMENT", self.foundry_extraction_deployment),
                 )
                 if value is None
             ]
