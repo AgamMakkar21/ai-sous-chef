@@ -159,6 +159,9 @@ def test_content_capture_is_disabled_even_if_process_flags_enable_it(
         cosmos_endpoint="https://cosmos.example.invalid/",
         cosmos_database="test",
         foundry_project_endpoint="https://foundry.example.invalid/api/projects/test",
+        foundry_orchestrator_deployment="orchestrator",
+        foundry_recipe_nutrition_deployment="recipe-nutrition",
+        foundry_extraction_deployment="extraction",
     )
     create_app(settings)
     assert all(os.environ[name] == value for name, value in CAPTURE_DISABLED_ENV.items())
