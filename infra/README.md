@@ -142,7 +142,8 @@ project to invoke models, which the subscription owner assigns.
 
 Deployment is incremental, so it does not change unrelated resources. Run the
 same validate and what-if commands as above with a new `--name`
-(`ai-sous-chef-dev-foundry`), and expect only the Foundry resource, project and
+(`ai-sous-chef-dev-foundry-rollout`). Do not reuse `ai-sous-chef-dev-foundry`: it
+is the nested module's name, and ARM rejects it with `DeploymentActive`. Expect only the Foundry resource, project and
 three deployments in the preview.
 
 After deploying, check the wiring with one small call per deployment:
