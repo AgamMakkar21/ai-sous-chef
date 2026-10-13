@@ -107,7 +107,10 @@ az deployment group create --subscription "$ASC_AZURE_SUBSCRIPTION" \
 
 Verify the deployed resource properties and repeat the preview/application to
 check idempotency. A successful deployment alone does not prove that an
-application is sending telemetry; application instrumentation is separate work.
+application is sending telemetry. The backend now emits privacy-safe operational
+logs to its process logging handlers; this foundation does not configure ingestion
+of those logs into Application Insights. See the
+[MVP logging and launch policy](../README.md#privacy-safe-mvp-logging).
 Do not output connection strings, instrumentation keys, tokens, or workspace
 shared keys. Outputs intentionally contain only resource IDs.
 
@@ -139,8 +142,10 @@ they still require authentication. Private networking is not included.
 
 Never send raw chats, prompts, recipes, notes, email, allergies, tool payloads,
 or secrets to ordinary telemetry. Sensitive AI tracing stays disabled by default;
-this foundation does not enable diagnostic opt-in storage. Redaction and safe
-instrumentation must be implemented by later application tickets.
+this foundation does not enable diagnostic opt-in storage. The backend enforces
+allowlisted logging and disables raw AI capture; hosted deployment must also
+disable automatic tracing agents and raw URL access-log collection. Protected
+capture, custom exporters and dashboards remain later work.
 
 The resource group has no standalone charge. Log Analytics uses `PerGB2018`
 pay-as-you-go ingestion, with associated retention/query charges where applicable;

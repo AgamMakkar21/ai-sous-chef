@@ -1,30 +1,30 @@
-import logging
-from collections.abc import Awaitable, Callable
 from http import HTTPStatus
-from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
-from starlette.responses import Response
 
-logger = logging.getLogger(__name__)
+from sous_chef.telemetry import ErrorCategory, error_category, new_trace_id, trace_id
 
 
 def problem_response(status: int, code: str, title: str, detail: str) -> JSONResponse:
-    trace_id = uuid4().hex
+    request_id = trace_id.get() or new_trace_id()
+    if trace_id.get() is not None:
+        error_category.set(
+            ErrorCategory(code) if code in ErrorCategory else ErrorCategory.HTTP_ERROR
+        )
     return JSONResponse(
         status_code=status,
         media_type="application/problem+json",
-        headers={"X-Trace-ID": trace_id, "Cache-Control": "no-store"},
+        headers={"X-Trace-ID": request_id, "Cache-Control": "no-store"},
         content={
             "type": "urn:ai-sous-chef:problem:" + code.replace("_", "-"),
             "title": title,
             "status": status,
             "detail": detail,
             "code": code,
-            "traceId": trace_id,
+            "traceId": request_id,
             "errors": [],
         },
     )
@@ -48,20 +48,3 @@ def register_problem_handlers(app: FastAPI) -> None:
             "Invalid request",
             "Check the request format and field values.",
         )
-
-    # Catch at the boundary so the ASGI server cannot log raw exception contents.
-    @app.middleware("http")
-    async def internal_error(
-        request: Request, call_next: Callable[[Request], Awaitable[Response]]
-    ) -> Response:
-        try:
-            return await call_next(request)
-        except Exception:
-            response = problem_response(
-                500,
-                "internal_error",
-                "Internal error",
-                "The request failed. Use the trace ID for support.",
-            )
-            logger.error("request_failed trace_id=%s", response.headers["X-Trace-ID"])
-            return response
