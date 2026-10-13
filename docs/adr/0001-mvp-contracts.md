@@ -45,7 +45,7 @@ access. Never give the browser Cosmos, Foundry, or USDA credentials.
 | Cosmos DB for NoSQL `Users` | One bounded current-state profile per user, including groceries and separate explicit/learned preferences |
 | Cosmos DB for NoSQL `ChatHistory` | Separate conversation metadata, bounded complete-exchange turn documents, and send-operation records; never a lifetime array in `Users` or one ever-growing conversation document |
 | Cosmos DB for NoSQL `RecipeHistory` | Separate immutable recipe snapshots, cooking state, feedback revisions, behavioral events, and processing provenance |
-| Cosmos change feed and Azure Functions | Asynchronous, note-led preference extraction from eligible `RecipeHistory` events using GPT-5.1 nano; separate lease storage |
+| Cosmos change feed and Azure Functions | Asynchronous, note-led preference extraction from eligible `RecipeHistory` events using GPT-5.4 nano; separate lease storage |
 | Microsoft Foundry (new) Agent Service and Python Foundry SDK 2.x | Versioned managed agents, approved tool connections, grounding, evaluations, tracing; no Foundry classic integration |
 | Orchestrator Agent | Interpret request, coordinate the specialist, check fit, request bounded revision |
 | Recipe + Nutrition Agent | Ground and adapt recipes; identify missing ingredients; obtain nutrition |
@@ -345,7 +345,7 @@ and **confidence at least 0.65**. Saves, rejections, and revision requests
 contribute **one-third** of a cooked-feedback weight.
 
 Recipe notes are the primary source of specific, actionable learned preferences.
-The Azure Function invokes GPT-5.1 nano to interpret the current note alongside
+The Azure Function invokes GPT-5.4 nano to interpret the current note alongside
 the recipe, overall rating, explicit constraints, and bounded relevant prior
 feedback. The rating supplies broad context; it must not drown out a more
 specific statement in the note. Notes remain optional, but the UI prominently
@@ -492,7 +492,7 @@ seven-day horizon and reapply deletions before restoring access after recovery.
 | --- | --- |
 | Orchestrator | GPT-5.4-mini |
 | Recipe + Nutrition Agent | GPT-5.4 |
-| Asynchronous preference extraction | GPT-5.1 nano |
+| Asynchronous preference extraction | GPT-5.4 nano |
 
 Use these models and the New Foundry SDK as agreed. Foundry IQ, USDA MCP, and
 Web IQ are assumed to exist and work. Do not investigate model availability,

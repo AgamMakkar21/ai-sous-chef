@@ -12,8 +12,9 @@ deploy anything. Only an explicit Azure deployment command provisions resources.
 - One workspace-linked Application Insights component.
 - Retention settings on Application Insights tables, not additional services.
 
-No App Service, Cosmos DB, Functions, Foundry, PostgreSQL, storage account,
+No App Service, Cosmos DB, Functions, PostgreSQL, storage account,
 agent identities, application instrumentation, dashboards, or alerts are deployed.
+Foundry is added by `modules/foundry.bicep` (see the Foundry section below).
 `modules/monitoring.bicep` is the foundation module. Later service issues add their
 own modules and consume the nonsecret resource-ID outputs.
 
@@ -120,6 +121,38 @@ environment variables. Set `BICEP_CLI` to the full compiler path if it is not on
 PATH. For the tests, the Python standard library is sufficient; no Azure account
 or backend dependencies are required. Infrastructure checks run separately from
 the default backend pytest suite because they require a Bicep compiler.
+
+## Foundry project and model deployments
+
+Issue [ASC-10 / #10](https://github.com/AgamMakkar21/ai-sous-chef/issues/10).
+`modules/foundry.bicep` adds, in the same resource group:
+
+- One New Foundry resource (`AIServices`, key auth disabled, system-assigned identity).
+- One Foundry project with its own system-assigned identity.
+- Three `GlobalStandard` deployments: `orchestrator` (gpt-5.4-mini), `recipe-nutrition`
+  (gpt-5.4) and `extraction` (gpt-5.4-nano). Models and versions are the
+  `modelDeployments` parameter in `main.bicep`; the app only knows the deployment names.
+
+The deployment output `foundryProjectEndpoint` is the value for
+`ASC_FOUNDRY_PROJECT_ENDPOINT`. Set the three `ASC_FOUNDRY_*_DEPLOYMENT` names
+in the environment (App Service settings in dev/prod). No key is stored anywhere;
+the app signs in with managed identity, or `az login` on a developer machine.
+This template grants no roles. The caller needs the Azure AI User role on the
+project to invoke models, which the subscription owner assigns.
+
+Deployment is incremental, so it does not change unrelated resources. Run the
+same validate and what-if commands as above with a new `--name`
+(`ai-sous-chef-dev-foundry-rollout`). Do not reuse `ai-sous-chef-dev-foundry`: it
+is the nested module's name, and ARM rejects it with `DeploymentActive`. Expect only the Foundry resource, project and
+three deployments in the preview.
+
+After deploying, check the wiring with one small call per deployment:
+
+```bash
+ASC_ENVIRONMENT=dev python -m sous_chef.check_foundry
+```
+
+It prints `OK` per role, or a failure naming the role and error type only.
 
 ## Retention, access, and costs
 

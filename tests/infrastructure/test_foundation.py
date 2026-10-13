@@ -35,6 +35,7 @@ class FoundationTests(unittest.TestCase):
     dev: ClassVar[dict[str, Any]]
     prod: ClassVar[dict[str, Any]]
     monitoring: ClassVar[dict[str, Any]]
+    foundry: ClassVar[dict[str, Any]]
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -49,13 +50,20 @@ class FoundationTests(unittest.TestCase):
             },
         ):
             cls.prod = compile_bicep("infra/environments/prod.bicepparam", "build-params")
-        deployment = cls.template["resources"][0]
-        cls.monitoring = deployment["properties"]["template"]
+        modules = {
+            ("foundry" if "foundry" in resource["name"] else "monitoring"): resource["properties"][
+                "template"
+            ]
+            for resource in cls.template["resources"]
+        }
+        cls.monitoring = modules["monitoring"]
+        cls.foundry = modules["foundry"]
 
-    def test_only_monitoring_and_retention_are_deployed(self) -> None:
-        self.assertEqual(len(self.template["resources"]), 1)
-        self.assertEqual(self.template["resources"][0]["type"], "Microsoft.Resources/deployments")
-        self.assertEqual(self.template["resources"][0]["properties"]["mode"], "Incremental")
+    def test_only_monitoring_retention_and_foundry_are_deployed(self) -> None:
+        self.assertEqual(len(self.template["resources"]), 2)
+        for resource in self.template["resources"]:
+            self.assertEqual(resource["type"], "Microsoft.Resources/deployments")
+            self.assertEqual(resource["properties"]["mode"], "Incremental")
         self.assertEqual(
             {resource["type"] for resource in self.monitoring["resources"]},
             {
@@ -111,14 +119,40 @@ class FoundationTests(unittest.TestCase):
         self.assertIn("AppRequests", self.monitoring["variables"]["applicationTables"])
         self.assertIn("AppTraces", self.monitoring["variables"]["applicationTables"])
 
+    def test_foundry_uses_keyless_auth_and_the_three_agreed_deployments(self) -> None:
+        resources = {resource["type"]: resource for resource in self.foundry["resources"]}
+        account = resources["Microsoft.CognitiveServices/accounts"]
+        self.assertEqual(account["kind"], "AIServices")
+        self.assertTrue(account["properties"]["allowProjectManagement"])
+        self.assertTrue(account["properties"]["disableLocalAuth"])
+        self.assertEqual(account["identity"]["type"], "SystemAssigned")
+        self.assertIn("Microsoft.CognitiveServices/accounts/projects", resources)
+        self.assertIn("Microsoft.CognitiveServices/accounts/deployments", resources)
+        defaults = self.template["parameters"]["modelDeployments"]["defaultValue"]
+        self.assertEqual(
+            {item["name"]: item["model"] for item in defaults},
+            {
+                "orchestrator": "gpt-5.4-mini",
+                "recipe-nutrition": "gpt-5.4",
+                "extraction": "gpt-5.4-nano",
+            },
+        )
+
     def test_tags_and_outputs_have_no_secrets(self) -> None:
         self.assertEqual(
             set(self.template["variables"]["tags"]),
             {"project", "environment", "owner", "managedBy"},
         )
-        for template in (self.template, self.monitoring, self.group):
+        nonsecret = {
+            "resourceGroupId",
+            "foundryProjectEndpoint",
+            "foundryProjectPrincipalId",
+            "projectEndpoint",
+            "projectPrincipalId",
+        }
+        for template in (self.template, self.monitoring, self.foundry, self.group):
             for name, output in template["outputs"].items():
-                self.assertTrue(name.endswith("ResourceId") or name == "resourceGroupId")
+                self.assertTrue(name.endswith("ResourceId") or name in nonsecret)
                 self.assertEqual(output["type"], "string")
                 self.assertNotIn("listKeys", output["value"])
                 self.assertNotIn("ConnectionString", output["value"])
