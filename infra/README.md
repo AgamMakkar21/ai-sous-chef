@@ -12,9 +12,10 @@ deploy anything. Only an explicit Azure deployment command provisions resources.
 - One workspace-linked Application Insights component.
 - Retention settings on Application Insights tables, not additional services.
 
-No App Service, Cosmos DB, Functions, PostgreSQL, storage account,
+No Cosmos DB, Functions, PostgreSQL, storage account,
 agent identities, application instrumentation, dashboards, or alerts are deployed.
-Foundry is added by `modules/foundry.bicep` (see the Foundry section below).
+Foundry is added by `modules/foundry.bicep` and hosting by `modules/app-service.bicep`
+(see the Foundry and App Service sections below).
 `modules/monitoring.bicep` is the foundation module. Later service issues add their
 own modules and consume the nonsecret resource-ID outputs.
 
@@ -156,6 +157,48 @@ ASC_ENVIRONMENT=dev python -m sous_chef.check_foundry
 ```
 
 It prints `OK` per role, or a failure naming the role and error type only.
+
+## App Service hosting
+
+Issue [ASC-08 / #8](https://github.com/AgamMakkar21/ai-sous-chef/issues/8).
+`modules/app-service.bicep` adds one Linux App Service plan, one web app, and a
+dedicated user-assigned managed identity (`<prefix>-app-identity`). It is the single
+Python web/API deployment; there are no microservices.
+
+- Runtime `PYTHON|3.12`, HTTPS only, TLS 1.2 minimum, FTPS disabled, HTTP/2, Always On.
+- Startup command: `python -m uvicorn sous_chef.app:create_app --factory --app-dir backend/src --host 0.0.0.0 --port 8000 --no-access-log`.
+- Health check path `/health` (process liveness only). `/ready` returns a generic
+  503 problem response with no configuration until a readiness probe exists.
+- FTP and SCM basic-auth publishing credentials are disabled. Deploy with Entra.
+- App settings are nonsecret only: environment, adapter mode, Cosmos endpoint and
+  database, Foundry endpoint and deployment names, `AZURE_CLIENT_ID` of the app
+  identity, and the Application Insights connection string. Prompt/message content
+  capture is off. No Cosmos or Foundry key exists anywhere.
+- This template grants no roles. The app identity needs Cosmos data-plane and
+  Azure AI User roles from issues #11/#16, so `/ready` stays 503 until then.
+
+**Region.** The plan location is the separate `appServiceLocation` parameter. Dev
+uses Central US because the subscription has no App Service quota in East US 2
+(checked for B1, B2, B3, P0v3, P1v3). Foundry, Cosmos and monitoring stay in East US 2.
+Cross-region latency and transfer cost are not measured. Prod reads
+`ASC_APP_SERVICE_LOCATION`, `ASC_COSMOS_ENDPOINT` and `ASC_COSMOS_DATABASE`.
+
+**Scaling and cost assumptions.** SKU `B1` (default; B2, B3, P0v3, P1v3 allowed),
+one instance, no autoscale. B1 is a dev-sized plan billed for as long as it exists;
+check the Azure pricing page for the current price (not verified here). Raise the SKU
+or add instances only after load data justifies it.
+
+Deploy with a new `--name` (for example `ai-sous-chef-dev-app-rollout`), not the
+nested module name `<prefix>-app-service`. Then publish the code with an Entra token:
+
+```bash
+git archive --format=zip -o app.zip HEAD backend requirements.txt
+az webapp deploy -g <group> -n <app-name> --src-path app.zip --type zip
+curl https://<app-host>/health   # {"status":"ok"}
+```
+
+`SCM_DO_BUILD_DURING_DEPLOYMENT=true` makes the platform install `requirements.txt`.
+The first start after a deploy can return 503 for a few minutes while it builds.
 
 ## Retention, access, and costs
 
