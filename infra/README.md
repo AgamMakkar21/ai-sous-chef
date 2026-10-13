@@ -16,6 +16,8 @@ No Cosmos DB, Functions, PostgreSQL, storage account,
 agent identities, application instrumentation, dashboards, or alerts are deployed.
 Foundry is added by `modules/foundry.bicep` and hosting by `modules/app-service.bicep`
 (see the Foundry and App Service sections below).
+Cosmos has a separate, opt-in [dev deployment](cosmos.md) for ASC-07; running
+`main.bicep` does not provision Cosmos.
 `modules/monitoring.bicep` is the foundation module. Later service issues add their
 own modules and consume the nonsecret resource-ID outputs.
 

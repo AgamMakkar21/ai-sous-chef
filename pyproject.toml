@@ -20,6 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "azure-cosmos==4.17.1",
     "editables==0.5",
     "hatchling==1.32.4",
     "httpx==0.28.1",
