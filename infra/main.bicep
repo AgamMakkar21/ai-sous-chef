@@ -37,8 +37,35 @@ param modelDeployments array = [
   }
 ]
 
+@description('Region for the App Service plan and app; may differ from other resources where quota requires.')
+@minLength(1)
+param appServiceLocation string
+
+@description('Linux App Service plan SKU for the single web/API app.')
+@allowed([
+  'B1'
+  'B2'
+  'B3'
+  'P0v3'
+  'P1v3'
+])
+param appServiceSku string = 'B1'
+
+@description('Nonsecret Cosmos DB endpoint the app connects to.')
+@minLength(1)
+param cosmosEndpoint string
+
+@description('Cosmos DB database name the app uses.')
+@minLength(1)
+param cosmosDatabase string
+
 var project = 'ai-sous-chef'
 var namePrefix = '${project}-${environment}'
+var foundryDeploymentNames = {
+  orchestrator: 'orchestrator'
+  recipeNutrition: 'recipe-nutrition'
+  extraction: 'extraction'
+}
 var tags = {
   project: project
   environment: environment
@@ -65,6 +92,26 @@ module foundry 'modules/foundry.bicep' = {
   }
 }
 
+module appService 'modules/app-service.bicep' = {
+  name: '${namePrefix}-app-service'
+  params: {
+    location: appServiceLocation
+    namePrefix: namePrefix
+    tags: tags
+    skuName: appServiceSku
+    environment: environment
+    cosmosEndpoint: cosmosEndpoint
+    cosmosDatabase: cosmosDatabase
+    foundryProjectEndpoint: foundry.outputs.projectEndpoint
+    foundryDeploymentNames: foundryDeploymentNames
+    applicationInsightsResourceId: monitoring.outputs.applicationInsightsResourceId
+  }
+}
+
+output appServiceResourceId string = appService.outputs.appServiceResourceId
+output appServiceHostName string = appService.outputs.appServiceHostName
+output appIdentityPrincipalId string = appService.outputs.appIdentityPrincipalId
+output appIdentityClientId string = appService.outputs.appIdentityClientId
 output foundryProjectEndpoint string = foundry.outputs.projectEndpoint
 output foundryProjectPrincipalId string = foundry.outputs.projectPrincipalId
 output resourceGroupId string = resourceGroup().id

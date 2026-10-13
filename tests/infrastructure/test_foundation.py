@@ -36,6 +36,7 @@ class FoundationTests(unittest.TestCase):
     prod: ClassVar[dict[str, Any]]
     monitoring: ClassVar[dict[str, Any]]
     foundry: ClassVar[dict[str, Any]]
+    app: ClassVar[dict[str, Any]]
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -46,21 +47,25 @@ class FoundationTests(unittest.TestCase):
             os.environ,
             {
                 "ASC_AZURE_LOCATION": "offline-test-region",
+                "ASC_APP_SERVICE_LOCATION": "offline-app-region",
                 "ASC_RESOURCE_OWNER": "offline-test-owner",
+                "ASC_COSMOS_ENDPOINT": "https://offline.example.test/",
+                "ASC_COSMOS_DATABASE": "offline-db",
             },
         ):
             cls.prod = compile_bicep("infra/environments/prod.bicepparam", "build-params")
         modules = {
-            ("foundry" if "foundry" in resource["name"] else "monitoring"): resource["properties"][
-                "template"
-            ]
+            name: resource["properties"]["template"]
             for resource in cls.template["resources"]
+            for name in ("foundry", "app-service", "monitoring")
+            if f"-{name}'" in resource["name"]
         }
         cls.monitoring = modules["monitoring"]
         cls.foundry = modules["foundry"]
+        cls.app = modules["app-service"]
 
-    def test_only_monitoring_retention_and_foundry_are_deployed(self) -> None:
-        self.assertEqual(len(self.template["resources"]), 2)
+    def test_only_monitoring_retention_foundry_and_app_service_are_deployed(self) -> None:
+        self.assertEqual(len(self.template["resources"]), 3)
         for resource in self.template["resources"]:
             self.assertEqual(resource["type"], "Microsoft.Resources/deployments")
             self.assertEqual(resource["properties"]["mode"], "Incremental")
@@ -138,6 +143,55 @@ class FoundationTests(unittest.TestCase):
             },
         )
 
+    def test_app_service_is_https_only_with_its_own_identity_and_no_keys(self) -> None:
+        resources = {resource["type"]: resource for resource in self.app["resources"]}
+        plan = resources["Microsoft.Web/serverfarms"]
+        site = resources["Microsoft.Web/sites"]
+        self.assertEqual(plan["kind"], "linux")
+        self.assertTrue(plan["properties"]["reserved"])
+        self.assertEqual(plan["sku"]["capacity"], 1)
+        self.assertTrue(site["properties"]["httpsOnly"])
+        config = site["properties"]["siteConfig"]
+        self.assertEqual(config["minTlsVersion"], "1.2")
+        self.assertEqual(config["ftpsState"], "Disabled")
+        self.assertEqual(config["healthCheckPath"], "/health")
+        self.assertIn("PYTHON|", config["linuxFxVersion"])
+        self.assertIn("--no-access-log", self.app["variables"]["startupCommand"])
+        self.assertIn("sous_chef.app:create_app --factory", self.app["variables"]["startupCommand"])
+        self.assertEqual(site["identity"]["type"], "UserAssigned")
+        self.assertIn("Microsoft.ManagedIdentity/userAssignedIdentities", resources)
+        policies = [
+            r
+            for r in self.app["resources"]
+            if r["type"].endswith("basicPublishingCredentialsPolicies")
+        ]
+        self.assertEqual({p["name"].split("'")[-2] for p in policies}, {"ftp", "scm"})
+        self.assertTrue(all(p["properties"]["allow"] is False for p in policies))
+
+    def test_app_settings_are_nonsecret_and_disable_ai_content_capture(self) -> None:
+        site = next(r for r in self.app["resources"] if r["type"] == "Microsoft.Web/sites")
+        settings = {s["name"]: s["value"] for s in site["properties"]["siteConfig"]["appSettings"]}
+        for name in ("KEY", "SECRET", "PASSWORD", "TOKEN"):
+            self.assertFalse([k for k in settings if name in k.upper()])
+        self.assertEqual(settings["ASC_ADAPTER_MODE"], "live")
+        self.assertEqual(settings["OTEL_SDK_DISABLED"], "true")
+        self.assertEqual(settings["ApplicationInsightsAgent_EXTENSION_VERSION"], "disabled")
+        self.assertEqual(settings["AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED"], "false")
+        self.assertIn("AZURE_CLIENT_ID", settings)
+        deployments = {
+            d["name"] for d in self.template["parameters"]["modelDeployments"]["defaultValue"]
+        }
+        self.assertEqual(
+            set(self.template["variables"]["foundryDeploymentNames"].values()), deployments
+        )
+
+    def test_cosmos_settings_are_required_per_environment(self) -> None:
+        for name in ("cosmosEndpoint", "cosmosDatabase", "appServiceLocation"):
+            self.assertNotIn("defaultValue", self.template["parameters"][name])
+            self.assertEqual(self.template["parameters"][name]["minLength"], 1)
+            self.assertIn(name, self.dev["parameters"])
+            self.assertIn(name, self.prod["parameters"])
+
     def test_tags_and_outputs_have_no_secrets(self) -> None:
         self.assertEqual(
             set(self.template["variables"]["tags"]),
@@ -149,8 +203,11 @@ class FoundationTests(unittest.TestCase):
             "foundryProjectPrincipalId",
             "projectEndpoint",
             "projectPrincipalId",
+            "appServiceHostName",
+            "appIdentityPrincipalId",
+            "appIdentityClientId",
         }
-        for template in (self.template, self.monitoring, self.foundry, self.group):
+        for template in (self.template, self.monitoring, self.foundry, self.app, self.group):
             for name, output in template["outputs"].items():
                 self.assertTrue(name.endswith("ResourceId") or name in nonsecret)
                 self.assertEqual(output["type"], "string")
