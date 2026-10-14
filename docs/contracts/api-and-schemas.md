@@ -30,6 +30,11 @@ All state-changing operations require authentication. With incomplete onboarding
 allow profile bootstrap/onboarding but reject recipe generation with a typed
 `onboarding_required` error. Reading another user's ID returns the same 404 shape
 as an absent ID. Never make an unpartitioned lookup to discover its owner.
+The shared implementation is `CurrentUser` plus
+`AuthenticatedUser.require_owned`: select the authenticated partition first, then
+guard the stored record before reading or mutating private state. See
+[shared backend authorization](../authentication.md#shared-backend-authorization)
+for the handler/repository contract and safe error behavior.
 
 ## 2. Responses, errors, and concurrency
 

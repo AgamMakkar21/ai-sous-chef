@@ -1,5 +1,5 @@
 from time import time
-from typing import Any
+from typing import Any, Literal
 
 import jwt
 import pytest
@@ -29,11 +29,11 @@ def signed_token(key: rsa.RSAPrivateKey, **overrides: Any) -> str:
     return jwt.encode(claims, key, algorithm="RS256", headers={"kid": "synthetic"})
 
 
-def hosted_settings(settings: Settings) -> Settings:
+def hosted_settings(settings: Settings, environment: Literal["dev", "prod"] = "dev") -> Settings:
     # Tests supply the existing live-adapter fields without contacting those services.
     values = settings.model_dump()
     values.update(
-        environment="dev",
+        environment=environment,
         adapter_mode="live",
         cosmos_endpoint="https://cosmos.example.invalid/",
         cosmos_database="test",
@@ -57,12 +57,14 @@ def test_anonymous_routes_fail_closed(local_settings: Settings, path: str) -> No
     assert "location" not in response.headers
 
 
-@pytest.mark.parametrize("environment", ["local", "dev"])
+@pytest.mark.parametrize("environment", ["local", "dev", "prod"])
 def test_injected_identity_headers_are_not_credentials(
     local_settings: Settings,
-    environment: str,
+    environment: Literal["local", "dev", "prod"],
 ) -> None:
-    settings = local_settings if environment == "local" else hosted_settings(local_settings)
+    settings = (
+        local_settings if environment == "local" else hosted_settings(local_settings, environment)
+    )
     with TestClient(create_app(settings)) as client:
         response = client.get(
             "/auth/session",
@@ -87,6 +89,10 @@ def test_injected_identity_headers_are_not_credentials(
         {"sub": ""},
         {"sub": 123},
         {"sub": "x" * 256},
+        {"sub": "alice\0bob"},
+        {"exp": []},
+        {"iat": {}},
+        {"nbf": float("inf")},
     ],
 )
 def test_invalid_claims_fail(
@@ -280,3 +286,56 @@ def test_bearer_scheme_is_case_insensitive(
             headers={"Authorization": auth_headers["Authorization"].replace("Bearer ", "bearer ")},
         )
     assert response.status_code == 200
+
+
+@pytest.mark.parametrize("authorization", ["", "Basic invalid", "Bearer invalid"])
+def test_invalid_explicit_credentials_never_fall_back_to_platform_session(
+    local_settings: Settings,
+    signing_key: rsa.RSAPrivateKey,
+    authorization: str,
+) -> None:
+    with TestClient(create_app(hosted_settings(local_settings))) as client:
+        response = client.get(
+            "/auth/session",
+            headers={
+                "Authorization": authorization,
+                "X-MS-TOKEN-AAD-ID-TOKEN": signed_token(signing_key),
+            },
+        )
+    assert response.status_code == 401
+    assert response.json()["code"] == "unauthenticated"
+
+
+@pytest.mark.parametrize("header", ["Authorization", "X-MS-TOKEN-AAD-ID-TOKEN"])
+def test_duplicate_credentials_are_rejected(
+    local_settings: Settings,
+    signing_key: rsa.RSAPrivateKey,
+    header: str,
+) -> None:
+    token = signed_token(signing_key)
+    credential = "Bearer " + token if header == "Authorization" else token
+    with TestClient(create_app(hosted_settings(local_settings))) as client:
+        response = client.get("/auth/session", headers=[(header, credential), (header, credential)])
+    assert response.status_code == 401
+
+
+def test_bearer_mutation_does_not_require_ambient_cookie_credentials(
+    local_settings: Settings, auth_headers: dict[str, str]
+) -> None:
+    app = create_app(hosted_settings(local_settings))
+
+    @app.post("/mutation")
+    async def mutate() -> dict[str, bool]:
+        return {"ok": True}
+
+    with TestClient(app) as client:
+        response = client.post("/mutation", headers=auth_headers)
+        assert response.status_code == 200
+        preflight = client.options(
+            "/mutation",
+            headers={
+                "Origin": "https://attacker.invalid",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        assert "access-control-allow-origin" not in preflight.headers

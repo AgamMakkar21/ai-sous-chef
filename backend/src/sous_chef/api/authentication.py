@@ -1,9 +1,8 @@
-import hashlib
 import secrets
-from dataclasses import dataclass
+from typing import Annotated
 
 import jwt
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from jwt import InvalidTokenError, PyJWKClient, PyJWKClientConnectionError, PyJWKClientError
 from starlette.concurrency import run_in_threadpool
@@ -11,14 +10,20 @@ from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from sous_chef.api.problems import problem_response
+from sous_chef.domain.authorization import AuthenticatedUser as AuthenticatedUser
 from sous_chef.settings import Settings
 
 _CSRF_COOKIE = "__Host-asc-csrf"
 
 
-@dataclass(frozen=True)
-class AuthenticatedUser:
-    user_id: str
+def get_authenticated_user(request: Request) -> AuthenticatedUser:
+    user = getattr(request.state, "user", None)
+    if not isinstance(user, AuthenticatedUser):
+        raise HTTPException(status_code=401)
+    return user
+
+
+CurrentUser = Annotated[AuthenticatedUser, Depends(get_authenticated_user)]
 
 
 class TokenVerifier:
@@ -39,19 +44,22 @@ class TokenVerifier:
         if header.get("alg") != "RS256" or not isinstance(header.get("kid"), str):
             raise InvalidTokenError("Invalid signing header.")
         key = self.keys.get_signing_key_from_jwt(token)
-        claims = jwt.decode(
-            token,
-            key.key,
-            algorithms=["RS256"],
-            issuer=self.issuer,
-            audience=self.audience,
-            options={"require": ["iss", "aud", "sub", "exp", "iat", "nbf"], "strict_aud": True},
-        )
+        try:
+            claims = jwt.decode(
+                token,
+                key.key,
+                algorithms=["RS256"],
+                issuer=self.issuer,
+                audience=self.audience,
+                options={"require": ["iss", "aud", "sub", "exp", "iat", "nbf"], "strict_aud": True},
+            )
+        except (TypeError, OverflowError):
+            # Signed but malformed NumericDate claims must not become server errors.
+            raise InvalidTokenError("Invalid time claims.") from None
         subject = claims["sub"]
-        if not isinstance(subject, str) or not subject or len(subject) > 255:
+        if not isinstance(subject, str) or not subject or "\0" in subject or len(subject) > 255:
             raise InvalidTokenError("Invalid subject.")
-        user_id = hashlib.sha256(f"{self.issuer}\0{subject}".encode()).hexdigest()
-        return AuthenticatedUser(user_id)
+        return AuthenticatedUser.from_verified_identity(self.issuer, subject)
 
 
 class AuthenticationMiddleware:
@@ -78,10 +86,14 @@ class AuthenticationMiddleware:
         scheme, separator, credential = authorization.partition(" ")
         bearer = scheme.lower() == "bearer" and bool(separator)
         token = credential if bearer else ""
-        if not authorization and self.settings.environment != "local":
+        if "authorization" not in headers and self.settings.environment != "local":
             token = headers.get("x-ms-token-aad-id-token", "")
         response: JSONResponse | None = None
-        if not token or len(token) > 16384:
+        ambiguous_credentials = (
+            len(headers.getlist("authorization")) > 1
+            or len(headers.getlist("x-ms-token-aad-id-token")) > 1
+        )
+        if ambiguous_credentials or not token or len(token) > 16384:
             response = problem_response(
                 401, "unauthenticated", "Authentication required", "Sign in again to continue."
             )
@@ -170,8 +182,7 @@ def create_auth_router(settings: Settings) -> APIRouter:
         )
 
     @router.get("/session")
-    async def session(request: Request) -> JSONResponse:
-        user: AuthenticatedUser = request.state.user
+    async def session(user: CurrentUser) -> JSONResponse:
         csrf = secrets.token_urlsafe(32)
         response = JSONResponse(
             {"userId": user.user_id, "csrfToken": csrf}, headers={"Cache-Control": "no-store"}
