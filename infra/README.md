@@ -16,6 +16,12 @@ No Cosmos DB, Functions, PostgreSQL, storage account,
 agent identities, application instrumentation, dashboards, or alerts are deployed.
 Foundry is added by `modules/foundry.bicep` and hosting by `modules/app-service.bicep`
 (see the Foundry and App Service sections below).
+Hosting includes consumer Entra External ID authentication. Before compiling either
+environment's parameter file or deploying, complete the tenant-admin steps and set
+`ASC_AUTH_ISSUER`, `ASC_AUTH_JWKS_URI`, `ASC_AUTH_CLIENT_ID`, `ASC_AUTH_ORIGIN` and
+`ASC_AUTH_SECRET_URI` as described in [consumer sign-in setup](../docs/authentication.md).
+The secret URI is a Key Vault reference, never the client-secret value. Main-template
+redeployments retain these settings and authentication enforcement.
 Cosmos has a separate, opt-in [dev deployment](cosmos.md) for ASC-07; running
 `main.bicep` does not provision Cosmos.
 `modules/monitoring.bicep` is the foundation module. Later service issues add their
@@ -175,7 +181,10 @@ Python web/API deployment; there are no microservices.
 - App settings are nonsecret only: environment, adapter mode, Cosmos endpoint and
   database, Foundry endpoint and deployment names, `AZURE_CLIENT_ID` of the app
   identity, and the Application Insights connection string. Prompt/message content
-  capture is off. No Cosmos or Foundry key exists anywhere.
+  capture is off. Consumer auth adds issuer/JWKS/client/origin settings and a
+  Key Vault **reference**, never an embedded provider-secret value. The reference
+  uses the dedicated app identity; an approved vault reader grant is a prerequisite.
+  No Cosmos or Foundry key exists anywhere.
 - This template grants no roles. The app identity needs Cosmos data-plane and
   Azure AI User roles from issues #11/#16, so `/ready` stays 503 until then.
 

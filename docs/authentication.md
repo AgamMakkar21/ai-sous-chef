@@ -1,0 +1,189 @@
+# Consumer authentication (ASC-13 / issue 17)
+
+## Boundary and behavior
+
+The consumer app uses **Entra External ID in an external tenant**, not workforce
+sign-in, B2C policies, `common`, or `organizations`. The consumer registration is
+separate from the App Service workload identity and every Entra Agent identity.
+Cosmos and Foundry continue to use managed identities; this change does not grant
+data-plane access or implement onboarding.
+
+App Service built-in authentication (Easy Auth, `aad`) handles the authorization
+code callback and secure session cookie. `authsettingsV2` requires HTTPS and returns
+401 rather than redirecting API requests. The token store supplies the signed ID
+token in `X-MS-TOKEN-AAD-ID-TOKEN`. The backend independently verifies its RS256
+signature against the configured external tenant's JWKS, exact issuer, single
+audience, subject, expiry, not-before and issued-at claims. JWT header key URLs are
+not used. Keys are cached for one hour; a missing key triggers a JWKS refresh.
+
+The backend accepts an explicit `Authorization: Bearer <signed-token>` for local
+API testing too. It does not trust `X-MS-CLIENT-PRINCIPAL`, principal IDs, email,
+`X-User-ID`, request-body IDs or query IDs. Local mode never accepts the platform
+ID-token header. No environment has a bypass. Missing auth configuration cannot
+authenticate anyone. A supplied token with unavailable configuration or
+unreachable signing keys returns 503 `authentication_unavailable`, not success.
+
+All HTTP routes, including frontend assets and unknown API paths, are protected
+except `/health`, `/ready`, `/auth/login`, `/auth/logout` and `/auth/signed-out`.
+Local-only `/docs` and `/openapi.json` remain public for contract inspection.
+WebSockets are rejected until an authenticated streaming implementation exists.
+The backend stores an immutable `AuthenticatedUser` in `request.state.user`.
+Its opaque `user_id` is SHA-256 of the exact verified issuer, a NUL separator and
+subject; future handlers must use it for Cosmos ownership and partition scoping,
+never a supplied ID. Changing registration/issuer requires an explicit identity
+migration, not matching users by email.
+
+| Operation | Response / caller behavior |
+| --- | --- |
+| `GET /auth/login` | Hosted: 307 to `/.auth/login/aad`, fixed return `/`. Local: 503 with testing guidance. |
+| `GET /auth/logout` | Hosted: 307 to `/.auth/logout`, fixed return `/auth/signed-out`; clears the CSRF cookie. Local: 503, discard bearer token and sign out on dev. |
+| `GET /auth/signed-out` | Public informational JSON with a `/auth/login` link; does not automatically sign in again. |
+| `GET /auth/session` | Authenticated, no-store JSON `{ "userId": "...", "csrfToken": "..." }`; no profile creation or raw claims/tokens. |
+| Missing, invalid or expired token at the backend | 401 `application/problem+json`, code `unauthenticated`, `WWW-Authenticate: Bearer`, no-store and trace ID. |
+| Missing or expired Easy Auth session at the platform | HTTP 401 before Python; body is platform-owned and is **not** guaranteed to follow the problem schema. |
+| Invalid cookie-session mutation | 403 problem, code `csrf_failed`. |
+| Signing-key/configuration outage at the backend | 503 problem, code `authentication_unavailable`; retry later, do not treat as a successful login. |
+
+On **any 401**, the UI must stop/reject the current action, clear displayed private
+state and offer a top-level navigation to `/auth/login`. Do not parse a 401 body
+before deciding to reauthenticate or replay a mutation automatically. Hosted
+cookies expire after one hour without a refresh grace period; earlier token expiry
+also requires sign-in. Signing out ends the application's cookie session, not every
+Microsoft/browser session. A copied bearer token remains usable until expiry; it
+is not a revocable server session.
+
+Cookie-authenticated mutations require the exact configured `Origin` and
+`X-CSRF-Token` from `/auth/session`, matching its secure, HttpOnly, SameSite=Strict,
+host-only `__Host-asc-csrf` cookie. Keep the token in memory, not local storage.
+Refreshing the session rotates it; other tabs may need to fetch a new session on
+403. Explicit bearer requests do not use ambient browser credentials and do not
+require this cookie. Do not add permissive CORS.
+
+## Required admin actions (each environment)
+
+Provisioning the consumer directory, app registration and user flow requires
+approved tenant-admin access. This repository does **not** create those directory
+objects or grant roles automatically.
+
+1. Have the owner approve a **consumer external tenant** and the dev application.
+   In that tenant, create a single-tenant **Web** app registration for AI Sous Chef
+   dev. Record its directory ID and client ID in the approved environment inventory,
+   not personal-account details. Use a distinct registration for prod.
+2. Create a sign-up/sign-in user flow (email/password or email one-time passcode),
+   associate this registration with it, and configure approved branding/consent.
+   Enable only the claims needed for sign-in. Do not enable implicit token grants,
+   wildcard replies or public-client flows for this web registration.
+3. Register the exact Web reply URI and front-channel logout URI below. For each
+   approved custom domain or slot, register its exact callback separately; do not
+   copy prod callbacks into dev. Set `ASC_AUTH_ORIGIN` to the canonical browser
+   HTTPS origin, using the existing App Service's actual `defaultHostName` output or
+   an approved custom domain. Do not construct a hostname from the resource name.
+4. From the registration's external-tenant OIDC metadata, record the **exact**
+   `issuer` and `jwks_uri` as `ASC_AUTH_ISSUER` and `ASC_AUTH_JWKS_URI`.
+   Metadata/authority aliases can differ from the canonical token issuer; do not
+   guess these values from a tenant display name. Both must be HTTPS
+   `*.ciamlogin.com` endpoints. Custom authentication domains need a separate
+   reviewed configuration change; they are intentionally not accepted here.
+5. Create a short-lived confidential-client credential only for this consumer
+   provider. An external tenant is separate from the workload tenant, so this
+   template uses the provider's supported client secret, not a made-up managed
+   identity federation. Store it directly in an approved Key Vault through the
+   approved secret-management process. Never paste it into source, `.env` files,
+   ARM parameters, commands, logs or issue comments.
+6. Have the vault administrator grant the existing App Service user-assigned
+   identity permission to read **that secret**, with approved network reachability.
+   `keyVaultReferenceIdentity` points at this identity. Set `ASC_AUTH_SECRET_URI`
+   to the secret's HTTPS URI (optionally versioned); IaC creates only
+   `@Microsoft.KeyVault(SecretUri=...)` in
+   `MICROSOFT_PROVIDER_AUTHENTICATION_SECRET`. No secret values are outputs.
+7. Perform required admin consent/reauthorization using the approved external
+   tenant account. Changes to claims, consent, identity providers or the user flow
+   require signing out and a new interactive authorization. For a rotated secret,
+   refresh Key Vault references/restart the dev app and confirm login before
+   retiring the old version. Record expiry/rotation ownership in the approved
+   inventory. Do not record credentials or consumer identifiers in the checklist.
+
+| Environment | Web reply URI | Front-channel logout URI | App return after logout |
+| --- | --- | --- | --- |
+| Dev | `https://<dev-host>/.auth/login/aad/callback` | `https://<dev-host>/.auth/logout` | `https://<dev-host>/auth/signed-out` |
+| Prod (not approved for deployment here) | `https://<prod-host>/.auth/login/aad/callback` | `https://<prod-host>/.auth/logout` | `https://<prod-host>/auth/signed-out` |
+| Local | None for this hosted web registration | None | Use the dev login for interactive testing |
+
+Only same-origin returns are allowed (`allowedExternalRedirectUrls: []`).
+The application login/logout wrappers reject all supplied query parameters; callers
+cannot choose a return URL. The tenant registration independently rejects an
+unregistered OAuth `redirect_uri`. Easy Auth owns `/.auth/*`; do not proxy those
+paths straight to Uvicorn or expose a second unprotected application port.
+
+## Reproducible deployment
+
+Set these **nonsecret** process variables in addition to the existing foundation
+deployment variables, then use the reviewed what-if/deploy procedure in
+[`infra/README.md`](../infra/README.md). Both dev and prod parameter files require
+them; neither selects a tenant or credential implicitly:
+
+```text
+ASC_AUTH_ISSUER=<exact issuer from approved external-tenant metadata>
+ASC_AUTH_JWKS_URI=<exact jwks_uri from approved external-tenant metadata>
+ASC_AUTH_CLIENT_ID=<consumer web registration UUID>
+ASC_AUTH_ORIGIN=https://<actual-approved-dev-host>
+ASC_AUTH_SECRET_URI=https://<approved-vault>.vault.azure.net/secrets/<provider-secret>
+```
+
+The hosting module sets these app values, including the approved `ASC_AUTH_ORIGIN`.
+`ASC_AUTH_SECRET_URI` is a deployment input, not an `ASC_` runtime setting; do not
+put it in `.env.dev`/`.env.prod`. Check that the Key Vault reference resolves before
+attempting login. Do not disable Easy Auth to work around a failed reference.
+Application logging excludes tokens, cookies, claims and raw provider errors.
+Keep platform HTTP/debug logs off: authorization callback query strings contain
+codes and must not be retained in telemetry or screenshots.
+
+## Local and offline testing
+
+Health/readiness and local docs work without authentication. All other routes
+return 401 until a valid signed token is supplied. Configure the four commented
+`ASC_AUTH_*` runtime settings in `.env.local.example` using approved dev metadata.
+For a manual local API check, obtain only a **synthetic account's** current signed
+ID token from the approved dev Easy Auth session (`/.auth/me`) using the browser's
+developer tools. Treat it as a credential: do not copy it into scripts, shell
+history, URLs, local storage or logs. Enter it through a hidden prompt in a local
+test client and send it only to the local API as an Authorization header. Discard
+it after testing; never use a real consumer's token or data. Interactive callback
+testing runs on dev, not a localhost authentication bypass.
+
+Automated tests generate ephemeral RSA keys and synthetic, signed JWTs. Only the
+JWKS fetch is replaced in tests; signature and claims verification still execute.
+There is no test key in application configuration or production code. Run:
+
+```text
+python -m pytest tests/integration/test_authentication.py tests/integration/test_application.py tests/integration/test_privacy_logging.py tests/unit/test_settings.py
+python -m unittest discover -s tests/infrastructure -p test_foundation.py -v
+```
+
+## Dev acceptance record (operator/peer review required)
+
+Offline coverage includes signature/algorithm checks, incorrect issuer/audience,
+expiry, not-before, forged identity headers, stable isolated user scope, CSRF,
+fixed login/logout targets, signing-key outage and compiled Easy Auth settings.
+The following **live checks remain pending** until the approved tenant/registration,
+Key Vault access and dev deployment exist. Do not mark issue 17 complete from
+offline tests alone:
+
+- [ ] Record approved directory/client IDs, user-flow association, canonical host,
+  callback/logout URLs, consent and credential-rotation owner in the environment inventory.
+- [ ] Sign up/sign in with a synthetic account via `/auth/login`; confirm return
+  to `/`, then authenticated `/auth/session` (the absent UI still returns 503).
+- [ ] Sign out via `/auth/logout`; confirm `/auth/signed-out` and subsequent
+  `/auth/session` 401. Return through its login link.
+- [ ] Request `/api/v1/me` anonymously: 401, not 302 or HTML login. Let the
+  one-hour session expire and confirm 401; verify the client's reauthorization behavior.
+- [ ] Try a signed token with the wrong issuer and wrong audience: both fail.
+  Attempt an unregistered OAuth reply URI and an external post-login/logout return:
+  neither reaches the unapproved host. Do not include tokens/codes in evidence.
+- [ ] Confirm resolved Key Vault reference and reauthorization after rotation;
+  ask the other collaborator to review the feature PR into `dev`. Do not deploy
+  prod, self-approve or auto-close the issue on dev integration.
+
+References: [App Service external configuration](https://learn.microsoft.com/azure/app-service/configure-authentication-provider-aad),
+[App Service authentication API](https://learn.microsoft.com/azure/app-service/configure-authentication-customize-sign-in-out),
+[Key Vault references](https://learn.microsoft.com/azure/app-service/app-service-key-vault-references).

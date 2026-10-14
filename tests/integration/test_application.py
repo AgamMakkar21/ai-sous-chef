@@ -88,8 +88,8 @@ def test_hosted_scaffold_is_not_ready_without_live_adapters(environment: str) ->
     with TestClient(create_app(settings)) as test_client:
         assert test_client.get("/health").status_code == 200
         assert test_client.get("/ready").status_code == 503
-        assert test_client.get("/docs").status_code == 404
-        assert test_client.get("/openapi.json").status_code == 404
+        assert test_client.get("/docs").status_code == 401
+        assert test_client.get("/openapi.json").status_code == 401
     with pytest.raises(ConfigurationError, match="cannot run"):
         create_app(settings, readiness_probe=LocalReadinessProbe())
 
@@ -100,12 +100,14 @@ def test_missing_frontend_does_not_claim_to_be_a_working_ui(client: TestClient) 
     assert response.json()["code"] == "frontend_unavailable"
 
 
-def test_built_frontend_and_assets_use_the_same_server(tmp_path: Path) -> None:
+def test_built_frontend_and_assets_use_the_same_server(
+    tmp_path: Path, local_settings: Settings, auth_headers: dict[str, str]
+) -> None:
     (tmp_path / "assets").mkdir()
     (tmp_path / "index.html").write_text("<html><body>frontend fixture</body></html>")
     (tmp_path / "assets" / "test.js").write_text("console.log('fixture');")
-    settings = Settings(environment="local", adapter_mode="local", static_dir=tmp_path)
-    with TestClient(create_app(settings)) as test_client:
+    settings = local_settings.model_copy(update={"static_dir": tmp_path})
+    with TestClient(create_app(settings), headers=auth_headers) as test_client:
         assert "frontend fixture" in test_client.get("/").text
         assert test_client.get("/assets/test.js").status_code == 200
         assert test_client.get("/health").json() == {"status": "ok"}
@@ -122,14 +124,16 @@ def test_unknown_routes_have_safe_problem_responses(client: TestClient) -> None:
     assert response.json()["errors"] == []
 
 
-def test_http_exception_details_are_not_exposed(local_settings: Settings) -> None:
+def test_http_exception_details_are_not_exposed(
+    local_settings: Settings, auth_headers: dict[str, str]
+) -> None:
     app = create_app(local_settings)
 
     @app.get("/test-http-error")
     def test_error() -> None:
         raise HTTPException(status_code=503, detail="private-token private-endpoint")
 
-    with TestClient(app) as test_client:
+    with TestClient(app, headers=auth_headers) as test_client:
         response = test_client.get("/test-http-error")
     assert response.status_code == 503
     assert "private-" not in response.text
@@ -149,7 +153,7 @@ class ValidationFixture(BaseModel):
     ],
 )
 def test_validation_errors_never_echo_input(
-    local_settings: Settings, body: str, status: int, code: str
+    local_settings: Settings, auth_headers: dict[str, str], body: str, status: int, code: str
 ) -> None:
     app = create_app(local_settings)
 
@@ -157,7 +161,7 @@ def test_validation_errors_never_echo_input(
     def validate(payload: ValidationFixture) -> dict[str, int]:
         return {"count": payload.count}
 
-    with TestClient(app) as test_client:
+    with TestClient(app, headers=auth_headers) as test_client:
         response = test_client.post(
             "/test-validation", content=body, headers={"Content-Type": "application/json"}
         )

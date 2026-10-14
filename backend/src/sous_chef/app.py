@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from sous_chef.adapters.readiness import LocalReadinessProbe, UnconfiguredReadinessProbe
+from sous_chef.api.authentication import AuthenticationMiddleware, create_auth_router
 from sous_chef.api.health import create_health_router
 from sous_chef.api.observability import RequestLoggingMiddleware
 from sous_chef.api.problems import problem_response, register_problem_handlers
@@ -36,7 +37,9 @@ def create_app(
         openapi_url="/openapi.json" if config.environment == "local" else None,
     )
     register_problem_handlers(app)
+    app.add_middleware(AuthenticationMiddleware, settings=config)
     app.add_middleware(RequestLoggingMiddleware)
+    app.include_router(create_auth_router(config))
     app.include_router(
         create_health_router(ReadinessService(probe, config.readiness_timeout_seconds))
     )
