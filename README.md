@@ -5,8 +5,10 @@ feedback-based personalization.
 
 ## Local backend
 
-The scaffold runs a FastAPI backend with offline readiness doubles. Authentication,
-Cosmos access, agents and the React UI are not implemented yet.
+The scaffold runs a FastAPI backend with offline readiness doubles and fail-closed
+consumer authentication. Cosmos application access, agents and the React UI are
+not implemented yet. See [consumer sign-in setup](docs/authentication.md) for the
+External ID tenant, App Service configuration and signed-token local testing.
 
 Use **Ubuntu 24.04 in WSL 2**, CPython **3.12**, and a checkout in the Linux
 filesystem. Windows supplies the editor and browser. Do not share a virtual
@@ -39,8 +41,9 @@ a trusted development machine. Stop the server with Ctrl+C.
 Open <http://localhost:8000/health> in the Windows browser. It returns exactly
 `{"status":"ok"}`. <http://localhost:8000/ready> returns `{"status":"ready"}` in
 explicit local-double mode. Local API documentation is at
-<http://localhost:8000/docs>. The root URL returns a truthful 503 until a frontend
-build is installed; it is not a cooking demo.
+<http://localhost:8000/docs>. Protected routes, including the root URL, return 401
+without authentication. After authentication the root returns a truthful 503 until
+a frontend build is installed; it is not a cooking demo.
 
 In another Ubuntu terminal, verify the scaffold:
 

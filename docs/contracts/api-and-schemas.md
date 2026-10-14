@@ -40,7 +40,14 @@ chat sends return 200 with their turn, as specified below. Health is the unauthe
 exception: `GET /health` returns only `{ "status": "ok" }`, without dependency
 details, identities, versions, or secrets.
 
-Errors use `application/problem+json` with RFC 9457 fields and stable extensions:
+The public readiness and login/logout routes and the `/auth/session` bootstrap
+response live outside the product API envelope. See
+[consumer authentication](../authentication.md) for exact paths, session expiry,
+CSRF and local signed-token testing. App Service can reject unauthenticated requests
+before Python: clients must handle any HTTP 401 without assuming a JSON body, then
+offer sign-in without automatically replaying a mutation.
+
+Backend errors use `application/problem+json` with RFC 9457 fields and stable extensions:
 
 ```json
 {

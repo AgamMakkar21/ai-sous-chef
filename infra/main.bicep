@@ -59,6 +59,27 @@ param cosmosEndpoint string
 @minLength(1)
 param cosmosDatabase string
 
+@description('Exact issuer from the approved external tenant OpenID metadata, not a workforce tenant.')
+@minLength(1)
+param authIssuer string
+
+@description('jwks_uri from that same approved external tenant metadata.')
+@minLength(1)
+param authJwksUri string
+
+@description('Consumer web app registration client ID, separate from workload/agent identities.')
+@minLength(36)
+@maxLength(36)
+param authClientId string
+
+@description('Approved browser HTTPS origin, using the actual App Service hostname or custom domain.')
+@minLength(1)
+param authOrigin string
+
+@description('HTTPS Key Vault secret URI containing the external-tenant client credential; never its value.')
+@minLength(1)
+param authSecretUri string
+
 var project = 'ai-sous-chef'
 var namePrefix = '${project}-${environment}'
 var foundryDeploymentNames = {
@@ -102,6 +123,11 @@ module appService 'modules/app-service.bicep' = {
     environment: environment
     cosmosEndpoint: cosmosEndpoint
     cosmosDatabase: cosmosDatabase
+    authIssuer: authIssuer
+    authJwksUri: authJwksUri
+    authClientId: authClientId
+    authOrigin: authOrigin
+    authSecretUri: authSecretUri
     foundryProjectEndpoint: foundry.outputs.projectEndpoint
     foundryDeploymentNames: foundryDeploymentNames
     applicationInsightsResourceId: monitoring.outputs.applicationInsightsResourceId

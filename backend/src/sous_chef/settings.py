@@ -22,6 +22,14 @@ class Settings(BaseSettings):
     adapter_mode: Literal["local", "live"]
     readiness_timeout_seconds: float = Field(default=2, gt=0, le=10, allow_inf_nan=False)
     static_dir: Path = Path(__file__).parent / "static"
+    auth_issuer: HttpUrl | None = Field(default=None, repr=False)
+    auth_jwks_uri: HttpUrl | None = Field(default=None, repr=False)
+    auth_client_id: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$",
+        repr=False,
+    )
+    auth_origin: HttpUrl | None = Field(default=None, repr=False)
     cosmos_endpoint: HttpUrl | None = Field(default=None, repr=False)
     cosmos_database: str | None = Field(default=None, min_length=1, max_length=255, repr=False)
     foundry_project_endpoint: HttpUrl | None = Field(default=None, repr=False)
@@ -37,6 +45,35 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_environment(self) -> Self:
+        auth_values = (self.auth_issuer, self.auth_jwks_uri, self.auth_client_id, self.auth_origin)
+        if any(value is not None for value in auth_values):
+            if any(value is None for value in auth_values):
+                raise ConfigurationError(
+                    "Set ASC_AUTH_ISSUER, ASC_AUTH_JWKS_URI, "
+                    "ASC_AUTH_CLIENT_ID and ASC_AUTH_ORIGIN."
+                )
+            for endpoint in (self.auth_issuer, self.auth_jwks_uri):
+                if endpoint is not None and (
+                    endpoint.scheme != "https"
+                    or not (endpoint.host or "").endswith(".ciamlogin.com")
+                    or endpoint.port != 443
+                    or endpoint.username is not None
+                    or endpoint.password is not None
+                    or endpoint.query is not None
+                    or endpoint.fragment is not None
+                ):
+                    raise ConfigurationError(
+                        "Authentication endpoints must use HTTPS ciamlogin.com."
+                    )
+            if self.auth_origin is not None and (
+                (self.auth_origin.scheme != "https" and self.environment != "local")
+                or self.auth_origin.username is not None
+                or self.auth_origin.password is not None
+                or self.auth_origin.path != "/"
+                or self.auth_origin.query is not None
+                or self.auth_origin.fragment is not None
+            ):
+                raise ConfigurationError("ASC_AUTH_ORIGIN must be an HTTPS origin without a path.")
         if self.environment != "local" and self.adapter_mode == "local":
             raise ConfigurationError(
                 "ASC_ADAPTER_MODE=local is permitted only with ASC_ENVIRONMENT=local. "

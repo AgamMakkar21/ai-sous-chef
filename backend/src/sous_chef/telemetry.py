@@ -35,6 +35,9 @@ class ErrorCategory(StrEnum):
     INTERNAL_ERROR = "internal_error"
     DEPENDENCY_UNAVAILABLE = "dependency_unavailable"
     FRONTEND_UNAVAILABLE = "frontend_unavailable"
+    UNAUTHENTICATED = "unauthenticated"
+    AUTHENTICATION_UNAVAILABLE = "authentication_unavailable"
+    CSRF_FAILED = "csrf_failed"
 
 
 class Event(StrEnum):

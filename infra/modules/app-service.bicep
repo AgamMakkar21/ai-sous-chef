@@ -38,6 +38,12 @@ param foundryDeploymentNames object
 @description('Application Insights resource ID; its connection string is nonsecret.')
 param applicationInsightsResourceId string
 
+param authIssuer string
+param authJwksUri string
+param authClientId string
+param authOrigin string
+param authSecretUri string
+
 var appName = '${namePrefix}-web-${take(uniqueString(resourceGroup().id), 6)}'
 var pythonVersion = '3.12'
 // The app is deployed as source; --app-dir makes backend/src importable without installing it.
@@ -83,6 +89,7 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
     httpsOnly: true
     clientAffinityEnabled: false
     publicNetworkAccess: 'Enabled'
+    keyVaultReferenceIdentity: identity.id
     siteConfig: {
       linuxFxVersion: 'PYTHON|${pythonVersion}'
       appCommandLine: startupCommand
@@ -94,6 +101,14 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
       appSettings: [
         { name: 'ASC_ENVIRONMENT', value: environment }
         { name: 'ASC_ADAPTER_MODE', value: 'live' }
+        { name: 'ASC_AUTH_ISSUER', value: authIssuer }
+        { name: 'ASC_AUTH_JWKS_URI', value: authJwksUri }
+        { name: 'ASC_AUTH_CLIENT_ID', value: authClientId }
+        { name: 'ASC_AUTH_ORIGIN', value: authOrigin }
+        {
+          name: 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET'
+          value: '@Microsoft.KeyVault(SecretUri=${authSecretUri})'
+        }
         { name: 'ASC_COSMOS_ENDPOINT', value: cosmosEndpoint }
         { name: 'ASC_COSMOS_DATABASE', value: cosmosDatabase }
         { name: 'ASC_FOUNDRY_PROJECT_ENDPOINT', value: foundryProjectEndpoint }
@@ -102,6 +117,7 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
           name: 'ASC_FOUNDRY_RECIPE_NUTRITION_DEPLOYMENT'
           value: foundryDeploymentNames.recipeNutrition
         }
+
         { name: 'ASC_FOUNDRY_EXTRACTION_DEPLOYMENT', value: foundryDeploymentNames.extraction }
         { name: 'AZURE_CLIENT_ID', value: identity.properties.clientId }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
@@ -114,6 +130,63 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'OTEL_LOGS_EXPORTER', value: 'none' }
         { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'true' }
       ]
+    }
+  }
+}
+
+resource authentication 'Microsoft.Web/sites/config@2024-04-01' = {
+  parent: app
+  name: 'authsettingsV2'
+  properties: {
+    platform: {
+      enabled: true
+      runtimeVersion: '~1'
+    }
+    globalValidation: {
+      requireAuthentication: true
+      unauthenticatedClientAction: 'Return401'
+      excludedPaths: [
+        '/health'
+        '/ready'
+        '/auth/login'
+        '/auth/logout'
+        '/auth/signed-out'
+      ]
+    }
+    httpSettings: {
+      requireHttps: true
+    }
+    identityProviders: {
+      azureActiveDirectory: {
+        enabled: true
+        registration: {
+          clientId: authClientId
+          clientSecretSettingName: 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET'
+          openIdIssuer: authIssuer
+        }
+        validation: {
+          allowedAudiences: [
+            authClientId
+          ]
+        }
+        login: {
+          loginParameters: [
+            'scope=openid profile email'
+          ]
+        }
+      }
+    }
+    login: {
+      preserveUrlFragmentsForLogins: false
+      allowedExternalRedirectUrls: []
+      cookieExpiration: {
+        convention: 'FixedTime'
+        timeToExpiration: '01:00:00'
+      }
+      tokenStore: {
+        enabled: true
+        tokenRefreshExtensionHours: 0
+      }
     }
   }
 }
