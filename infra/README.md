@@ -211,6 +211,25 @@ curl https://<app-host>/health   # {"status":"ok"}
 `SCM_DO_BUILD_DURING_DEPLOYMENT=true` makes the platform install `requirements.txt`.
 The first start after a deploy can return 503 for a few minutes while it builds.
 
+## Agent identities (ASC-12)
+
+The Orchestrator and Recipe + Nutrition agents each get their own Entra Agent identity. Foundry
+creates it automatically for every new-model agent; there is no secret to store. Legacy agents have
+no identity and must be recreated.
+
+Keep these distinct in configuration (all nonsecret):
+
+| Setting | Meaning |
+| --- | --- |
+| `ASC_FOUNDRY_ORCHESTRATOR_AGENT_NAME`, `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_NAME` | Foundry runtime agent names |
+| `ASC_FOUNDRY_ORCHESTRATOR_AGENT_PRINCIPAL_ID`, `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_PRINCIPAL_ID` | Expected Entra Agent principal IDs (`instance_identity.principal_id`) |
+| `ASC_APP_WORKLOAD_PRINCIPAL_ID` | App Service managed identity principal ID |
+
+`resolve_agent_identities` reads each deployed agent's identity and fails if two agents share one,
+an agent uses the App Service identity, or a pinned ID does not match. Tool allow-lists live in
+`sous_chef/domain/agent_identity.py`. No agent identity gets Cosmos access; the backend reads
+Cosmos and passes context to the agents.
+
 ## Retention, access, and costs
 
 Ordinary operational telemetry has 30-day retention, including explicit
