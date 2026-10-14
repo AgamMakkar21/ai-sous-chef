@@ -1,4 +1,4 @@
-# Consumer authentication (ASC-13 / issue 17)
+# Consumer authentication and authorization (ASC-13 / ASC-14)
 
 ## Boundary and behavior
 
@@ -33,6 +33,13 @@ subject; future handlers must use it for Cosmos ownership and partition scoping,
 never a supplied ID. Changing registration/issuer requires an explicit identity
 migration, not matching users by email.
 
+The platform ID-token header is not proof by itself: the contained signed token
+is always verified independently. Raw client-principal headers never establish
+identity, even in dev/prod. An explicitly supplied but empty/invalid Authorization
+header cannot fall back to the cookie session, and duplicate credential headers
+are rejected. Deploy only behind the configured Easy Auth boundary; do not expose
+an alternate direct-to-worker ingress or disable authentication on product paths.
+
 | Operation | Response / caller behavior |
 | --- | --- |
 | `GET /auth/login` | Hosted: 307 to `/.auth/login/aad`, fixed return `/`. Local: 503 with testing guidance. |
@@ -58,6 +65,50 @@ host-only `__Host-asc-csrf` cookie. Keep the token in memory, not local storage.
 Refreshing the session rotates it; other tabs may need to fetch a new session on
 403. Explicit bearer requests do not use ambient browser credentials and do not
 require this cookie. Do not add permissive CORS.
+
+## Shared backend authorization
+
+Protected handlers declare the `CurrentUser` FastAPI dependency from
+`sous_chef.api.authentication`. It returns the immutable `AuthenticatedUser` that
+middleware derived from the verified identity; if middleware context is missing,
+it fails closed with the same 401 problem response. Do not construct this context
+from route, query, body, tool arguments, email, or client-principal headers.
+The domain type lives in `sous_chef.domain.authorization`; the authentication
+module re-exports it for existing callers.
+
+Every data operation must use `user.user_id` as its Cosmos partition key and
+server-selected ownership field:
+
+```python
+@router.get("/recipes/{recipe_id}")
+async def read_recipe(recipe_id: str, user: CurrentUser) -> dict[str, object]:
+    document = await repository.read(recipe_id, partition_key=user.user_id)
+    owned = user.require_owned(document)
+    return {"data": to_public_recipe(owned)}
+```
+
+This illustrates the contract for a future repository, not a new recipe endpoint.
+Repositories normalize an absent point read to `None`; they must not normalize
+database/network failures to absence. `require_owned` returns the original typed
+record only when its stored `userId` matches the verified user. Missing, ownerless,
+and foreign records raise `OwnedResourceNotFound`, rendered as the same no-store
+404 `not_found` problem with a trace ID and no record details.
+
+Read within the authenticated partition **before** checking the record; never
+search globally to discover an owner. Apply the guard before returning private
+content, reporting revisions/conflicts, or mutating/deleting a record. Updates and
+deletes must also use that same partition. Creation sets `userId` on the server;
+mutation schemas must reject unknown fields, including `userId`. Collection queries
+must stay within the verified user's partition; checking individual returned
+records does not replace partition-scoped queries. No new product API, database
+adapter, or unpartitioned lookup is added by ASC-14.
+
+Local tests use ephemeral signed tokens and a replaced JWKS fetch, not a synthetic
+principal header, request-selected user, or runtime test-auth switch. The focused
+two-user fixture covers reads and mutations with colliding resource IDs, foreign
+IDs, forged identity hints, and wrong-owner records returned from storage. The
+comprehensive per-product-route matrix remains ASC-18; each new endpoint must
+still ship focused ownership tests.
 
 ## Required admin actions (each environment)
 
@@ -156,7 +207,7 @@ JWKS fetch is replaced in tests; signature and claims verification still execute
 There is no test key in application configuration or production code. Run:
 
 ```text
-python -m pytest tests/integration/test_authentication.py tests/integration/test_application.py tests/integration/test_privacy_logging.py tests/unit/test_settings.py
+python -m pytest tests/integration/test_authentication.py tests/integration/test_authorization.py tests/integration/test_application.py tests/integration/test_privacy_logging.py tests/unit/test_user_scope.py tests/unit/test_settings.py
 python -m unittest discover -s tests/infrastructure -p test_foundation.py -v
 ```
 

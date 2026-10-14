@@ -5,6 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 
+from sous_chef.domain.authorization import OwnedResourceNotFound
 from sous_chef.telemetry import ErrorCategory, error_category, new_trace_id, trace_id
 
 
@@ -31,8 +32,20 @@ def problem_response(status: int, code: str, title: str, detail: str) -> JSONRes
 
 
 def register_problem_handlers(app: FastAPI) -> None:
+    @app.exception_handler(OwnedResourceNotFound)
+    async def owned_resource_not_found(
+        _request: Request, _exc: OwnedResourceNotFound
+    ) -> JSONResponse:
+        return problem_response(404, "not_found", "Not found", "The resource was not found.")
+
     @app.exception_handler(HTTPException)
     async def http_error(_request: Request, exc: HTTPException) -> JSONResponse:
+        if exc.status_code == 401:
+            response = problem_response(
+                401, "unauthenticated", "Authentication required", "Sign in again to continue."
+            )
+            response.headers["WWW-Authenticate"] = "Bearer"
+            return response
         if exc.status_code == 404:
             return problem_response(404, "not_found", "Not found", "The resource was not found.")
         return problem_response(
