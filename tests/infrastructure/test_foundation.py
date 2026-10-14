@@ -37,6 +37,7 @@ class FoundationTests(unittest.TestCase):
     monitoring: ClassVar[dict[str, Any]]
     foundry: ClassVar[dict[str, Any]]
     app: ClassVar[dict[str, Any]]
+    access: ClassVar[dict[str, Any]]
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -62,15 +63,30 @@ class FoundationTests(unittest.TestCase):
         modules = {
             name: resource["properties"]["template"]
             for resource in cls.template["resources"]
-            for name in ("foundry", "app-service", "monitoring")
+            for name in ("foundry", "app-service", "monitoring", "foundry-access")
             if f"-{name}'" in resource["name"]
         }
         cls.monitoring = modules["monitoring"]
         cls.foundry = modules["foundry"]
         cls.app = modules["app-service"]
+        cls.access = modules["foundry-access"]
+
+    def test_app_identity_gets_foundry_user_on_the_project_only(self) -> None:
+        resources = self.access["resources"]
+        roles = [r for r in resources if r["type"] == "Microsoft.Authorization/roleAssignments"]
+        self.assertEqual(len(roles), 1)
+        self.assertEqual(
+            self.access["variables"]["foundryUserRoleId"], "53ca6127-db72-4b80-b1b0-d745d6d5456d"
+        )
+        self.assertIn("projects", roles[0]["scope"])
+        text = json.dumps(self.access)
+        owner = "8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
+        contributor = "b24988ac-6180-42a0-ab88-20f7382dd24c"
+        self.assertNotIn(owner, text)
+        self.assertNotIn(contributor, text)
 
     def test_only_monitoring_retention_foundry_and_app_service_are_deployed(self) -> None:
-        self.assertEqual(len(self.template["resources"]), 3)
+        self.assertEqual(len(self.template["resources"]), 4)
         for resource in self.template["resources"]:
             self.assertEqual(resource["type"], "Microsoft.Resources/deployments")
             self.assertEqual(resource["properties"]["mode"], "Incremental")
@@ -248,6 +264,8 @@ class FoundationTests(unittest.TestCase):
         nonsecret = {
             "resourceGroupId",
             "foundryProjectEndpoint",
+            "accountName",
+            "projectName",
             "foundryProjectPrincipalId",
             "projectEndpoint",
             "projectPrincipalId",
