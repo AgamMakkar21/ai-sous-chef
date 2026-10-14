@@ -58,7 +58,10 @@ class SensitivePayload(BaseModel):
 
 @pytest.mark.parametrize("failure", ["success", "exception", "http", "validation", "json", "404"])
 def test_sensitive_content_never_enters_operational_logs(
-    local_settings: Settings, caplog: pytest.LogCaptureFixture, failure: str
+    local_settings: Settings,
+    caplog: pytest.LogCaptureFixture,
+    failure: str,
+    auth_headers: dict[str, str],
 ) -> None:
     app = create_app(local_settings)
 
@@ -89,7 +92,8 @@ def test_sensitive_content_never_enters_operational_logs(
             headers={
                 "Content-Type": "application/json",
                 "X-Trace-ID": CANARIES["email"],
-                "Authorization": "Bearer " + CANARIES["message"],
+                **auth_headers,
+                "Cookie": "private=" + CANARIES["message"],
             },
             content=content,
         )
@@ -169,7 +173,9 @@ def test_content_capture_is_disabled_even_if_process_flags_enable_it(
 
 
 def test_concurrent_requests_have_distinct_matching_ids(
-    local_settings: Settings, caplog: pytest.LogCaptureFixture
+    local_settings: Settings,
+    caplog: pytest.LogCaptureFixture,
+    auth_headers: dict[str, str],
 ) -> None:
     app = create_app(local_settings)
 
@@ -180,7 +186,7 @@ def test_concurrent_requests_have_distinct_matching_ids(
 
     async def requests() -> list[httpx.Response]:
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
+            transport=httpx.ASGITransport(app=app), base_url="http://test", headers=auth_headers
         ) as client:
 
             async def request() -> httpx.Response:
@@ -202,7 +208,9 @@ def test_concurrent_requests_have_distinct_matching_ids(
 
 
 def test_streaming_failure_is_logged_without_a_second_response(
-    local_settings: Settings, caplog: pytest.LogCaptureFixture
+    local_settings: Settings,
+    caplog: pytest.LogCaptureFixture,
+    auth_headers: dict[str, str],
 ) -> None:
     app = create_app(local_settings)
 
@@ -214,7 +222,7 @@ def test_streaming_failure_is_logged_without_a_second_response(
 
         return StreamingResponse(body())
 
-    with TestClient(app) as client, pytest.raises(RuntimeError):
+    with TestClient(app, headers=auth_headers) as client, pytest.raises(RuntimeError):
         client.get("/stream")
     events = request_events(caplog)
     assert len(events) == 1
@@ -228,6 +236,7 @@ def test_live_server_streaming_errors_and_urls_are_safe(
     local_settings: Settings,
     caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
+    auth_headers: dict[str, str],
 ) -> None:
     app = create_app(local_settings)
 
@@ -250,7 +259,9 @@ def test_live_server_streaming_errors_and_urls_are_safe(
             while not server.started and thread.is_alive() and time.monotonic() < deadline:
                 time.sleep(0.01)
             assert server.started
-            with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=5) as client:
+            with httpx.Client(
+                base_url=f"http://127.0.0.1:{port}", timeout=5, headers=auth_headers
+            ) as client:
                 assert client.get("/health").json() == {"status": "ok"}
                 with client.stream(
                     "GET", "/stream/" + CANARIES["notes"], params=CANARIES

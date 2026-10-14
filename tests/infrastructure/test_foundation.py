@@ -43,7 +43,6 @@ class FoundationTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.template = compile_bicep("infra/main.bicep")
         cls.group = compile_bicep("infra/resource-group.bicep")
-        cls.dev = compile_bicep("infra/environments/dev.bicepparam", "build-params")
         with patch.dict(
             os.environ,
             {
@@ -52,8 +51,14 @@ class FoundationTests(unittest.TestCase):
                 "ASC_RESOURCE_OWNER": "offline-test-owner",
                 "ASC_COSMOS_ENDPOINT": "https://offline.example.test/",
                 "ASC_COSMOS_DATABASE": "offline-db",
+                "ASC_AUTH_ISSUER": "https://synthetic.ciamlogin.com/tenant/v2.0",
+                "ASC_AUTH_JWKS_URI": "https://synthetic.ciamlogin.com/tenant/discovery/v2.0/keys",
+                "ASC_AUTH_CLIENT_ID": "22222222-2222-2222-2222-222222222222",
+                "ASC_AUTH_ORIGIN": "https://synthetic.azurewebsites.net",
+                "ASC_AUTH_SECRET_URI": "https://synthetic.vault.azure.net/secrets/consumer-login",
             },
         ):
+            cls.dev = compile_bicep("infra/environments/dev.bicepparam", "build-params")
             cls.prod = compile_bicep("infra/environments/prod.bicepparam", "build-params")
         modules = {
             name: resource["properties"]["template"]
@@ -188,7 +193,17 @@ class FoundationTests(unittest.TestCase):
         site = next(r for r in self.app["resources"] if r["type"] == "Microsoft.Web/sites")
         settings = {s["name"]: s["value"] for s in site["properties"]["siteConfig"]["appSettings"]}
         for name in ("KEY", "SECRET", "PASSWORD", "TOKEN"):
-            self.assertFalse([k for k in settings if name in k.upper()])
+            self.assertFalse(
+                [
+                    k
+                    for k in settings
+                    if name in k.upper() and k != "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"
+                ]
+            )
+        self.assertIn(
+            "@Microsoft.KeyVault(SecretUri=",
+            settings["MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"],
+        )
         self.assertEqual(settings["ASC_ADAPTER_MODE"], "live")
         self.assertEqual(settings["OTEL_SDK_DISABLED"], "true")
         self.assertEqual(settings["ApplicationInsightsAgent_EXTENSION_VERSION"], "disabled")
@@ -207,6 +222,39 @@ class FoundationTests(unittest.TestCase):
             self.assertEqual(self.template["parameters"][name]["minLength"], 1)
             self.assertIn(name, self.dev["parameters"])
             self.assertIn(name, self.prod["parameters"])
+
+    def test_consumer_auth_is_required_and_uses_no_external_redirects(self) -> None:
+        auth = next(r for r in self.app["resources"] if "authsettingsV2" in r["name"])
+        config = auth["properties"]
+        self.assertTrue(config["platform"]["enabled"])
+        self.assertTrue(config["globalValidation"]["requireAuthentication"])
+        self.assertEqual(config["globalValidation"]["unauthenticatedClientAction"], "Return401")
+        self.assertEqual(
+            set(config["globalValidation"]["excludedPaths"]),
+            {
+                "/health",
+                "/ready",
+                "/auth/login",
+                "/auth/logout",
+                "/auth/signed-out",
+            },
+        )
+        self.assertTrue(config["httpSettings"]["requireHttps"])
+        provider = config["identityProviders"]["azureActiveDirectory"]
+        self.assertEqual(provider["registration"]["openIdIssuer"], "[parameters('authIssuer')]")
+        self.assertEqual(
+            provider["validation"]["allowedAudiences"], ["[parameters('authClientId')]"]
+        )
+        self.assertEqual(config["login"]["allowedExternalRedirectUrls"], [])
+        self.assertTrue(config["login"]["tokenStore"]["enabled"])
+        self.assertEqual(config["login"]["tokenStore"]["tokenRefreshExtensionHours"], 0)
+        self.assertEqual(config["login"]["cookieExpiration"]["timeToExpiration"], "01:00:00")
+        for name in ("authIssuer", "authJwksUri", "authClientId", "authOrigin", "authSecretUri"):
+            self.assertNotIn("defaultValue", self.template["parameters"][name])
+            self.assertIn(name, self.dev["parameters"])
+            self.assertIn(name, self.prod["parameters"])
+        site = next(r for r in self.app["resources"] if r["type"] == "Microsoft.Web/sites")
+        self.assertIn("userAssignedIdentities", site["properties"]["keyVaultReferenceIdentity"])
 
     def test_tags_and_outputs_have_no_secrets(self) -> None:
         self.assertEqual(

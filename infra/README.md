@@ -16,6 +16,12 @@ No Cosmos DB, Functions, PostgreSQL, storage account,
 agent identities, application instrumentation, dashboards, or alerts are deployed.
 Foundry is added by `modules/foundry.bicep` and hosting by `modules/app-service.bicep`
 (see the Foundry and App Service sections below).
+Hosting includes consumer Entra External ID authentication. Before compiling either
+environment's parameter file or deploying, complete the tenant-admin steps and set
+`ASC_AUTH_ISSUER`, `ASC_AUTH_JWKS_URI`, `ASC_AUTH_CLIENT_ID`, `ASC_AUTH_ORIGIN` and
+`ASC_AUTH_SECRET_URI` as described in [consumer sign-in setup](../docs/authentication.md).
+The secret URI is a Key Vault reference, never the client-secret value. Main-template
+redeployments retain these settings and authentication enforcement.
 Cosmos has a separate, opt-in [dev deployment](cosmos.md) for ASC-07; running
 `main.bicep` does not provision Cosmos.
 `modules/monitoring.bicep` is the foundation module. Later service issues add their
@@ -175,7 +181,10 @@ Python web/API deployment; there are no microservices.
 - App settings are nonsecret only: environment, adapter mode, Cosmos endpoint and
   database, Foundry endpoint and deployment names, `AZURE_CLIENT_ID` of the app
   identity, and the Application Insights connection string. Prompt/message content
-  capture is off. No Cosmos or Foundry key exists anywhere.
+  capture is off. Consumer auth adds issuer/JWKS/client/origin settings and a
+  Key Vault **reference**, never an embedded provider-secret value. The reference
+  uses the dedicated app identity; an approved vault reader grant is a prerequisite.
+  No Cosmos or Foundry key exists anywhere.
 - This template grants no roles. The app identity needs Cosmos data-plane and
   Azure AI User roles from issues #11/#16, so `/ready` stays 503 until then.
 
@@ -224,6 +233,25 @@ Verify the Foundry grant:
 ```powershell
 az role assignment list --assignee <appIdentityPrincipalId> --scope <foundryProjectResourceId>
 ```
+
+## Agent identities (ASC-12)
+
+The Orchestrator and Recipe + Nutrition agents each get their own Entra Agent identity. Foundry
+creates it automatically for every new-model agent; there is no secret to store. Legacy agents have
+no identity and must be recreated.
+
+Keep these distinct in configuration (all nonsecret):
+
+| Setting | Meaning |
+| --- | --- |
+| `ASC_FOUNDRY_ORCHESTRATOR_AGENT_NAME`, `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_NAME` | Foundry runtime agent names |
+| `ASC_FOUNDRY_ORCHESTRATOR_AGENT_PRINCIPAL_ID`, `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_PRINCIPAL_ID` | Expected Entra Agent principal IDs (`instance_identity.principal_id`) |
+| `ASC_APP_WORKLOAD_PRINCIPAL_ID` | App Service managed identity principal ID |
+
+`resolve_agent_identities` reads each deployed agent's identity and fails if two agents share one,
+an agent uses the App Service identity, or a pinned ID does not match. Tool allow-lists live in
+`sous_chef/domain/agent_identity.py`. No agent identity gets Cosmos access; the backend reads
+Cosmos and passes context to the agents.
 
 ## Retention, access, and costs
 
