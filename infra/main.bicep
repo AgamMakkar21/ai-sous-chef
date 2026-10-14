@@ -108,6 +108,15 @@ module appService 'modules/app-service.bicep' = {
   }
 }
 
+module foundryAccess 'modules/foundry-access.bicep' = {
+  name: '${namePrefix}-foundry-access'
+  params: {
+    accountName: foundry.outputs.accountName
+    projectName: foundry.outputs.projectName
+    invokerPrincipalIds: [appService.outputs.appIdentityPrincipalId]
+  }
+}
+
 output appServiceResourceId string = appService.outputs.appServiceResourceId
 output appServiceHostName string = appService.outputs.appServiceHostName
 output appIdentityPrincipalId string = appService.outputs.appIdentityPrincipalId

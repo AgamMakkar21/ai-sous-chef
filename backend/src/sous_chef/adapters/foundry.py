@@ -1,11 +1,13 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import partial
 from typing import Any, Protocol
 
 from azure.ai.projects import AIProjectClient
-from azure.identity import DefaultAzureCredential
+from azure.core.credentials import TokenCredential
 
+from sous_chef.adapters.credentials import build_credential
 from sous_chef.settings import ConfigurationError, Settings
 
 
@@ -55,9 +57,8 @@ class FoundryDeployments:
         return cls(orchestrator, recipe_nutrition, extraction)
 
 
-def _project_openai_client(endpoint: str) -> _OpenAIClient:
-    # Managed identity in Azure; the developer's `az login` locally. No keys.
-    client = AIProjectClient(endpoint=endpoint, credential=DefaultAzureCredential())
+def _project_openai_client(endpoint: str, credential: TokenCredential) -> _OpenAIClient:
+    client = AIProjectClient(endpoint=endpoint, credential=credential)
     openai_client: _OpenAIClient = client.get_openai_client()
     return openai_client
 
@@ -68,12 +69,15 @@ class FoundryModelClient:
     def __init__(
         self,
         settings: Settings,
-        openai_client_factory: Callable[[str], _OpenAIClient] = _project_openai_client,
+        openai_client_factory: Callable[[str], _OpenAIClient] | None = None,
     ) -> None:
         if settings.foundry_project_endpoint is None:
             raise ConfigurationError("Set ASC_FOUNDRY_PROJECT_ENDPOINT.")
         self._endpoint = str(settings.foundry_project_endpoint)
         self._deployments = FoundryDeployments.from_settings(settings)
+        if openai_client_factory is None:
+            credential = build_credential(settings)
+            openai_client_factory = partial(_project_openai_client, credential=credential)
         self._factory = openai_client_factory
         self._client: _OpenAIClient | None = None
 

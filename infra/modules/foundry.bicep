@@ -71,6 +71,8 @@ resource modelDeployments 'Microsoft.CognitiveServices/accounts/deployments@2025
 }]
 
 output accountResourceId string = account.id
+output accountName string = account.name
+output projectName string = project.name
 output projectResourceId string = project.id
 output projectEndpoint string = 'https://${accountName}.services.ai.azure.com/api/projects/${projectName}'
 output projectPrincipalId string = project.identity.principalId

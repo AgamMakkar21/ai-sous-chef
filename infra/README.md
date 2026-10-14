@@ -202,6 +202,29 @@ curl https://<app-host>/health   # {"status":"ok"}
 `SCM_DO_BUILD_DURING_DEPLOYMENT=true` makes the platform install `requirements.txt`.
 The first start after a deploy can return 503 for a few minutes while it builds.
 
+## App identity roles (ASC-11)
+
+The app runs as the user-assigned identity `ai-sous-chef-<env>-app-identity`. It holds no keys.
+
+| Resource | Role | Scope | Defined in |
+| --- | --- | --- | --- |
+| Foundry | Foundry User | The Foundry project only | `modules/foundry-access.bicep` |
+| Cosmos DB | Data Contributor | The `Users`, `RecipeHistory` and `ChatHistory` containers | `cosmos.bicep` (`ASC_COSMOS_WRITER_PRINCIPAL_IDS`) |
+| Cosmos DB | Custom metadata-only role | The account | `cosmos.bicep` |
+
+No Owner, Contributor or subscription-wide grant exists. The lease container is not granted.
+
+Credential selection (`backend/src/sous_chef/adapters/credentials.py`) has no fallback chain:
+
+- `ASC_ENVIRONMENT=dev` or `prod`: `ManagedIdentityCredential` using `AZURE_CLIENT_ID`. A missing client ID fails at startup.
+- `ASC_ENVIRONMENT=local`: `AzureCliCredential` (`az login`). Nothing else is tried.
+
+Verify the Foundry grant:
+
+```powershell
+az role assignment list --assignee <appIdentityPrincipalId> --scope <foundryProjectResourceId>
+```
+
 ## Retention, access, and costs
 
 Ordinary operational telemetry has 30-day retention, including explicit
