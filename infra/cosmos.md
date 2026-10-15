@@ -175,9 +175,10 @@ uv run --script scripts\smoke_cosmos.py `
 ```
 
 `uv` installs the script's pinned Cosmos/identity dependencies in an isolated
-environment, not the backend runtime. The Cosmos SDK is also in the locked dev
-dependencies for CI type checks. Azure CLI sign-in must already have access to
-the approved subscription; that explicit subscription selects its tenant.
+environment, separate from the backend runtime. The same Cosmos SDK pin is in
+the runtime and dev locks for application access and CI checks. Azure CLI sign-in
+must already have access to the approved subscription; that explicit subscription
+selects its tenant.
 Do not supply a tenant override with it: Azure CLI rejects that combination.
 Identity/RBAC/firewall propagation can take time; report errors and retry
 deliberately, never fall back to keys or open networking.

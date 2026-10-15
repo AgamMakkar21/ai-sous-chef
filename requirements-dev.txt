@@ -4,8 +4,8 @@ aiosignal==1.4.0
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.15.1
-attrs==26.1.0
 ast-serialize==0.12.1
+attrs==26.1.0
 azure-ai-projects==2.8.0
 azure-core==1.41.0
 azure-cosmos==4.17.1
@@ -38,11 +38,11 @@ mypy==2.4.0
 mypy-extensions==1.1.0
 openai==3.27.0
 opentelemetry-api==1.45.1
-propcache==0.5.4
 packaging==26.3
 pathspec==1.1.1
 pip-tools==7.6.2
 pluggy==1.6.0
+propcache==0.5.4
 pycparser==3.11
 pydantic==2.14.0
 pydantic-core==2.50.0
@@ -63,8 +63,8 @@ typing-extensions==4.16.0
 typing-inspection==0.4.4
 urllib3==2.8.0
 uvicorn==0.54.0
-yarl==1.25.1
 wheel==0.48.0
+yarl==1.25.1
 
 # The following packages are considered to be unsafe in a requirements file:
 # pip

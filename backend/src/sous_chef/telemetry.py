@@ -44,6 +44,16 @@ class ErrorCategory(StrEnum):
     FOUNDRY_INVALID_RESULT = "foundry_invalid_result"
     FOUNDRY_UNAVAILABLE = "foundry_unavailable"
     FOUNDRY_REJECTED = "foundry_rejected"
+    COSMOS_AUTHENTICATION = "cosmos_authentication"
+    COSMOS_FORBIDDEN = "cosmos_forbidden"
+    COSMOS_THROTTLED = "cosmos_throttled"
+    COSMOS_TIMEOUT = "cosmos_timeout"
+    COSMOS_UNAVAILABLE = "cosmos_unavailable"
+    COSMOS_INVALID_RESULT = "cosmos_invalid_result"
+    COSMOS_REJECTED = "cosmos_rejected"
+    REVISION_CONFLICT = "revision_conflict"
+    DUPLICATE_RESOURCE = "duplicate_resource"
+    RECORD_TOO_LARGE = "record_too_large"
 
 
 class Event(StrEnum):
@@ -54,6 +64,7 @@ class Event(StrEnum):
     FOUNDRY_COMPLETED = "foundry_completed"
     FOUNDRY_FAILED = "foundry_failed"
     FOUNDRY_CANCELLED = "foundry_cancelled"
+    COSMOS_FAILED = "cosmos_failed"
 
 
 @dataclass(frozen=True)
@@ -88,7 +99,11 @@ def operational_event(
         raise ValueError("Operational status must be an HTTP status code.")
     if duration_ms is not None and (not isfinite(duration_ms) or duration_ms < 0):
         raise ValueError("Operational duration must be finite and nonnegative.")
-    level = logging.ERROR if event in {Event.REQUEST_FAILED, Event.FOUNDRY_FAILED} else logging.INFO
+    level = (
+        logging.ERROR
+        if event in {Event.REQUEST_FAILED, Event.FOUNDRY_FAILED, Event.COSMOS_FAILED}
+        else logging.INFO
+    )
     if event in {Event.READINESS_UNAVAILABLE, Event.READINESS_TIMEOUT}:
         level = logging.WARNING
     logging.getLogger("sous_chef.operational").log(

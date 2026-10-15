@@ -82,12 +82,13 @@ server-selected ownership field:
 ```python
 @router.get("/recipes/{recipe_id}")
 async def read_recipe(recipe_id: str, user: CurrentUser) -> dict[str, object]:
-    document = await repository.read(recipe_id, partition_key=user.user_id)
-    owned = user.require_owned(document)
+    record = await repository.read(user, ProductContainer.RECIPE_HISTORY, recipe_id)
+    owned = user.require_owned(record.body if record is not None else None)
     return {"data": to_public_recipe(owned)}
 ```
 
-This illustrates the contract for a future repository, not a new recipe endpoint.
+This illustrates the [shared repository](cosmos-access.md), not a new recipe endpoint.
+`ProductContainer` comes from `sous_chef.domain.cosmos`.
 Repositories normalize an absent point read to `None`; they must not normalize
 database/network failures to absence. `require_owned` returns the original typed
 record only when its stored `userId` matches the verified user. Missing, ownerless,
