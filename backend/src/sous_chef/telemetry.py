@@ -38,6 +38,12 @@ class ErrorCategory(StrEnum):
     UNAUTHENTICATED = "unauthenticated"
     AUTHENTICATION_UNAVAILABLE = "authentication_unavailable"
     CSRF_FAILED = "csrf_failed"
+    FOUNDRY_AUTHENTICATION = "foundry_authentication"
+    FOUNDRY_THROTTLED = "foundry_throttled"
+    FOUNDRY_TIMEOUT = "foundry_timeout"
+    FOUNDRY_INVALID_RESULT = "foundry_invalid_result"
+    FOUNDRY_UNAVAILABLE = "foundry_unavailable"
+    FOUNDRY_REJECTED = "foundry_rejected"
 
 
 class Event(StrEnum):
@@ -45,6 +51,9 @@ class Event(StrEnum):
     REQUEST_FAILED = "request_failed"
     READINESS_UNAVAILABLE = "readiness_dependency_unavailable"
     READINESS_TIMEOUT = "readiness_deadline_exceeded"
+    FOUNDRY_COMPLETED = "foundry_completed"
+    FOUNDRY_FAILED = "foundry_failed"
+    FOUNDRY_CANCELLED = "foundry_cancelled"
 
 
 @dataclass(frozen=True)
@@ -79,7 +88,7 @@ def operational_event(
         raise ValueError("Operational status must be an HTTP status code.")
     if duration_ms is not None and (not isfinite(duration_ms) or duration_ms < 0):
         raise ValueError("Operational duration must be finite and nonnegative.")
-    level = logging.ERROR if event == Event.REQUEST_FAILED else logging.INFO
+    level = logging.ERROR if event in {Event.REQUEST_FAILED, Event.FOUNDRY_FAILED} else logging.INFO
     if event in {Event.READINESS_UNAVAILABLE, Event.READINESS_TIMEOUT}:
         level = logging.WARNING
     logging.getLogger("sous_chef.operational").log(

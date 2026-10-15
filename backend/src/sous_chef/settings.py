@@ -72,6 +72,13 @@ class Settings(BaseSettings):
     foundry_recipe_nutrition_agent_name: str | None = Field(
         default=None, pattern=_DEPLOYMENT_NAME, repr=False
     )
+    foundry_orchestrator_agent_version: str | None = Field(
+        default=None, pattern=r"^[1-9][0-9]{0,9}$", repr=False
+    )
+    foundry_recipe_nutrition_agent_version: str | None = Field(
+        default=None, pattern=r"^[1-9][0-9]{0,9}$", repr=False
+    )
+    foundry_invocation_timeout_seconds: float = Field(default=60, gt=0, le=120, allow_inf_nan=False)
     foundry_orchestrator_agent_principal_id: str | None = Field(
         default=None, pattern=_GUID, repr=False
     )
