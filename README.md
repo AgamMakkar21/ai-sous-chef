@@ -182,7 +182,7 @@ python -m pip check
 
 ## Recipe corpus ingestion
 
-Issue ASC-28. This builds a small, local recipe corpus for later retrieval (ASC-29).
+Issue ASC-28. This builds a small, local recipe corpus for Foundry IQ retrieval (ASC-29).
 It reads only the leading bytes of the pinned `untitledwebsite123/food-recipes`
 revision, never the whole 700 MB file. Run it in the activated WSL virtual environment:
 
@@ -214,6 +214,97 @@ not copied; USDA is the nutrition source.
 The dataset card declares no license, so `license` is `unspecified`. Do not commit
 `data/` or raw dataset content, and do not redistribute the corpus until the license
 is confirmed.
+
+## Foundry IQ recipe knowledge
+
+ASC-29 connects the normalized corpus to a dedicated Azure AI Search index,
+search-index knowledge source, knowledge base, and New Foundry `RemoteTool`
+connection. It preserves each stable `source_id`, the complete normalized recipe,
+the pinned dataset URL, attribution and license metadata. No raw recipes are
+committed. Specialist tool attachment and agent invocation belong to ASC-30.
+
+**Do not run setup or refresh against dev before the PR is reviewed and approved.**
+These commands change Azure resources and upload recipe content. Confirm corpus
+usage rights first: ASC-28 records the source license as `unspecified`, not approval
+to redistribute it. Use only approved, dedicated names; setup updates the named
+resources and never deletes/rebuilds indexes or provisions a Search service.
+
+Before setup, the owner supplies an existing RBAC-enabled Azure AI Search service
+with semantic ranking and the New Foundry project. Grant the setup operator
+**Search Service Contributor** and **Search Index Data Contributor** on that Search
+service, plus permission to write connections on the specific Foundry project.
+The read-only query operator needs **Search Index Data Reader** on the Search service.
+Do not grant these administrative roles to interactive agents or the web app.
+
+Set these optional values in the selected `.env.<environment>` or process
+environment; the scaffold does not require them at startup:
+
+| Setting | Purpose |
+| --- | --- |
+| `ASC_FOUNDRY_PROJECT_ENDPOINT` | Existing New Foundry project endpoint |
+| `ASC_FOUNDRY_PROJECT_RESOURCE_ID` | Matching `Microsoft.CognitiveServices/accounts/.../projects/...` ARM ID |
+| `ASC_FOUNDRY_IQ_SEARCH_ENDPOINT` | HTTPS service origin, `https://<service>.search.windows.net` |
+| `ASC_FOUNDRY_IQ_INDEX_NAME` | Dedicated recipe index |
+| `ASC_FOUNDRY_IQ_KNOWLEDGE_SOURCE_NAME` | Search-index knowledge source |
+| `ASC_FOUNDRY_IQ_KNOWLEDGE_BASE_NAME` | Extractive recipe knowledge base |
+| `ASC_FOUNDRY_IQ_CONNECTION_NAME` | Agent-identity MCP connection; 3 to 33 characters |
+
+Search resource names use lowercase letters, numbers and single interior hyphens,
+start with a letter and contain 3 to 63 characters. Examples are commented in
+the `.env.<environment>.example` files. For an approved local operator run,
+select `ASC_ENVIRONMENT=local`, retain `ASC_ADAPTER_MODE=local`, and use explicit
+`az login`; this operator command still accesses the configured Azure resources.
+Dev/prod execution uses only `AZURE_CLIENT_ID` and the existing explicit managed
+identity credential; it never falls back to a developer or API key.
+
+After approval, run in the activated Python 3.12 environment:
+
+```bash
+# First setup plus indexing of the existing ASC-28 output.
+python -m sous_chef.index_recipes refresh --configure --corpus data/corpus/recipes.jsonl
+
+# Later refreshes upsert the same stable document keys, without duplicating recipes.
+python -m sous_chef.index_recipes refresh --corpus data/corpus/recipes.jsonl
+
+# Read-only retrieval; choose an ingredient present in your accepted corpus.
+python -m sous_chef.index_recipes query --query "rice"
+```
+
+Refresh validates the whole local slice before any Azure request, accepts at most
+1,000 recipes and 16 MiB, and uploads batches of 50 documents. A recipe search
+document is limited to 256 KiB. `upload` replaces/upserts each stable source key;
+refresh does not prune recipes absent from a later slice. Indexing is asynchronous,
+so upload confirmation is not retrieval acceptance. Run the read-only query after
+indexing completes. It prints citation IDs, stable recipe IDs and source URLs,
+never recipe bodies, prompts or credentials. A query with no results exits nonzero.
+Partial indexing/query failures, invalid citations, authentication and service
+errors also exit nonzero; no model-generated or direct-index-search fallback runs.
+
+The knowledge base uses minimal, extractive retrieval without an additional LLM
+or embedding deployment. Retrieval is bounded to five documents, 4,096 output
+tokens and ten service seconds. Search/MCP REST is pinned to
+`2026-08-01-preview`; project connection ARM REST is `2025-10-01-preview`.
+These preview surfaces use the existing `azure-core` pipeline, without adding
+another agent framework, a classic SDK, or an unpinned Search SDK dependency.
+
+The connection uses **`AgenticIdentityToken`**, not the shared project identity.
+Grant **Search Index Data Reader** only to the actual Recipe + Nutrition agent
+principal, preserving its distinct identity from the Orchestrator and workloads.
+Creating a connection does not create an agent or grant RBAC. The operator query
+does not prove the agent's identity can retrieve; verify the actual specialist
+caller and citations when ASC-30 attaches `knowledge_base_retrieve`. Do not treat
+unpublished agents' shared project-level agent identity as the final distinct
+principal. Browser/user profiles, conversations and learned preferences never
+enter this shared recipe index.
+
+`tests/integration/test_recipe_knowledge.py` is an offline HTTP integration fixture:
+it configures the connection, indexes synthetic recipes twice and retrieves a
+matching recipe with unchanged provenance. It does not measure Azure relevance or
+claim live acceptance. See the Microsoft references for
+[search-index sources](https://learn.microsoft.com/en-us/azure/search/agentic-knowledge-source-how-to-search-index),
+[knowledge bases](https://learn.microsoft.com/en-us/azure/search/agentic-retrieval-how-to-create-knowledge-base),
+[retrieval](https://learn.microsoft.com/en-us/azure/search/agentic-retrieval-how-to-retrieve),
+and [agent-identity authentication](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/mcp-authentication).
 
 ## Allergy and dietary validation
 
