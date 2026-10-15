@@ -1,0 +1,74 @@
+name: Deploy dev
+
+on:
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  reviewed:
+    name: Verify reviewed dev merge
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Require merged, peer-reviewed PR for this commit
+        env:
+          PYTHONPATH: backend/src
+          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/deploy_dev.py reviewed
+
+  deploy:
+    name: Deploy App Service and agent release
+    needs: reviewed
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: dev
+      url: ${{ steps.release.outputs.url }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      ASC_RESOURCE_GROUP: ${{ vars.ASC_RESOURCE_GROUP }}
+      ASC_APP_NAME: ${{ vars.ASC_APP_NAME }}
+      ASC_FOUNDRY_ACCOUNT_NAME: ${{ vars.ASC_FOUNDRY_ACCOUNT_NAME }}
+      ASC_FOUNDRY_PROJECT_NAME: ${{ vars.ASC_FOUNDRY_PROJECT_NAME }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Install locked application dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Sign in to Azure with dev workload federation
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          enable-AzPSSession: false
+      - name: Deploy exact commit and pinned agent configuration
+        id: release
+        run: python scripts/deploy_dev.py deploy
+      - name: Check deployed commit, authentication and dependencies
+        run: python scripts/deploy_dev.py smoke
+      - name: Clear Azure login
+        if: always()
+        run: az logout

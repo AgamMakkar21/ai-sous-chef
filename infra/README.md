@@ -175,8 +175,9 @@ Python web/API deployment; there are no microservices.
 
 - Runtime `PYTHON|3.12`, HTTPS only, TLS 1.2 minimum, FTPS disabled, HTTP/2, Always On.
 - Startup command: `python -m uvicorn sous_chef.app:create_app --factory --app-dir backend/src --host 0.0.0.0 --port 8000 --no-access-log`.
-- Health check path `/health` (process liveness only). `/ready` returns a generic
-  503 problem response with no configuration until a readiness probe exists.
+- Health check path `/health` (process liveness only). `/ready` checks live
+  Cosmos/Foundry metadata with the workload identity once agent/version and
+  identity pins are configured; failures return a generic 503.
 - FTP and SCM basic-auth publishing credentials are disabled. Deploy with Entra.
 - App settings are nonsecret only: environment, adapter mode, Cosmos endpoint and
   database, Foundry endpoint and deployment names, `AZURE_CLIENT_ID` of the app
@@ -186,7 +187,8 @@ Python web/API deployment; there are no microservices.
   uses the dedicated app identity; an approved vault reader grant is a prerequisite.
   No Cosmos or Foundry key exists anywhere.
 - This template grants no roles. The app identity needs Cosmos data-plane and
-  Azure AI User roles from issues #11/#16, so `/ready` stays 503 until then.
+  Azure AI User roles from issues #11/#16, plus the agent release pins described
+  in [reviewed dev delivery](../docs/dev-delivery.md), before `/ready` can succeed.
 
 **Region.** The plan location is the separate `appServiceLocation` parameter. Dev
 uses Central US because the subscription has no App Service quota in East US 2
@@ -210,6 +212,11 @@ curl https://<app-host>/health   # {"status":"ok"}
 
 `SCM_DO_BUILD_DURING_DEPLOYMENT=true` makes the platform install `requirements.txt`.
 The first start after a deploy can return 503 for a few minutes while it builds.
+
+ASC-59 automates this source publish and versioned agent releases after reviewed
+dev merges. See [dev delivery](../docs/dev-delivery.md) for the separate,
+owner-operated `dev-delivery.bicep` federation bootstrap and app/project-only
+publishing grants. The publisher does not run `main.bicep` or provision resources.
 
 ## App identity roles (ASC-11)
 

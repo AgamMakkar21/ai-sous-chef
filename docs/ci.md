@@ -51,7 +51,9 @@ The workflow uses `pull_request`, never `pull_request_target`, a read-only
 `contents` permission, and checkout without persisted credentials. It references
 no secrets, environments, deployment identities, or self-hosted runners. Do not
 add cloud credentials to validation jobs or run untrusted PR code in a privileged
-deployment workflow. Deployment remains a separate issue.
+deployment workflow. [Reviewed dev deployment](dev-delivery.md) runs separately
+on `dev` pushes, verifies a current peer-reviewed merge, and acquires OIDC
+credentials only in its environment-bound deployment job.
 
 ## Owner: enable required checks after a successful run
 
