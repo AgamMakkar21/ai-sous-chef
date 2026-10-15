@@ -111,6 +111,7 @@ class Transport(AsyncHttpTransport[HttpRequest, AsyncHttpResponse]):
     def __init__(self) -> None:
         self.closed = False
         self.cancelled = False
+        self.hang_started = asyncio.Event()
         self.calls: list[Call] = []
         self.documents: dict[tuple[str, str, str], dict[str, Any]] = {}
         self.faults: dict[str, deque[Any]] = defaultdict(deque)
@@ -169,6 +170,7 @@ class Transport(AsyncHttpTransport[HttpRequest, AsyncHttpResponse]):
             if isinstance(value, BaseException):
                 raise value
             if value == "hang":
+                self.hang_started.set()
                 try:
                     await asyncio.Event().wait()
                 except asyncio.CancelledError:
@@ -544,10 +546,23 @@ def test_committed_write_with_lost_response_is_not_replayed(
 
 @pytest.mark.parametrize("during_setup", [False, True])
 @pytest.mark.parametrize("cancel", [False, True])
+@pytest.mark.parametrize("startup_delay", [0, 0.08])
 def test_deadline_and_caller_cancellation_close_all_resources(
-    harness: tuple[Transport, SyntheticCredential], during_setup: bool, cancel: bool
+    harness: tuple[Transport, SyntheticCredential],
+    monkeypatch: pytest.MonkeyPatch,
+    during_setup: bool,
+    cancel: bool,
+    startup_delay: float,
 ) -> None:
     transport, credential = harness
+    original_enter = CosmosClient.__aenter__
+
+    async def enter_after_startup(client: CosmosClient) -> CosmosClient:
+        # Cold SDK initialization can block the event loop before its first I/O.
+        time.sleep(startup_delay)
+        return await original_enter(client)
+
+    monkeypatch.setattr(CosmosClient, "__aenter__", enter_after_startup)
     if during_setup:
         transport.setup_fault = "hang"
     else:
@@ -560,20 +575,63 @@ def test_deadline_and_caller_cancellation_close_all_resources(
             ) as repository:
                 await repository.read(ALICE, RECIPES, str(uuid4()))
 
-        task = asyncio.create_task(operation())
-        if cancel:
-            await asyncio.sleep(0.01)
-            task.cancel()
-        with pytest.raises(asyncio.CancelledError if cancel else CosmosError) as caught:
-            await task
-        if not cancel:
-            assert isinstance(caught.value, CosmosError)
-            assert caught.value.code == CosmosFailure.TIMEOUT
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        with monkeypatch.context() as clock:
+            # Advance both deadline clocks only after the intended I/O is blocked.
+            clock.setattr(loop, "time", lambda: now)
+            clock.setattr(cosmos, "monotonic", lambda: now)
+            task = asyncio.create_task(operation())
+            started = asyncio.create_task(transport.hang_started.wait())
+            try:
+                await asyncio.wait((task, started), return_when=asyncio.FIRST_COMPLETED)
+                if task.done():
+                    await task
+                    pytest.fail("The operation completed before the intended blocked I/O.")
+                if cancel:
+                    task.cancel()
+                else:
+                    now += 0.05
+                with pytest.raises(asyncio.CancelledError if cancel else CosmosError) as caught:
+                    await task
+                if not cancel:
+                    assert isinstance(caught.value, CosmosError)
+                    assert caught.value.code == CosmosFailure.TIMEOUT
+            finally:
+                for pending in (task, started):
+                    if not pending.done():
+                        pending.cancel()
+                await asyncio.gather(task, started, return_exceptions=True)
 
     previous = trace_id.get()
     asyncio.run(scenario())
     assert trace_id.get() == previous
     assert transport.cancelled and transport.closed and credential.closed
+
+
+def test_real_startup_deadline_closes_resources_before_item_io(
+    harness: tuple[Transport, SyntheticCredential], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport, credential = harness
+    original_enter = CosmosClient.__aenter__
+
+    async def slow_enter(client: CosmosClient) -> CosmosClient:
+        time.sleep(0.08)
+        return await original_enter(client)
+
+    monkeypatch.setattr(CosmosClient, "__aenter__", slow_enter)
+
+    async def scenario() -> None:
+        async with cosmos.open_cosmos(settings(cosmos_operation_timeout_seconds=0.05)):
+            pytest.fail("Startup exhausted the real deadline; no repository may be yielded.")
+
+    with pytest.raises(CosmosError) as caught:
+        asyncio.run(scenario())
+    assert caught.value.code == CosmosFailure.TIMEOUT
+    assert not transport.item_calls()
+    assert not transport.cancelled
+    assert transport.closed
+    assert credential.closed
 
 
 def test_missing_container_and_wrong_partition_configuration_fail_explicitly(
