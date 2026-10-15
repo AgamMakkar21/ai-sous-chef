@@ -12,6 +12,13 @@ class ConfigurationError(RuntimeError):
 
 _DEPLOYMENT_NAME = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
 _GUID = r"^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$"
+_SEARCH_NAME = r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+_PROJECT_RESOURCE_ID = (
+    r"^/subscriptions/[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
+    r"/resourceGroups/[A-Za-z0-9._()-]+"
+    r"/providers/Microsoft\.CognitiveServices/accounts/[A-Za-z0-9-]+"
+    r"/projects/[A-Za-z0-9._-]+$"
+)
 
 
 class Settings(BaseSettings):
@@ -34,6 +41,22 @@ class Settings(BaseSettings):
     cosmos_endpoint: HttpUrl | None = Field(default=None, repr=False)
     cosmos_database: str | None = Field(default=None, min_length=1, max_length=255, repr=False)
     foundry_project_endpoint: HttpUrl | None = Field(default=None, repr=False)
+    foundry_project_resource_id: str | None = Field(
+        default=None, pattern=_PROJECT_RESOURCE_ID, repr=False
+    )
+    foundry_iq_search_endpoint: HttpUrl | None = Field(default=None, repr=False)
+    foundry_iq_index_name: str | None = Field(
+        default=None, min_length=3, max_length=63, pattern=_SEARCH_NAME, repr=False
+    )
+    foundry_iq_knowledge_source_name: str | None = Field(
+        default=None, min_length=3, max_length=63, pattern=_SEARCH_NAME, repr=False
+    )
+    foundry_iq_knowledge_base_name: str | None = Field(
+        default=None, min_length=3, max_length=63, pattern=_SEARCH_NAME, repr=False
+    )
+    foundry_iq_connection_name: str | None = Field(
+        default=None, min_length=3, max_length=33, pattern=_SEARCH_NAME, repr=False
+    )
     foundry_orchestrator_deployment: str | None = Field(
         default=None, pattern=_DEPLOYMENT_NAME, repr=False
     )
@@ -139,6 +162,21 @@ class Settings(BaseSettings):
                     "ASC_COSMOS_ENDPOINT and ASC_FOUNDRY_PROJECT_ENDPOINT must use HTTPS "
                     "without credentials, query strings or fragments."
                 )
+        endpoint = self.foundry_iq_search_endpoint
+        if endpoint is not None and (
+            endpoint.scheme != "https"
+            or not (endpoint.host or "").endswith(".search.windows.net")
+            or endpoint.port != 443
+            or endpoint.path not in (None, "/")
+            or endpoint.username is not None
+            or endpoint.password is not None
+            or endpoint.query is not None
+            or endpoint.fragment is not None
+        ):
+            raise ConfigurationError(
+                "ASC_FOUNDRY_IQ_SEARCH_ENDPOINT must be an HTTPS search.windows.net "
+                "service origin without credentials, query strings or fragments."
+            )
         return self
 
 
