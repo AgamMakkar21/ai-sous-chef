@@ -180,6 +180,15 @@ python -m pip install -r requirements-dev.txt
 python -m pip check
 ```
 
+## Managed-agent invocation gateway
+
+ASC-24 adds a typed New Foundry Responses gateway for the two managed agents,
+pinned by runtime name and version. It uses managed identity in dev/prod,
+bounded async deadlines, caller cancellation, correlation IDs and distinct safe
+failures, with no automatic invocation retries or model-only fallback.
+See [gateway configuration, failure contract and approved dev smoke](docs/foundry-gateway.md).
+Agent instructions and user chat integration remain separate deliverables.
+
 ## Recipe corpus ingestion
 
 Issue ASC-28. This builds a small, local recipe corpus for Foundry IQ retrieval (ASC-29).

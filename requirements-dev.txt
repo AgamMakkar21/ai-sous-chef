@@ -1,6 +1,10 @@
+aiohappyeyeballs==2.7.1
+aiohttp==3.14.4
+aiosignal==1.4.0
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.15.1
+attrs==26.1.0
 ast-serialize==0.12.1
 azure-ai-projects==2.8.0
 azure-core==1.41.0
@@ -15,6 +19,7 @@ click==8.5.0
 cryptography==50.0.2
 editables==0.5
 fastapi==0.143.0
+frozenlist==1.8.0
 h11==0.16.0
 hatchling==1.32.4
 httpcore==1.0.9
@@ -28,10 +33,12 @@ jiter==0.17.0
 librt==0.16.0
 msal==1.39.0
 msal-extensions==1.3.1
+multidict==6.9.1
 mypy==2.4.0
 mypy-extensions==1.1.0
 openai==3.27.0
 opentelemetry-api==1.45.1
+propcache==0.5.4
 packaging==26.3
 pathspec==1.1.1
 pip-tools==7.6.2
@@ -56,6 +63,7 @@ typing-extensions==4.16.0
 typing-inspection==0.4.4
 urllib3==2.8.0
 uvicorn==0.54.0
+yarl==1.25.1
 wheel==0.48.0
 
 # The following packages are considered to be unsafe in a requirements file:

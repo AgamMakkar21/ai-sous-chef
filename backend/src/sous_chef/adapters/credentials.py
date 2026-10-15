@@ -1,7 +1,10 @@
 import os
 
 from azure.core.credentials import TokenCredential
+from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity import AzureCliCredential, ManagedIdentityCredential
+from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
+from azure.identity.aio import ManagedIdentityCredential as AsyncManagedIdentityCredential
 
 from sous_chef.settings import ConfigurationError, Settings
 
@@ -16,9 +19,20 @@ def build_credential(settings: Settings) -> TokenCredential:
     """
     if settings.environment == "local":
         return AzureCliCredential()
+    return ManagedIdentityCredential(client_id=_managed_identity_client_id())
+
+
+def build_async_credential(settings: Settings) -> AsyncTokenCredential:
+    """Use the same single-credential policy for cancellable async SDK calls."""
+    if settings.environment == "local":
+        return AsyncAzureCliCredential()
+    return AsyncManagedIdentityCredential(client_id=_managed_identity_client_id())
+
+
+def _managed_identity_client_id() -> str:
     client_id = os.environ.get(CLIENT_ID_VARIABLE)
     if not client_id:
         raise ConfigurationError(
             f"Set {CLIENT_ID_VARIABLE} to the app's managed identity client ID for dev and prod."
         )
-    return ManagedIdentityCredential(client_id=client_id)
+    return client_id
