@@ -13,6 +13,7 @@ dependencies = [
     "uvicorn==0.54.0",
     "azure-ai-projects==2.8.0",
     "azure-core==1.41.0",
+    "azure-cosmos==4.17.1",
     "azure-identity==1.26.0",
     "aiohttp==3.14.4",
     "openai==3.27.0",
@@ -22,7 +23,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "azure-cosmos==4.17.1",
     "editables==0.5",
     "hatchling==1.32.4",
     "httpx==0.28.1",

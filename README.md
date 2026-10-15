@@ -6,8 +6,9 @@ feedback-based personalization.
 ## Local backend
 
 The scaffold runs a FastAPI backend with offline readiness doubles and fail-closed
-consumer authentication. Cosmos application access, agents and the React UI are
-not implemented yet. See [consumer sign-in setup](docs/authentication.md) for the
+consumer authentication. Shared Cosmos access and the managed-agent gateway are
+available; product endpoints, agent instructions and the React UI remain separate
+work. See [consumer sign-in setup](docs/authentication.md) for the
 External ID tenant, App Service configuration and signed-token local testing.
 
 Use **Ubuntu 24.04 in WSL 2**, CPython **3.12**, and a checkout in the Linux
@@ -188,6 +189,14 @@ bounded async deadlines, caller cancellation, correlation IDs and distinct safe
 failures, with no automatic invocation retries or model-only fallback.
 See [gateway configuration, failure contract and approved dev smoke](docs/foundry-gateway.md).
 Agent instructions and user chat integration remain separate deliverables.
+
+## User-scoped Cosmos access
+
+ASC-15 adds typed async point reads, creates, ETag-protected patches/deletes and
+bounded history pages in the authenticated user's partition. It preserves
+unrelated profile fields, bounds safe retries and reports uncertain writes
+instead of replaying them. It adds no product endpoints or deployments.
+See [configuration, failure contract and approved dev acceptance](docs/cosmos-access.md).
 
 ## Recipe corpus ingestion
 

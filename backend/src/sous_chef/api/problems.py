@@ -1,4 +1,5 @@
 from http import HTTPStatus
+from math import ceil
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -6,6 +7,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 
 from sous_chef.domain.authorization import OwnedResourceNotFound
+from sous_chef.domain.cosmos import CosmosError, CosmosFailure
 from sous_chef.telemetry import ErrorCategory, error_category, new_trace_id, trace_id
 
 
@@ -32,6 +34,44 @@ def problem_response(status: int, code: str, title: str, detail: str) -> JSONRes
 
 
 def register_problem_handlers(app: FastAPI) -> None:
+    @app.exception_handler(CosmosError)
+    async def cosmos_failure(_request: Request, exc: CosmosError) -> JSONResponse:
+        status, title, detail = {
+            CosmosFailure.CONFLICT: (
+                412,
+                "This item changed",
+                "Reload the latest version before trying again.",
+            ),
+            CosmosFailure.EXISTS: (409, "Already exists", "This record already exists."),
+            CosmosFailure.TOO_LARGE: (
+                413,
+                "Record too large",
+                "Reduce the record size before trying again.",
+            ),
+            CosmosFailure.THROTTLED: (429, "Database busy", "Wait before trying again."),
+            CosmosFailure.TIMEOUT: (
+                504,
+                "Database deadline exceeded",
+                "The database operation exceeded its deadline.",
+            ),
+            CosmosFailure.INVALID_RESULT: (
+                502,
+                "Invalid database response",
+                "The database returned an invalid result.",
+            ),
+            CosmosFailure.REJECTED: (
+                502,
+                "Database request rejected",
+                "The database rejected the operation.",
+            ),
+        }.get(exc.code, (503, "Database unavailable", "The database operation is unavailable."))
+        if exc.outcome_unknown:
+            detail = "The write outcome is unknown. Reconcile its state before trying again."
+        response = problem_response(status, exc.code.value, title, detail)
+        if exc.retry_after_seconds is not None and not exc.outcome_unknown:
+            response.headers["Retry-After"] = str(ceil(exc.retry_after_seconds))
+        return response
+
     @app.exception_handler(OwnedResourceNotFound)
     async def owned_resource_not_found(
         _request: Request, _exc: OwnedResourceNotFound

@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     auth_origin: HttpUrl | None = Field(default=None, repr=False)
     cosmos_endpoint: HttpUrl | None = Field(default=None, repr=False)
     cosmos_database: str | None = Field(default=None, min_length=1, max_length=255, repr=False)
+    cosmos_operation_timeout_seconds: float = Field(default=5, gt=0, le=5, allow_inf_nan=False)
+    cosmos_max_attempts: int = Field(default=3, ge=1, le=5)
+    cosmos_page_size: int = Field(default=20, ge=1, le=50)
     foundry_project_endpoint: HttpUrl | None = Field(default=None, repr=False)
     foundry_project_resource_id: str | None = Field(
         default=None, pattern=_PROJECT_RESOURCE_ID, repr=False
