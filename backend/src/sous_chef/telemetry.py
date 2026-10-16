@@ -54,6 +54,10 @@ class ErrorCategory(StrEnum):
     REVISION_CONFLICT = "revision_conflict"
     DUPLICATE_RESOURCE = "duplicate_resource"
     RECORD_TOO_LARGE = "record_too_large"
+    BODY_TOO_LARGE = "body_too_large"
+    CONFIGURATION_UNAVAILABLE = "configuration_unavailable"
+    ONBOARDING_REQUIRED = "onboarding_required"
+    PRECONDITION_REQUIRED = "precondition_required"
 
 
 class Event(StrEnum):

@@ -6,9 +6,11 @@ feedback-based personalization.
 ## Local backend
 
 The scaffold runs a FastAPI backend with offline readiness doubles and fail-closed
-consumer authentication. Shared Cosmos access and the managed-agent gateway are
-available; product endpoints, agent instructions and the React UI remain separate
-work. See [consumer sign-in setup](docs/authentication.md) for the
+consumer authentication. Profile/onboarding APIs, shared Cosmos access and the
+managed-agent gateway are available; chat execution, other product endpoints,
+agent instructions and the React UI remain separate work.
+See [profile API setup and usage](docs/profiles.md) and
+[consumer sign-in setup](docs/authentication.md) for the
 External ID tenant, App Service configuration and signed-token local testing.
 
 Use **Ubuntu 24.04 in WSL 2**, CPython **3.12**, and a checkout in the Linux

@@ -103,6 +103,13 @@ def _traits_for(restriction: str) -> frozenset[Trait] | None:
     return _RESTRICTION_INDEX.get(tokens)
 
 
+def supports_restriction(restriction: str, *, allergy: bool = False) -> bool:
+    """Use the same supported traits and custom-food rules as final safety checks."""
+    return _traits_for(restriction) is not None or (
+        allergy and any(token not in _NOT_NAMING_A_FOOD for token in tokenize(restriction))
+    )
+
+
 def _contains_phrase(tokens: tuple[str, ...], phrase: tuple[str, ...]) -> bool:
     size = len(phrase)
     return size > 0 and any(tokens[i : i + size] == phrase for i in range(len(tokens) - size + 1))
