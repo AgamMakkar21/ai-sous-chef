@@ -121,7 +121,8 @@ in this repository and requires a peer approval of that PR's final head. Direct
 pushes, self-approvals and stale/dismissed approvals cannot unlock deployment.
 PR CI remains unchanged and has no OIDC permission or Azure login.
 
-The environment-bound deployment job uses GitHub OIDC and Azure CLI login. It
+The environment-bound deployment job uses GitHub OIDC and Azure CLI login via
+the commit-pinned, Node.js 24 Azure Login v3 action. It
 checks out the event SHA, refuses a superseded dev SHA, verifies dev resource
 tags/settings/authentication. In the agent-enabled stage it reads each manifest's
 exact agent version through the pinned **New Foundry SDK**, API `v1`.
@@ -155,6 +156,9 @@ release settings and explicitly restart the app, including when pins are
 unchanged. This prevents a settings-triggered restart from interrupting Oryx or
 starting a container without its build manifest and virtual environment.
 The existing five-minute runtime smoke remains mandatory after restart.
+The restart command uses `--output none`, not JSON parsing: a successful Azure
+CLI restart returns no JSON document. A nonzero restart exit still fails delivery,
+and commands that require structured results still reject empty or malformed JSON.
 
 Smoke checks wait up to five minutes for:
 

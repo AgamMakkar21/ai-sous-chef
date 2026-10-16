@@ -38,10 +38,16 @@ def command(*args: str) -> str:
     return result.stdout
 
 
-def az(*args: str) -> Any:
-    return json.loads(
-        command("az", *args, "--subscription", required("AZURE_SUBSCRIPTION_ID"), "-o", "json")
+def az(*args: str, expect_json: bool = True) -> Any:
+    output = command(
+        "az",
+        *args,
+        "--subscription",
+        required("AZURE_SUBSCRIPTION_ID"),
+        "-o",
+        "json" if expect_json else "none",
     )
+    return json.loads(output) if expect_json else None
 
 
 def required(name: str) -> str:
@@ -449,7 +455,15 @@ def deploy() -> None:
         *(f"{name}={value}" for name, value in pins.items()),
     )
     # Explicitly activate the new artifact even when the settings are unchanged.
-    az("webapp", "restart", "-g", required("ASC_RESOURCE_GROUP"), "-n", required("ASC_APP_NAME"))
+    az(
+        "webapp",
+        "restart",
+        "-g",
+        required("ASC_RESOURCE_GROUP"),
+        "-n",
+        required("ASC_APP_NAME"),
+        expect_json=False,
+    )
     url = f"https://{app['defaultHostName']}"
     with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
         output.write(f"url={url}\n")

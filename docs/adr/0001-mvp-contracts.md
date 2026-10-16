@@ -237,6 +237,9 @@ Asynchronous upload acceptance is not deployment success. This ordering corrects
 the 2026-10-16 startup failure (`No module named uvicorn`) when a restart raced
 with an unfinished Oryx build; it does not bypass readiness or guarantee rollback
 on this single-slot dev app.
+Successful no-output operations such as the Azure CLI restart are explicitly
+handled without JSON parsing; structured build/read results remain mandatory,
+and command failures still stop delivery.
 
 `deploy/agents.dev.json` schema version 2 explicitly controls this boundary.
 With `agents_enabled: false`, `agents` must be empty. Delivery skips agent
