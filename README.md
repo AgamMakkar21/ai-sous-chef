@@ -68,6 +68,10 @@ tests. See [CI setup and required-check wiring](docs/ci.md) for exact check name
 local commands, safety boundaries, and the administrator's enforcement checklist.
 This workflow validates code only; it does not deploy to Azure.
 
+Reviewed merges into `dev` have a separate, dev-only OIDC deployment workflow.
+See [dev delivery setup](docs/dev-delivery.md) for owner bootstrap, scoped roles,
+versioned agent release pins, smoke checks and recovery.
+
 ## Configuration and readiness
 
 Set `ASC_ENVIRONMENT` in the process environment to `local`, `dev`, or `prod`.
@@ -97,10 +101,13 @@ dependency probe. An unavailable dependency or timeout returns a generic 503
 Errors include an opaque `traceId`. Logs do not include exception contents,
 settings, endpoints or user data. API docs are disabled outside local mode.
 
-Live mode deliberately returns **not ready** until real adapters are implemented.
-Valid configuration alone is not proof of connectivity. Later integration tickets
-must supply a real `ReadinessProbe` to the app factory; they must not substitute
-the local double or claim the stub validates Azure connectivity.
+Live readiness reads Cosmos container metadata and both configured, explicitly
+pinned Foundry agent versions with the workload identity. It verifies separate,
+enabled agent identities without reading user documents or invoking models/tools.
+Missing agent pins, workload principal ID or authentication configuration remain
+**not ready**. Valid configuration alone is not proof of connectivity. Automated
+dev packages also report their source commit in `X-ASC-Commit` on successful
+health/readiness responses; the JSON bodies are unchanged.
 
 ## Privacy-safe MVP logging
 

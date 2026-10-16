@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from sous_chef.adapters.readiness import LocalReadinessProbe, UnconfiguredReadinessProbe
+from sous_chef.adapters.readiness import LiveReadinessProbe, LocalReadinessProbe
 from sous_chef.api.authentication import AuthenticationMiddleware, create_auth_router
 from sous_chef.api.health import create_health_router
 from sous_chef.api.observability import RequestLoggingMiddleware
@@ -21,9 +21,7 @@ def create_app(
     probe = readiness_probe
     if probe is None:
         probe = (
-            LocalReadinessProbe()
-            if config.adapter_mode == "local"
-            else UnconfiguredReadinessProbe()
+            LocalReadinessProbe() if config.adapter_mode == "local" else LiveReadinessProbe(config)
         )
     if isinstance(probe, LocalReadinessProbe) and (
         config.environment != "local" or config.adapter_mode != "local"
