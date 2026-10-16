@@ -42,6 +42,24 @@ ENABLED_MANIFEST = {
 
 
 class DeliveryTests(unittest.TestCase):
+    def test_azure_output_contract_is_explicit_and_json_reads_remain_strict(self) -> None:
+        with patch.dict(os.environ, ENV):
+            with patch.object(delivery, "command", return_value="") as run:
+                self.assertIsNone(delivery.az("webapp", "restart", expect_json=False))
+                self.assertEqual(run.call_args.args[-2:], ("-o", "none"))
+            with patch.object(delivery, "command", return_value='{"status":4}') as run:
+                self.assertEqual(delivery.az("webapp", "deploy"), {"status": 4})
+                self.assertEqual(run.call_args.args[-2:], ("-o", "json"))
+            for invalid in ("", "not-json"):
+                with patch.object(delivery, "command", return_value=invalid):
+                    with self.assertRaises(json.JSONDecodeError):
+                        delivery.az("webapp", "show")
+            with patch.object(
+                delivery, "command", side_effect=delivery.DeliveryError("restart failed")
+            ):
+                with self.assertRaises(delivery.DeliveryError):
+                    delivery.az("webapp", "restart", expect_json=False)
+
     def test_command_failure_identifies_operation_without_credentials_or_output(self) -> None:
         with patch(
             "scripts.deploy_dev.subprocess.run",
@@ -607,6 +625,7 @@ class DeliveryTests(unittest.TestCase):
                             )
                         if len(failures[mode]) > 2:
                             self.assertEqual(cli.call_args_list[2].args[:2], ("webapp", "restart"))
+                            self.assertEqual(cli.call_args_list[2].kwargs, {"expect_json": False})
                         self.assertFalse((Path(directory) / "asc-dev.zip").exists())
                         self.assertFalse((Path(directory) / "output").exists())
                         self.assertFalse((Path(directory) / "summary").exists())
@@ -628,6 +647,7 @@ class DeliveryTests(unittest.TestCase):
                     self.assertIn("ASC_APP_WORKLOAD_PRINCIPAL_ID=app-principal", updates)
                     self.assertNotIn("private-token", " ".join(updates))
                     self.assertEqual(cli.call_args_list[2].args[:2], ("webapp", "restart"))
+                    self.assertEqual(cli.call_args_list[2].kwargs, {"expect_json": False})
                     package.assert_called_once_with(SHA, Path(directory) / "asc-dev.zip")
                     self.assertFalse((Path(directory) / "asc-dev.zip").exists())
                     summary = (Path(directory) / "summary").read_text()
