@@ -230,6 +230,14 @@ backend/authentication and available non-AI APIs before the interactive agents
 and their tool integrations are complete. This is an **app-only release**, not
 full MVP or full ASC-59 acceptance.
 
+App Service source builds must finish before restart-triggering release settings
+are applied. Delivery waits for terminal Kudu build success, then updates pins,
+explicitly restarts the app and requires the exact-commit/auth/Cosmos smoke.
+Asynchronous upload acceptance is not deployment success. This ordering corrects
+the 2026-10-16 startup failure (`No module named uvicorn`) when a restart raced
+with an unfinished Oryx build; it does not bypass readiness or guarantee rollback
+on this single-slot dev app.
+
 `deploy/agents.dev.json` schema version 2 explicitly controls this boundary.
 With `agents_enabled: false`, `agents` must be empty. Delivery skips agent
 publication and sets `ASC_AGENTS_ENABLED=false`; the managed-agent gateway and

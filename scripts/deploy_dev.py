@@ -25,7 +25,16 @@ class DeliveryError(RuntimeError):
 def command(*args: str) -> str:
     result = subprocess.run(args, capture_output=True, text=True, cwd=ROOT)
     if result.returncode:
-        raise DeliveryError(f"{args[0]} {args[1]} failed; inspect the service deployment logs.")
+        operation = list(args[:2])
+        if args[0] == "az":
+            for argument in args[2:]:
+                if argument.startswith("-"):
+                    break
+                operation.append(argument)
+        raise DeliveryError(
+            f"{' '.join(operation)} failed; inspect deployment and startup logs. "
+            "Command output is withheld because it can contain credentials."
+        )
     return result.stdout
 
 
@@ -358,6 +367,13 @@ def deploy() -> None:
         raise DeliveryError("This run is superseded by a newer dev commit; no deployment started.")
     agents = manifest()
     app, settings = target()
+    if settings.get("SCM_DO_BUILD_DURING_DEPLOYMENT", "").lower() != "true" or settings.get(
+        "WEBSITE_RUN_FROM_PACKAGE", ""
+    ) not in {"", "0"}:
+        raise DeliveryError(
+            "Source ZIP delivery requires SCM_DO_BUILD_DURING_DEPLOYMENT=true "
+            "and no WEBSITE_RUN_FROM_PACKAGE mount; ask the foundation owner to configure them."
+        )
     identity = app["identity"]["userAssignedIdentities"]
     app_principals = [
         value["principalId"]
@@ -389,23 +405,10 @@ def deploy() -> None:
             raise DeliveryError(f"Foundry agent release failed: {type(exc).__name__}.") from None
     pins["ASC_APP_WORKLOAD_PRINCIPAL_ID"] = app_principals[0]
     pins["ASC_READINESS_TIMEOUT_SECONDS"] = "10"
-    # Persist only new pins: never replace or print existing authentication credentials.
-    az(
-        "webapp",
-        "config",
-        "appsettings",
-        "set",
-        "-g",
-        required("ASC_RESOURCE_GROUP"),
-        "-n",
-        required("ASC_APP_NAME"),
-        "--settings",
-        *(f"{name}={value}" for name, value in pins.items()),
-    )
     archive = Path(os.environ["RUNNER_TEMP"]) / "asc-dev.zip"
     package(sha, archive)
     try:
-        az(
+        deployment = az(
             "webapp",
             "deploy",
             "-g",
@@ -419,12 +422,34 @@ def deploy() -> None:
             "--clean",
             "true",
             "--restart",
+            "false",
+            "--async",
             "true",
             "--track-status",
-            "true",
+            "false",
         )
+        # Without runtime tracking, CLI polls the Kudu build even for an async upload.
+        if not isinstance(deployment, dict) or deployment.get("status") != 4:
+            raise DeliveryError(
+                "App Service ZIP build did not report success; runtime settings were not changed."
+            )
     finally:
         archive.unlink(missing_ok=True)
+    # Settings updates restart the app; never apply them while Oryx is building.
+    az(
+        "webapp",
+        "config",
+        "appsettings",
+        "set",
+        "-g",
+        required("ASC_RESOURCE_GROUP"),
+        "-n",
+        required("ASC_APP_NAME"),
+        "--settings",
+        *(f"{name}={value}" for name, value in pins.items()),
+    )
+    # Explicitly activate the new artifact even when the settings are unchanged.
+    az("webapp", "restart", "-g", required("ASC_RESOURCE_GROUP"), "-n", required("ASC_APP_NAME"))
     url = f"https://{app['defaultHostName']}"
     with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
         output.write(f"url={url}\n")
