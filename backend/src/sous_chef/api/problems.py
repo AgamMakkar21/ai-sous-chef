@@ -7,7 +7,9 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 
 from sous_chef.domain.authorization import OwnedResourceNotFound
+from sous_chef.domain.conversations import IdempotencyConflict, InvalidCursor
 from sous_chef.domain.cosmos import CosmosError, CosmosFailure
+from sous_chef.settings import ConfigurationError
 from sous_chef.telemetry import ErrorCategory, error_category, new_trace_id, trace_id
 
 
@@ -34,6 +36,32 @@ def problem_response(status: int, code: str, title: str, detail: str) -> JSONRes
 
 
 def register_problem_handlers(app: FastAPI) -> None:
+    @app.exception_handler(InvalidCursor)
+    async def invalid_cursor(_request: Request, _exc: InvalidCursor) -> JSONResponse:
+        return problem_response(
+            400, "invalid_cursor", "Invalid cursor", "Restart listing with a new first page."
+        )
+
+    @app.exception_handler(IdempotencyConflict)
+    async def idempotency_conflict(_request: Request, _exc: IdempotencyConflict) -> JSONResponse:
+        return problem_response(
+            409,
+            "idempotency_conflict",
+            "Creation key already used",
+            "Use the original request with this key, or a new key for a new conversation.",
+        )
+
+    @app.exception_handler(ConfigurationError)
+    async def unavailable_configuration(
+        _request: Request, _exc: ConfigurationError
+    ) -> JSONResponse:
+        return problem_response(
+            503,
+            "configuration_unavailable",
+            "Service not configured",
+            "The operation is unavailable. Contact the service owner.",
+        )
+
     @app.exception_handler(CosmosError)
     async def cosmos_failure(_request: Request, exc: CosmosError) -> JSONResponse:
         status, title, detail = {

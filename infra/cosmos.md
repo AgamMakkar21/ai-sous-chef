@@ -64,7 +64,7 @@ and cannot enforce learned-state-only JSON-property writes.
 | Container | Partition key | Stored record kinds |
 | --- | --- | --- |
 | `Users` | `/userId`, Hash v2 | One bounded `profile`; point read with `id=userId` |
-| `ChatHistory` | `/userId`, Hash v2 | `conversation`, `turn`, `sendOperation` |
+| `ChatHistory` | `/userId`, Hash v2 | `conversation`, `conversationCreation`, `turn`, `sendOperation` |
 | `RecipeHistory` | `/userId`, Hash v2 | `recipe`, `behavior`, `feedbackRevision`, `processing` |
 | `leases` | `/id`, Hash v2 | Future change-feed processor checkpoint/coordination documents only |
 

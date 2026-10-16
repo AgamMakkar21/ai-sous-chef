@@ -14,7 +14,7 @@ to keep each user input and its validated response together.
 | Authentication | App Service / Entra External ID; backend verifies trusted identity, issuer, and authenticated subject |
 | User identity | Stable opaque server-derived ID bound to verified issuer/subject; never email or client-supplied identity |
 | Ownership | Every user-data lookup/mutation is scoped to that authenticated user and the `/userId` Cosmos partition |
-| Resource IDs | Server-issued UUIDv4; opaque to clients and immutable across renames |
+| Public resource IDs | Server-issued UUIDv4; opaque to clients and immutable across renames |
 | Time | Server-generated UTC RFC 3339 strings with `Z`; use the same stored precision consistently |
 | Schema version | Integer `schemaVersion: 1` on stored record kinds; schema migrations are explicit |
 | Revisions | Opaque ETag for concurrency; integer `feedbackRevision` and `behaviorRevision` for semantic learning events; never conflate them |
@@ -240,6 +240,14 @@ the affected insight from current evidence even when the overall rating is uncha
 Large evidence lists and processing receipts never accumulate inside `Users`.
 Use record-kind filters consistently so internal records do not appear as
 conversations, cooked recipes, or learning evidence.
+
+ASC-21 stores a separate internal `ChatHistory.conversationCreation` receipt
+atomically with newly created conversation metadata. It holds the canonical
+creation-request hash and conversation reference. Its deterministic,
+operation-scoped `conversation-create:<digest>` ID is not a public resource ID.
+Receipts remain until conversation deletion and never appear in history lists.
+See [the implemented conversation API](../conversations.md) for exact requests,
+public projections and encrypted cursor configuration.
 
 A turn's `id` is its stable `turnId`. Its `messages` array contains exactly one
 user message while pending/failed and exactly that user message followed by one
