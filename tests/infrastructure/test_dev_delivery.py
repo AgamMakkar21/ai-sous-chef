@@ -46,6 +46,17 @@ class DeliveryTests(unittest.TestCase):
         self.assertNotIn("id-token", workflow.split("\n  deploy:")[0])
         self.assertIn("python scripts/deploy_dev.py smoke", workflow)
 
+    def test_workflow_variables_are_unique_and_available_to_deployment(self) -> None:
+        workflow = (ROOT / ".github/workflows/deploy-dev.yml").read_text()
+        reviewed, deploy = workflow.split("\n  deploy:", maxsplit=1)
+        token = "GH_TOKEN: ${{ github.token }}"
+        self.assertEqual(reviewed.count(token), 1)
+        self.assertNotIn("PYTHONPATH:", reviewed)
+        job_configuration, _ = deploy.split("\n    steps:", maxsplit=1)
+        self.assertEqual(deploy.count(token), 1)
+        self.assertIn(token, job_configuration)
+        self.assertIn("PYTHONPATH: backend/src", job_configuration)
+
     def test_only_dev_push_events_are_accepted(self) -> None:
         for event, ref in (
             ("pull_request", "refs/heads/dev"),

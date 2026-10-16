@@ -25,8 +25,6 @@ jobs:
           persist-credentials: false
       - name: Require merged, peer-reviewed PR for this commit
         env:
-          PYTHONPATH: backend/src
-          GH_TOKEN: ${{ github.token }}
           GH_TOKEN: ${{ github.token }}
         run: python scripts/deploy_dev.py reviewed
 
@@ -43,6 +41,8 @@ jobs:
       contents: read
       id-token: write
     env:
+      PYTHONPATH: backend/src
+      GH_TOKEN: ${{ github.token }}
       AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       ASC_RESOURCE_GROUP: ${{ vars.ASC_RESOURCE_GROUP }}
       ASC_APP_NAME: ${{ vars.ASC_APP_NAME }}
