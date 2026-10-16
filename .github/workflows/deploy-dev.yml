@@ -29,7 +29,7 @@ jobs:
         run: python scripts/deploy_dev.py reviewed
 
   deploy:
-    name: Deploy App Service and agent release
+    name: Deploy App Service and configured agent release
     needs: reviewed
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-24.04
@@ -64,7 +64,7 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
           enable-AzPSSession: false
-      - name: Deploy exact commit and pinned agent configuration
+      - name: Deploy exact commit and reviewed release configuration
         id: release
         run: python scripts/deploy_dev.py deploy
       - name: Check deployed commit, authentication and dependencies

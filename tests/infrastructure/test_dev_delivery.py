@@ -30,6 +30,15 @@ ENV = {
     "ASC_FOUNDRY_ACCOUNT_NAME": "ai-sous-chef-dev-foundry",
     "ASC_FOUNDRY_PROJECT_NAME": "ai-sous-chef-dev-project",
 }
+AGENT_PINS = {
+    "orchestrator": {"name": "orchestrator", "version": "1"},
+    "recipe_nutrition": {"name": "recipe-nutrition", "version": "1"},
+}
+ENABLED_MANIFEST = {
+    "schema_version": 2,
+    "agents_enabled": True,
+    "agents": AGENT_PINS,
+}
 
 
 class DeliveryTests(unittest.TestCase):
@@ -127,12 +136,17 @@ class DeliveryTests(unittest.TestCase):
                 delivery.reviewed()
 
     def test_manifest_rejects_latest_shared_names_missing_roles_and_bad_shapes(self) -> None:
-        original = {"schema_version": 1, "agents": delivery.manifest()}
+        original = ENABLED_MANIFEST
         variants = [
             [],
-            {"schema_version": 2},
             {"schema_version": 1, "agents": {}},
-            {"schema_version": 1, "agents": {"orchestrator": {}, "recipe_nutrition": []}},
+            {"schema_version": 2, "agents": {}},
+            original | {"schema_version": 2.0},
+            original | {"agents_enabled": "false"},
+            original | {"agents_enabled": 0},
+            original | {"agents_enabled": False},
+            original | {"agents": {}},
+            original | {"agents": {"orchestrator": {}, "recipe_nutrition": []}},
         ]
         for field, value in (("version", "latest"), ("name", "recipe-nutrition")):
             data = json.loads(json.dumps(original))
@@ -143,9 +157,21 @@ class DeliveryTests(unittest.TestCase):
                 with self.assertRaises(delivery.DeliveryError):
                     delivery.manifest()
 
+    def test_manifest_requires_explicit_disabled_or_fully_pinned_enabled_release(self) -> None:
+        self.assertIsInstance(delivery.manifest(), dict)
+        disabled = {"schema_version": 2, "agents_enabled": False, "agents": {}}
+        with patch.object(Path, "read_text", return_value=json.dumps(disabled)):
+            self.assertEqual(delivery.manifest(), {})
+        with patch.object(Path, "read_text", return_value=json.dumps(ENABLED_MANIFEST)):
+            self.assertEqual(delivery.manifest(), ENABLED_MANIFEST["agents"])
+
     def test_target_checks_tags_endpoint_identity_and_easy_auth_before_writes(self) -> None:
         tags = {"environment": "dev", "project": "ai-sous-chef"}
-        app = {"tags": tags, "identity": {"userAssignedIdentities": {"identity": {}}}}
+        app = {
+            "id": "/subscriptions/test/resourceGroups/test/providers/Microsoft.Web/sites/test",
+            "tags": tags,
+            "identity": {"userAssignedIdentities": {"identity": {}}},
+        }
         settings = {
             "ASC_ENVIRONMENT": "dev",
             "ASC_ADAPTER_MODE": "live",
@@ -183,7 +209,7 @@ class DeliveryTests(unittest.TestCase):
                         candidate,
                         {"tags": tags},
                         [{"name": key, "value": value} for key, value in config.items()],
-                        authentication,
+                        {"properties": authentication},
                     ],
                 ) as cli,
             ):
@@ -193,6 +219,184 @@ class DeliveryTests(unittest.TestCase):
                     with self.assertRaises(delivery.DeliveryError):
                         delivery.target()
                 self.assertTrue(all("set" not in call.args for call in cli.call_args_list))
+                if bad == "none":
+                    self.assertEqual(cli.call_args.args[:3], ("rest", "--method", "GET"))
+                    self.assertIn(
+                        f"https://management.azure.com{app['id']}/config/authsettingsV2/list"
+                        "?api-version=2024-04-01",
+                        cli.call_args.args,
+                    )
+
+    def test_multi_provider_policy_is_validated_before_publication(self) -> None:
+        origin = "https://synthetic.azurewebsites.net"
+        client = "22222222-2222-2222-2222-222222222222"
+        tenant = "11111111-1111-1111-1111-111111111111"
+        issuer = f"https://login.microsoftonline.com/{tenant}/v2.0"
+        settings = {
+            "ASC_AUTH_MODE": "app_service",
+            "ASC_AUTH_ORIGIN": origin,
+            "ASC_AUTH_MICROSOFT_TENANT_ID": tenant,
+            "WEBSITE_AUTH_AAD_ALLOWED_TENANTS": tenant,
+        }
+        providers: dict[str, dict[str, object]] = {}
+        for name, prefix in (
+            ("azureActiveDirectory", "MICROSOFT"),
+            ("google", "GOOGLE"),
+            ("gitHub", "GITHUB"),
+        ):
+            secret = f"{prefix}_PROVIDER_AUTHENTICATION_SECRET"
+            settings[secret] = f"synthetic-{prefix}-credential"
+            providers[name] = {
+                "enabled": True,
+                "registration": {"clientId": client, "clientSecretSettingName": secret},
+            }
+        providers["azureActiveDirectory"] = {
+            "enabled": True,
+            "registration": {
+                "clientId": client,
+                "clientSecretSettingName": "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET",
+                "openIdIssuer": issuer,
+            },
+            "validation": {
+                "allowedAudiences": [client],
+                "defaultAuthorizationPolicy": {"allowedApplications": [client]},
+            },
+        }
+        policy = {
+            "platform": {"enabled": True},
+            "globalValidation": {
+                "requireAuthentication": True,
+                "unauthenticatedClientAction": "Return401",
+                "excludedPaths": [
+                    "/health",
+                    "/ready",
+                    "/auth/login",
+                    "/auth/logout",
+                    "/auth/signed-out",
+                    "/auth/login/aad",
+                    "/auth/login/google",
+                    "/auth/login/github",
+                ],
+            },
+            "httpSettings": {"requireHttps": True},
+            "identityProviders": providers,
+            "login": {
+                "allowedExternalRedirectUrls": [],
+                "cookieExpiration": {"convention": "FixedTime", "timeToExpiration": "01:00:00"},
+                "tokenStore": {"enabled": True, "tokenRefreshExtensionHours": 0},
+            },
+        }
+        delivery.validate_authentication(policy, settings, "synthetic.azurewebsites.net")
+        for prefix in ("MICROSOFT", "GOOGLE", "GITHUB"):
+            for value in (
+                None,
+                "",
+                " \t\r\n",
+                "@Microsoft.KeyVault(SecretUri=https://synthetic.vault.azure.net/secrets/login)",
+                " @microsoft.keyvault(VaultName=synthetic;SecretName=login)",
+            ):
+                with self.subTest(provider=prefix, invalid_secret=value):
+                    config = settings.copy()
+                    key = f"{prefix}_PROVIDER_AUTHENTICATION_SECRET"
+                    if value is None:
+                        config.pop(key)
+                    else:
+                        config[key] = value
+                    with self.assertRaises(delivery.DeliveryError) as failure:
+                        delivery.validate_authentication(
+                            policy, config, "synthetic.azurewebsites.net"
+                        )
+                    for credential_value in (settings[key], value):
+                        if credential_value and credential_value.strip():
+                            self.assertNotIn(credential_value, str(failure.exception))
+        for bad in (
+            "origin",
+            "token_store",
+            "refresh",
+            "expiry",
+            "https",
+            "exclusion",
+            "redirect",
+            "disabled",
+            "extra",
+            "registration",
+            "tenant",
+            "organizations",
+            "consumers",
+            "tenant_allowlist",
+            "missing_tenant",
+            "invalid_tenant",
+            "missing_tenant_allowlist",
+            "identity_allowlist",
+            "client_allowlist",
+            "audience",
+            "mixed",
+            "mode",
+        ):
+            with self.subTest(bad=bad):
+                candidate = json.loads(json.dumps(policy))
+                config = settings.copy()
+                if bad == "origin":
+                    config["ASC_AUTH_ORIGIN"] = "https://attacker.invalid"
+                elif bad == "token_store":
+                    candidate["login"]["tokenStore"]["enabled"] = False
+                elif bad == "refresh":
+                    candidate["login"]["tokenStore"]["tokenRefreshExtensionHours"] = 72
+                elif bad == "expiry":
+                    candidate["login"]["cookieExpiration"]["timeToExpiration"] = "24:00:00"
+                elif bad == "https":
+                    candidate["httpSettings"]["requireHttps"] = False
+                elif bad == "exclusion":
+                    candidate["globalValidation"]["excludedPaths"].append("/api/*")
+                elif bad == "redirect":
+                    candidate["login"]["allowedExternalRedirectUrls"] = ["https://attacker.invalid"]
+                elif bad == "disabled":
+                    candidate["identityProviders"]["gitHub"]["enabled"] = False
+                elif bad == "extra":
+                    candidate["identityProviders"]["facebook"] = {"enabled": True}
+                elif bad == "registration":
+                    candidate["identityProviders"]["google"]["registration"]["clientId"] = ""
+                elif bad == "tenant":
+                    candidate["identityProviders"]["azureActiveDirectory"]["registration"][
+                        "openIdIssuer"
+                    ] = "https://login.microsoftonline.com/common/v2.0"
+                elif bad in {"organizations", "consumers"}:
+                    candidate["identityProviders"]["azureActiveDirectory"]["registration"][
+                        "openIdIssuer"
+                    ] = f"https://login.microsoftonline.com/{bad}/v2.0"
+                elif bad == "tenant_allowlist":
+                    config["WEBSITE_AUTH_AAD_ALLOWED_TENANTS"] = (
+                        "22222222-2222-2222-2222-222222222222"
+                    )
+                elif bad == "missing_tenant":
+                    config.pop("ASC_AUTH_MICROSOFT_TENANT_ID")
+                elif bad == "invalid_tenant":
+                    config["ASC_AUTH_MICROSOFT_TENANT_ID"] = "common"
+                elif bad == "missing_tenant_allowlist":
+                    config.pop("WEBSITE_AUTH_AAD_ALLOWED_TENANTS")
+                elif bad == "identity_allowlist":
+                    candidate["identityProviders"]["azureActiveDirectory"]["validation"][
+                        "defaultAuthorizationPolicy"
+                    ]["allowedPrincipals"] = {"identities": ["only-one-user"]}
+                elif bad == "client_allowlist":
+                    candidate["identityProviders"]["azureActiveDirectory"]["validation"][
+                        "defaultAuthorizationPolicy"
+                    ] = {"allowedApplications": ["unapproved-client"]}
+                elif bad == "audience":
+                    candidate["identityProviders"]["azureActiveDirectory"]["validation"][
+                        "allowedAudiences"
+                    ] = ["other"]
+                elif bad == "mixed":
+                    config["ASC_AUTH_ISSUER"] = "https://synthetic.ciamlogin.com/"
+                elif bad == "mode":
+                    config["ASC_AUTH_MODE"] = "bypass"
+                with self.assertRaises(delivery.DeliveryError) as failure:
+                    delivery.validate_authentication(
+                        candidate, config, "synthetic.azurewebsites.net"
+                    )
+                for value in settings.values():
+                    if value.startswith("synthetic-"):
+                        self.assertNotIn(value, str(failure.exception))
 
     def test_archive_contains_exact_git_commit_and_no_environment_secrets(self) -> None:
         sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
@@ -249,10 +453,10 @@ class DeliveryTests(unittest.TestCase):
             ):
                 if mode != "ok":
                     with self.assertRaises(delivery.DeliveryError):
-                        delivery.release_agents(project, delivery.manifest(), "app")
+                        delivery.release_agents(project, AGENT_PINS, "app")
                     project.agents.create_version.assert_not_called()
                     continue
-                pins = delivery.release_agents(project, delivery.manifest(), "app")
+                pins = delivery.release_agents(project, AGENT_PINS, "app")
             self.assertEqual(pins["ASC_FOUNDRY_ORCHESTRATOR_AGENT_VERSION"], "8")
             self.assertEqual(pins["ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION"], "9")
             for call, definition in zip(
@@ -262,6 +466,98 @@ class DeliveryTests(unittest.TestCase):
                 self.assertEqual(call.kwargs["metadata"]["asc_commit"], SHA)
                 self.assertEqual(call.kwargs["metadata"]["asc_source_version"], "1")
 
+    def test_deploy_supports_app_only_and_strict_agent_release_without_fallback(self) -> None:
+        class SyntheticAzureError(Exception):
+            pass
+
+        app = {
+            "defaultHostName": "synthetic.azurewebsites.net",
+            "identity": {
+                "userAssignedIdentities": {
+                    "identity": {"clientId": "workload-client", "principalId": "app-principal"}
+                }
+            },
+        }
+        settings = {
+            "AZURE_CLIENT_ID": "workload-client",
+            "ASC_FOUNDRY_PROJECT_ENDPOINT": "https://synthetic.services.ai.azure.com/api/projects/dev",
+        }
+        for mode in ("disabled", "enabled", "agent_failure"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                client = MagicMock()
+                credential = MagicMock()
+                telemetry = MagicMock()
+                modules = {
+                    "azure.ai.projects": SimpleNamespace(AIProjectClient=client),
+                    "azure.core.exceptions": SimpleNamespace(AzureError=SyntheticAzureError),
+                    "azure.identity": SimpleNamespace(AzureCliCredential=credential),
+                    "sous_chef.telemetry": SimpleNamespace(configure_safe_telemetry=telemetry),
+                }
+                release_pins = {
+                    "ASC_FOUNDRY_ORCHESTRATOR_AGENT_NAME": "orchestrator",
+                    "ASC_FOUNDRY_ORCHESTRATOR_AGENT_VERSION": "8",
+                    "ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_NAME": "recipe-nutrition",
+                    "ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION": "9",
+                }
+                with (
+                    patch.dict(
+                        os.environ,
+                        ENV
+                        | {
+                            "RUNNER_TEMP": directory,
+                            "GITHUB_OUTPUT": str(Path(directory) / "output"),
+                            "GITHUB_STEP_SUMMARY": str(Path(directory) / "summary"),
+                        },
+                    ),
+                    patch.dict(sys.modules, modules),
+                    patch.object(delivery, "command", return_value=SHA),
+                    patch.object(delivery, "current_dev_commit", return_value=SHA),
+                    patch.object(delivery, "target", return_value=(app, settings)),
+                    patch.object(
+                        delivery,
+                        "manifest",
+                        return_value={} if mode == "disabled" else ENABLED_MANIFEST["agents"],
+                    ),
+                    patch.object(delivery, "az") as cli,
+                    patch.object(delivery, "package") as package,
+                    patch.object(
+                        delivery,
+                        "release_agents",
+                        return_value=release_pins,
+                        side_effect=SyntheticAzureError("private-token")
+                        if mode == "agent_failure"
+                        else None,
+                    ) as release,
+                ):
+                    if mode == "agent_failure":
+                        with self.assertRaises(delivery.DeliveryError) as failure:
+                            delivery.deploy()
+                        self.assertNotIn("private-token", str(failure.exception))
+                        cli.assert_not_called()
+                        package.assert_not_called()
+                        continue
+                    delivery.deploy()
+                    updates = cli.call_args_list[0].args
+                    expected_flag = "false" if mode == "disabled" else "true"
+                    self.assertIn(f"ASC_AGENTS_ENABLED={expected_flag}", updates)
+                    self.assertIn("ASC_APP_WORKLOAD_PRINCIPAL_ID=app-principal", updates)
+                    self.assertEqual(cli.call_args_list[1].args[:2], ("webapp", "deploy"))
+                    package.assert_called_once_with(SHA, Path(directory) / "asc-dev.zip")
+                    summary = (Path(directory) / "summary").read_text()
+                    if mode == "disabled":
+                        client.assert_not_called()
+                        credential.assert_not_called()
+                        telemetry.assert_not_called()
+                        release.assert_not_called()
+                        self.assertFalse(any("_AGENT_VERSION=" in value for value in updates))
+                        self.assertIn("Agents disabled: app-only release", summary)
+                    else:
+                        client.assert_called_once()
+                        release.assert_called_once()
+                        for key, value in release_pins.items():
+                            self.assertIn(f"{key}={value}", updates)
+                        self.assertIn("Agents enabled", summary)
+
     def test_smoke_requires_real_commit_and_rejects_auth_redirects(self) -> None:
         app = {"defaultHostName": "synthetic.azurewebsites.net"}
 
@@ -270,7 +566,15 @@ class DeliveryTests(unittest.TestCase):
                 super().__init__(json.dumps(body).encode())
                 self.headers = {"X-ASC-Commit": revision}
 
-        for mode in ("ok", "wrong_commit", "redirect", "unready"):
+        for mode in (
+            "ok",
+            "agents_enabled",
+            "wrong_commit",
+            "redirect",
+            "unready",
+            "wrong_flag",
+            "missing_flag",
+        ):
             opener = MagicMock()
             opener.open.side_effect = [
                 Response({"status": "ok"}, HEAD if mode == "wrong_commit" else SHA),
@@ -287,12 +591,30 @@ class DeliveryTests(unittest.TestCase):
                             "GITHUB_STEP_SUMMARY": str(Path(directory) / "summary"),
                         },
                     ),
-                    patch.object(delivery, "target", return_value=(app, {})),
+                    patch.object(
+                        delivery,
+                        "target",
+                        return_value=(
+                            app,
+                            {}
+                            if mode == "missing_flag"
+                            else {
+                                "ASC_AGENTS_ENABLED": "true"
+                                if mode in {"agents_enabled", "wrong_flag"}
+                                else "false"
+                            },
+                        ),
+                    ),
+                    patch.object(
+                        delivery,
+                        "manifest",
+                        return_value=ENABLED_MANIFEST["agents"] if mode == "agents_enabled" else {},
+                    ),
                     patch("urllib.request.build_opener", return_value=opener),
                     patch("scripts.deploy_dev.time.monotonic", side_effect=[0, 0, 301]),
                     patch("scripts.deploy_dev.time.sleep"),
                 ):
-                    if mode == "ok":
+                    if mode in {"ok", "agents_enabled"}:
                         delivery.smoke()
                     else:
                         with self.assertRaises(delivery.DeliveryError):

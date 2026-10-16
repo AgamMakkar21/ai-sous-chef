@@ -2,11 +2,74 @@
 
 ## Boundary and behavior
 
-The consumer app uses **Entra External ID in an external tenant**, not workforce
-sign-in, B2C policies, `common`, or `organizations`. The consumer registration is
-separate from the App Service workload identity and every Entra Agent identity.
+There are two explicit authentication modes:
+
+| `ASC_AUTH_MODE` | Sign-in | Backend verification |
+| --- | --- | --- |
+| `external_id` (default, unchanged) | Entra External ID customer tenant | Signed External ID JWT, exact issuer/audience/JWKS |
+| `app_service` (hosted only) | Google, GitHub, single-tenant Microsoft Entra ID | Opaque Easy Auth session validated at the configured app's `/.auth/me` endpoint |
+
+The new `app_service` mode does **not** require creation of an External ID tenant.
+Microsoft uses an authorized registration in an existing tenant with supported
+account type **Accounts in this organizational directory only**
+(`signInAudience=AzureADMyOrg`) and the
+`https://login.microsoftonline.com/<tenant-id>/v2.0` authority. No new tenant is needed.
+The project's tenant policy disallows the broader personal/multitenant Microsoft
+registration. Personal Microsoft accounts and other directories are not accepted;
+authorized tenant members/guests use Microsoft, and personal users can use Google
+or GitHub instead. Do not change the authority to `common` to bypass that policy.
+A personal Google or GitHub account can test those providers, subject to their consent/test-user rules.
+Tenant and organization policies still apply; this does not bypass restrictions.
+The login registrations are separate from the App Service workload identity and every Entra Agent identity.
 Cosmos and Foundry continue to use managed identities; this change does not grant
 data-plane access or implement onboarding.
+
+### App Service multi-provider mode
+
+`GET /auth/login` displays three provider links. `/auth/login/aad`,
+`/auth/login/google` and `/auth/login/github` redirect to the matching Easy Auth
+endpoint with a fixed return `/`; caller-supplied queries/redirects are rejected.
+These three exact routes join the five public paths listed below. Unknown
+provider routes stay protected; no wildcard auth exclusion is permitted.
+
+Set `ASC_AUTH_MODE=app_service` and `ASC_AUTH_ORIGIN` to the app's canonical HTTPS
+`*.azurewebsites.net` origin. Remove `ASC_AUTH_ISSUER`, `ASC_AUTH_JWKS_URI` and
+`ASC_AUTH_CLIENT_ID` from runtime settings in this mode. Microsoft client ID and
+issuer belong in the platform provider registration, not the old JWT settings.
+Set `ASC_AUTH_MICROSOFT_TENANT_ID` to the approved directory GUID. Both infrastructure
+paths also set `WEBSITE_AUTH_AAD_ALLOWED_TENANTS` to that exact tenant for Easy Auth.
+Custom domains, direct bearer-token API clients and local cookie sign-in are not
+supported by this mode. Use the original mode for local signed-token testing.
+
+For every protected request, Python sends **only** the caller's single
+`AppServiceAuthSession` cookie to the fixed configured origin's `/.auth/me`.
+It never derives the destination from Host/Forwarded headers, follows redirects,
+forwards Authorization/identity headers, or accepts an explicit Authorization
+header as a fallback. This independent round-trip adds latency and requires
+outbound access to the canonical App Service endpoint; no identity cache is used.
+The token store must be enabled. A five-second timeout, 64-KiB response limit,
+one allowed provider identity and an unambiguous mapped `nameidentifier`/`sub`
+claim are required. Raw response bodies and provider tokens are never logged or
+returned. Invalid/expired sessions return 401; transport/policy-response failures
+return 503. The platform validates session expiry; provider-token expiry is a
+different lifetime, and the backend does not invent refresh/revocation guarantees.
+
+Ownership uses a hash of the configured app origin, provider and stable subject.
+For Microsoft, the backend additionally requires the verified `tid` (or its mapped
+tenant-ID claim) and `iss` claims. The actual issuer must be exactly
+`https://login.microsoftonline.com/<tid>/v2.0`, and the GUID tenant ID must equal
+`ASC_AUTH_MICROSOFT_TENANT_ID`. Other tenants and personal Microsoft accounts are
+rejected even if a platform session is otherwise valid. Tenant ID is included in the ownership
+namespace, so equal subjects from different tenants cannot share data.
+Email, display name, GitHub username and `user_id` display hints are not ownership
+keys. Identical email addresses or subjects across different providers remain
+**different app accounts**; there is no automatic linking. Switching authentication
+mode, app hostname or provider registration requires an explicit identity
+migration if existing data must remain accessible. Google/GitHub ownership IDs
+are unchanged by Microsoft tenant restrictions. CSRF/Origin enforcement and
+Cosmos ownership checks below apply unchanged to all three providers.
+
+### External ID mode (existing behavior)
 
 App Service built-in authentication (Easy Auth, `aad`) handles the authorization
 code callback and secure session cookie. `authsettingsV2` requires HTTPS and returns
@@ -23,12 +86,12 @@ ID-token header. No environment has a bypass. Missing auth configuration cannot
 authenticate anyone. A supplied token with unavailable configuration or
 unreachable signing keys returns 503 `authentication_unavailable`, not success.
 
-All HTTP routes, including frontend assets and unknown API paths, are protected
+In External ID mode, all HTTP routes, including frontend assets and unknown API paths, are protected
 except `/health`, `/ready`, `/auth/login`, `/auth/logout` and `/auth/signed-out`.
 Local-only `/docs` and `/openapi.json` remain public for contract inspection.
 WebSockets are rejected until an authenticated streaming implementation exists.
-The backend stores an immutable `AuthenticatedUser` in `request.state.user`.
-Its opaque `user_id` is SHA-256 of the exact verified issuer, a NUL separator and
+Both modes store an immutable `AuthenticatedUser` in `request.state.user`.
+In External ID mode its opaque `user_id` is SHA-256 of the exact verified issuer, a NUL separator and
 subject; future handlers must use it for Cosmos ownership and partition scoping,
 never a supplied ID. Changing registration/issuer requires an explicit identity
 migration, not matching users by email.
@@ -111,7 +174,120 @@ IDs, forged identity hints, and wrong-owner records returned from storage. The
 comprehensive per-product-route matrix remains ASC-18; each new endpoint must
 still ship focused ownership tests.
 
-## Required admin actions (each environment)
+## Multi-provider owner setup (existing app; no new tenant)
+
+Use authorized accounts for each registration. The Azure subscription identity
+does not automatically grant permission to create Microsoft, Google or GitHub
+login applications. If an organization blocks app registration, its administrator
+must create/approve that provider; do not use an unauthorized corporate directory.
+
+1. In the existing project tenant, create a **Microsoft Entra web app registration**
+   with supported account type **Accounts in this organizational directory only**.
+   For an existing registration, change its
+   **Authentication → Supported account types** to this option; its manifest
+   `signInAudience` must be `AzureADMyOrg`. Add Web redirect URI
+   `https://<app>.azurewebsites.net/.auth/login/aad/callback`. Record its application
+   client ID and directory tenant ID, and create a client secret with an expiry.
+   In App Service's Microsoft provider, use issuer URL
+   `https://login.microsoftonline.com/<tenant-id>/v2.0`, not `common`, `organizations`
+   or `consumers`. Under **Additional checks**, restrict tenants to this same
+   directory and allow its authorized users rather than a specific user-ID list.
+   Keep **Which client applications can call this app? → This application only**;
+   the shared policy retains that client-ID restriction required by this tenant.
+   Personal Outlook/Hotmail accounts and users from unrelated tenants cannot use
+   this provider; use Google/GitHub for personal-account testing. Organization
+   consent, guest access, Conditional Access and registration policies still apply.
+   The deployment identity cannot
+   change or verify the registration's `signInAudience`; an authorized owner must
+   set it. The Azure workload/deployment tenant does not change.
+2. In an authorized Google Cloud project, configure OAuth consent/audience and
+   create an **OAuth client ID, Web application**. Set JavaScript origin to
+   `https://<app>.azurewebsites.net` and redirect URI to
+   `https://<app>.azurewebsites.net/.auth/login/google/callback`. If the consent
+   app is in Testing, explicitly add the Google accounts used for acceptance.
+   Publication/verification requirements depend on the app's audience/scopes.
+3. In GitHub Developer settings, create an **OAuth App**, not a GitHub App.
+   Set homepage to `https://<app>.azurewebsites.net` and authorization callback to
+   `https://<app>.azurewebsites.net/.auth/login/github/callback`. Record its OAuth
+   client ID and create a client secret. Organization OAuth restrictions may
+   require approval. Login requests `read:user`, not repository access.
+4. In App Service **Settings → Environment variables → App settings**, retain or
+   enter each provider's client-secret **value** under its exact setting name:
+
+   | Provider | Protected App Service setting |
+   | --- | --- |
+   | Microsoft | `MICROSOFT_PROVIDER_AUTHENTICATION_SECRET` |
+   | Google | `GOOGLE_PROVIDER_AUTHENTICATION_SECRET` |
+   | GitHub | `GITHUB_PROVIDER_AUTHENTICATION_SECRET` |
+
+   Adding the providers through App Service Authentication already creates these
+   settings. Keep those values; do not replace them with Secret URIs or Key Vault
+   references. Enter any missing value through the portal, not chat, commands,
+   parameter files or logs. A first foundation deployment creates the app but does
+   not invent credentials; its owner must set them before login/release acceptance.
+   The deployment guard rejects blank/missing secrets and Key Vault references.
+   Restrict access to app settings: Website Contributor can read these values,
+   including the scoped GitHub delivery identity. Rotation requires updating the
+   setting, testing a fresh sign-in and only then revoking the previous credential.
+
+   Key Vault is not required. The previously created dev vault remains unused:
+   organization policy disables its public network and private connectivity is
+   outside this MVP change. Do not override that policy or delete the existing
+   vault/roles as part of auth setup. See the
+   [contracts decision](adr/0001-mvp-contracts.md#browser-identity-and-oauth-credentials-mvp-decision).
+5. Copy `infra/environments/dev-auth.parameters.example.json` to an ignored local
+   path such as `.venv/dev-auth.parameters.json`. Replace **all** synthetic IDs,
+   and client IDs; its example GUIDs are not real registrations.
+   The file contains nonsecret registration IDs only. Preview resource changes
+   without showing app-setting diffs, then apply
+   the targeted template using an authorized operator:
+
+   ```powershell
+   az deployment group what-if --subscription <subscription> --resource-group test-2 --template-file infra\app-service-auth.bicep --parameters "@.venv\dev-auth.parameters.json" --result-format ResourceIdOnly
+   az deployment group create --subscription <subscription> --resource-group test-2 --name ai-sous-chef-dev-auth --template-file infra\app-service-auth.bicep --parameters "@.venv\dev-auth.parameters.json" --output none
+   ```
+
+   In WSL Bash, use `/` for local file paths instead of `\`. Do not print secret
+   values, all app settings, or the token-bearing `/.auth/me` response to logs.
+   This template reads and preserves existing provider secrets and other app
+   settings, removes the three old
+   JWT settings, pins both the backend and Easy Auth to `socialAuth.tenantId`,
+   sets the canonical origin/mode, and
+   applies the shared three-provider auth policy. It does **not** create login
+   registrations, grant RBAC, enable Foundry agents, or redeploy models/hosting.
+   Do not change app settings concurrently while applying its read/merge/write.
+6. Check App Service **Environment variables** for the three required nonempty
+   settings without copying their values, and **Authentication** for all three enabled providers,
+   require authentication, HTTP 401, token store enabled, HTTPS, fixed one-hour
+   sessions and no refresh grace/external redirects. The deployment guard checks
+   the ARM `GET .../config/authsettingsV2/list` response's `properties` directly rather than depending on
+   Azure CLI's version-dependent `webapp auth show` response shape.
+7. Merge the reviewed backend change to `dev` and let the deployment run. Applying
+   the new runtime settings before this code is deployed may temporarily make
+   the old app unavailable; do not report completion until rollout succeeds.
+   Open `/auth/login` in a private browser window and exercise each provider,
+   `/auth/session`, sign-out, expiry/401, wrong-Origin mutation rejection and
+   cross-user data isolation. For Microsoft, test an authorized account from the
+   configured directory and confirm that personal Microsoft accounts and accounts
+   from other directories are rejected. Google/GitHub personal sign-in remains
+   available independently. Confirm the runtime tenant pin, platform issuer and
+   tenant allowlist all match.
+   A protected root returning `frontend_unavailable`
+   after sign-in means the separate frontend build is absent, not failed login.
+
+For later **foundation** deployments, set `ASC_AUTH_MODE=app_service`,
+`ASC_AUTH_CLIENT_ID` to the Microsoft client ID,
+`ASC_AUTH_ORIGIN` to the canonical app origin, and
+`ASC_SOCIAL_AUTH_CONFIG` to a JSON object with the same three `socialAuth` fields
+from the example. Omit the old issuer/JWKS environment inputs. These are deployment
+inputs; the foundation intentionally does not emit `ASC_AUTH_CLIENT_ID` as a
+runtime setting in this mode. Do not rerun the default `external_id` configuration
+over a multi-provider app. Both deployment paths share `modules/auth-policy.bicep`.
+
+Cloud registrations, credential setup/rotation and browser acceptance are **operator
+actions still required**; offline checks do not complete their acceptance.
+
+## External ID admin actions (each environment)
 
 Provisioning the consumer directory, app registration and user flow requires
 approved tenant-admin access. This repository does **not** create those directory
@@ -139,20 +315,19 @@ objects or grant roles automatically.
 5. Create a short-lived confidential-client credential only for this consumer
    provider. An external tenant is separate from the workload tenant, so this
    template uses the provider's supported client secret, not a made-up managed
-   identity federation. Store it directly in an approved Key Vault through the
-   approved secret-management process. Never paste it into source, `.env` files,
+   identity federation. Store its value directly in the protected App Service
+   setting `MICROSOFT_PROVIDER_AUTHENTICATION_SECRET` through the portal.
+   Never paste it into source, `.env` files,
    ARM parameters, commands, logs or issue comments.
-6. Have the vault administrator grant the existing App Service user-assigned
-   identity permission to read **that secret**, with approved network reachability.
-   `keyVaultReferenceIdentity` points at this identity. Set `ASC_AUTH_SECRET_URI`
-   to the secret's HTTPS URI (optionally versioned); IaC creates only
-   `@Microsoft.KeyVault(SecretUri=...)` in
-   `MICROSOFT_PROVIDER_AUTHENTICATION_SECRET`. No secret values are outputs.
+6. Restrict App Service settings access to approved operators and the scoped
+   deployment identity. Foundation redeployments preserve the existing provider
+   credential; they take neither its value nor a Secret URI as an input.
+   No secret values are outputs. A Key Vault reader role is not required.
 7. Perform required admin consent/reauthorization using the approved external
    tenant account. Changes to claims, consent, identity providers or the user flow
    require signing out and a new interactive authorization. For a rotated secret,
-   refresh Key Vault references/restart the dev app and confirm login before
-   retiring the old version. Record expiry/rotation ownership in the approved
+   update the App Service setting and confirm fresh login before
+   retiring the old credential. Record expiry/rotation ownership in the approved
    inventory. Do not record credentials or consumer identifiers in the checklist.
 
 | Environment | Web reply URI | Front-channel logout URI | App return after logout |
@@ -179,13 +354,13 @@ ASC_AUTH_ISSUER=<exact issuer from approved external-tenant metadata>
 ASC_AUTH_JWKS_URI=<exact jwks_uri from approved external-tenant metadata>
 ASC_AUTH_CLIENT_ID=<consumer web registration UUID>
 ASC_AUTH_ORIGIN=https://<actual-approved-dev-host>
-ASC_AUTH_SECRET_URI=https://<approved-vault>.vault.azure.net/secrets/<provider-secret>
 ```
 
 The hosting module sets these app values, including the approved `ASC_AUTH_ORIGIN`.
-`ASC_AUTH_SECRET_URI` is a deployment input, not an `ASC_` runtime setting; do not
-put it in `.env.dev`/`.env.prod`. Check that the Key Vault reference resolves before
-attempting login. Do not disable Easy Auth to work around a failed reference.
+Existing provider credentials remain in App Service settings across foundation
+redeployments; there is no Secret URI input. Set the Microsoft credential through
+the portal before attempting login, not through `.env` or parameter files.
+Do not disable Easy Auth to work around missing/expired credentials.
 Application logging excludes tokens, cookies, claims and raw provider errors.
 Keep platform HTTP/debug logs off: authorization callback query strings contain
 codes and must not be retained in telemetry or screenshots.
@@ -218,7 +393,7 @@ Offline coverage includes signature/algorithm checks, incorrect issuer/audience,
 expiry, not-before, forged identity headers, stable isolated user scope, CSRF,
 fixed login/logout targets, signing-key outage and compiled Easy Auth settings.
 The following **live checks remain pending** until the approved tenant/registration,
-Key Vault access and dev deployment exist. Do not mark issue 17 complete from
+provider credentials and dev deployment exist. Do not mark issue 17 complete from
 offline tests alone:
 
 - [ ] Record approved directory/client IDs, user-flow association, canonical host,
@@ -232,10 +407,10 @@ offline tests alone:
 - [ ] Try a signed token with the wrong issuer and wrong audience: both fail.
   Attempt an unregistered OAuth reply URI and an external post-login/logout return:
   neither reaches the unapproved host. Do not include tokens/codes in evidence.
-- [ ] Confirm resolved Key Vault reference and reauthorization after rotation;
+- [ ] Confirm direct protected provider settings and reauthorization after rotation;
   ask the other collaborator to review the feature PR into `dev`. Do not deploy
   prod, self-approve or auto-close the issue on dev integration.
 
 References: [App Service external configuration](https://learn.microsoft.com/azure/app-service/configure-authentication-provider-aad),
 [App Service authentication API](https://learn.microsoft.com/azure/app-service/configure-authentication-customize-sign-in-out),
-[Key Vault references](https://learn.microsoft.com/azure/app-service/app-service-key-vault-references).
+[App Service settings security](https://learn.microsoft.com/azure/app-service/configure-common#configure-app-settings).

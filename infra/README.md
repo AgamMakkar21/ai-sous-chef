@@ -16,12 +16,37 @@ No Cosmos DB, Functions, PostgreSQL, storage account,
 agent identities, application instrumentation, dashboards, or alerts are deployed.
 Foundry is added by `modules/foundry.bicep` and hosting by `modules/app-service.bicep`
 (see the Foundry and App Service sections below).
-Hosting includes consumer Entra External ID authentication. Before compiling either
+Hosting defaults to consumer Entra External ID authentication. The explicit
+`authMode=app_service` option instead configures Google, GitHub and existing
+single-tenant Microsoft Entra ID without creating an External ID tenant.
+The Microsoft registration uses `AzureADMyOrg`; `socialAuth.tenantId` pins the
+backend, platform issuer and Easy Auth tenant allowlist to the approved directory.
+Personal users can sign in through Google or GitHub, not the Microsoft provider.
+For an existing app, use `app-service-auth.bicep` and
+`environments/dev-auth.parameters.example.json` to update only authentication
+and merge app settings, preserving deployed agent pins and other runtime settings.
+Both paths use `modules/auth-policy.bicep`. Follow the
+[multi-provider owner setup](../docs/authentication.md#multi-provider-owner-setup-existing-app-no-new-tenant),
+including provider registrations, protected App Service secrets and foundation mode inputs
+needed to retain that choice on future deployments.
+
+OAuth secret values stay directly in the three provider App Service settings,
+entered/rotated through the portal. Neither template accepts credentials or Secret
+URIs. Both preserve existing secrets; a new app requires owner-entered credentials
+before login or release acceptance. Key Vault is not required; the previously
+created dev vault and its roles remain untouched and unused. See the
+[contracts decision](../docs/adr/0001-mvp-contracts.md#browser-identity-and-oauth-credentials-mvp-decision).
+
+For the original External ID mode, before compiling either
 environment's parameter file or deploying, complete the tenant-admin steps and set
-`ASC_AUTH_ISSUER`, `ASC_AUTH_JWKS_URI`, `ASC_AUTH_CLIENT_ID`, `ASC_AUTH_ORIGIN` and
-`ASC_AUTH_SECRET_URI` as described in [consumer sign-in setup](../docs/authentication.md).
-The secret URI is a Key Vault reference, never the client-secret value. Main-template
-redeployments retain these settings and authentication enforcement.
+`ASC_AUTH_ISSUER`, `ASC_AUTH_JWKS_URI`, `ASC_AUTH_CLIENT_ID` and `ASC_AUTH_ORIGIN`
+as described in [consumer sign-in setup](../docs/authentication.md).
+Main-template redeployments retain provider secrets, deployed agent pins and
+other existing settings while updating managed configuration and enforcing the
+selected authentication mode. Do not run read/merge/write settings updates
+concurrently. Suppress setting-value diffs (`--result-format ResourceIdOnly` for
+what-if) and deployment output (`--output none` or a nonsecret state/output query);
+never print all app settings.
 Cosmos has a separate, opt-in [dev deployment](cosmos.md) for ASC-07; running
 `main.bicep` does not provision Cosmos.
 `modules/monitoring.bicep` is the foundation module. Later service issues add their
@@ -96,7 +121,8 @@ az deployment group validate --subscription "$ASC_AZURE_SUBSCRIPTION" \
 az deployment group what-if --subscription "$ASC_AZURE_SUBSCRIPTION" \
   --resource-group "$ASC_AZURE_RESOURCE_GROUP" \
   --name ai-sous-chef-dev-foundation \
-  --template-file infra/main.bicep --parameters infra/environments/dev.bicepparam
+  --template-file infra/main.bicep --parameters infra/environments/dev.bicepparam \
+  --result-format ResourceIdOnly
 ```
 
 Inspect the preview before continuing: only the two named monitoring resources
@@ -176,16 +202,19 @@ Python web/API deployment; there are no microservices.
 - Runtime `PYTHON|3.12`, HTTPS only, TLS 1.2 minimum, FTPS disabled, HTTP/2, Always On.
 - Startup command: `python -m uvicorn sous_chef.app:create_app --factory --app-dir backend/src --host 0.0.0.0 --port 8000 --no-access-log`.
 - Health check path `/health` (process liveness only). `/ready` checks live
-  Cosmos/Foundry metadata with the workload identity once agent/version and
-  identity pins are configured; failures return a generic 503.
+  Cosmos metadata with the workload identity and, when `ASC_AGENTS_ENABLED=true`,
+  the configured Foundry agent/version and identity pins; failures return a
+  generic 503. The reviewed app-only release sets this flag false without
+  weakening Cosmos or authentication checks.
 - FTP and SCM basic-auth publishing credentials are disabled. Deploy with Entra.
-- App settings are nonsecret only: environment, adapter mode, Cosmos endpoint and
+- Template-authored app settings contain environment, adapter mode, Cosmos endpoint and
   database, Foundry endpoint and deployment names, `AZURE_CLIENT_ID` of the app
   identity, and the Application Insights connection string. Prompt/message content
-  capture is off. Consumer auth adds issuer/JWKS/client/origin settings and a
-  Key Vault **reference**, never an embedded provider-secret value. The reference
-  uses the dedicated app identity; an approved vault reader grant is a prerequisite.
-  No Cosmos or Foundry key exists anywhere.
+  capture is off. Auth adds mode-specific issuer/JWKS/client/origin/tenant settings.
+  Existing provider credential values are preserved from App Service settings,
+  never embedded in source, parameters or outputs. Anyone with settings-read
+  permission (including Website Contributor) can read those credentials; protect
+  operator and deployment access. No Cosmos or Foundry key exists anywhere.
 - This template grants no roles. The app identity needs Cosmos data-plane and
   Azure AI User roles from issues #11/#16, plus the agent release pins described
   in [reviewed dev delivery](../docs/dev-delivery.md), before `/ready` can succeed.

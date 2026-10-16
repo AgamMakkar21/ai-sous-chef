@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import unittest
@@ -55,7 +56,6 @@ class FoundationTests(unittest.TestCase):
                 "ASC_AUTH_JWKS_URI": "https://synthetic.ciamlogin.com/tenant/discovery/v2.0/keys",
                 "ASC_AUTH_CLIENT_ID": "22222222-2222-2222-2222-222222222222",
                 "ASC_AUTH_ORIGIN": "https://synthetic.azurewebsites.net",
-                "ASC_AUTH_SECRET_URI": "https://synthetic.vault.azure.net/secrets/consumer-login",
             },
         ):
             cls.dev = compile_bicep("infra/environments/dev.bicepparam", "build-params")
@@ -189,26 +189,36 @@ class FoundationTests(unittest.TestCase):
         self.assertEqual({p["name"].split("'")[-2] for p in policies}, {"ftp", "scm"})
         self.assertTrue(all(p["properties"]["allow"] is False for p in policies))
 
-    def test_app_settings_are_nonsecret_and_disable_ai_content_capture(self) -> None:
+    def test_authored_settings_preserve_secrets_and_disable_ai_content_capture(self) -> None:
         site = next(r for r in self.app["resources"] if r["type"] == "Microsoft.Web/sites")
-        settings = {s["name"]: s["value"] for s in site["properties"]["siteConfig"]["appSettings"]}
-        for name in ("KEY", "SECRET", "PASSWORD", "TOKEN"):
-            self.assertFalse(
-                [
-                    k
-                    for k in settings
-                    if name in k.upper() and k != "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"
-                ]
-            )
-        self.assertIn(
-            "@Microsoft.KeyVault(SecretUri=",
-            settings["MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"],
+        self.assertNotIn("appSettings", site["properties"]["siteConfig"])
+        config = next(r for r in self.app["resources"] if "-settings" in r["name"])
+        settings = config["properties"]["parameters"]["settings"]["value"]
+        settings_template = config["properties"]["template"]
+        self.assertEqual(settings_template["parameters"]["settings"]["type"], "secureObject")
+        self.assertEqual(
+            {r["type"] for r in settings_template["resources"]},
+            {"Microsoft.Web/sites/config"},
         )
-        self.assertEqual(settings["ASC_ADAPTER_MODE"], "live")
-        self.assertEqual(settings["OTEL_SDK_DISABLED"], "true")
-        self.assertEqual(settings["ApplicationInsightsAgent_EXTENSION_VERSION"], "disabled")
-        self.assertEqual(settings["AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED"], "false")
-        self.assertIn("AZURE_CLIENT_ID", settings)
+        self.assertIn("authSettings", settings)
+        self.assertIn("list(format(", settings)
+        self.assertIn("/config/appsettings", settings)
+        self.assertNotIn("listApplicationSettings", settings)
+        self.assertIn("union(", settings)
+        self.assertNotIn("PROVIDER_AUTHENTICATION_SECRET", settings)
+        names = re.findall(r"createObject\('name', '([^']+)'", settings)
+        for name in ("KEY", "SECRET", "PASSWORD", "TOKEN"):
+            self.assertFalse([k for k in names if name in k.upper()])
+        self.assertNotIn("@Microsoft.KeyVault", json.dumps(self.app))
+        self.assertNotIn("authSecretUri", self.template["parameters"])
+        for name, value in (
+            ("ASC_ADAPTER_MODE", "live"),
+            ("OTEL_SDK_DISABLED", "true"),
+            ("ApplicationInsightsAgent_EXTENSION_VERSION", "disabled"),
+            ("AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED", "false"),
+        ):
+            self.assertIn(f"createObject('name', '{name}', 'value', '{value}')", settings)
+        self.assertIn("AZURE_CLIENT_ID", names)
         deployments = {
             d["name"] for d in self.template["parameters"]["modelDeployments"]["defaultValue"]
         }
@@ -224,37 +234,44 @@ class FoundationTests(unittest.TestCase):
             self.assertIn(name, self.prod["parameters"])
 
     def test_consumer_auth_is_required_and_uses_no_external_redirects(self) -> None:
-        auth = next(r for r in self.app["resources"] if "authsettingsV2" in r["name"])
+        module = next(r for r in self.app["resources"] if "-authentication" in r["name"])
+        policy = module["properties"]["template"]
+        auth = next(r for r in policy["resources"] if "authsettingsV2" in r["name"])
         config = auth["properties"]
         self.assertTrue(config["platform"]["enabled"])
         self.assertTrue(config["globalValidation"]["requireAuthentication"])
         self.assertEqual(config["globalValidation"]["unauthenticatedClientAction"], "Return401")
-        self.assertEqual(
-            set(config["globalValidation"]["excludedPaths"]),
-            {
-                "/health",
-                "/ready",
-                "/auth/login",
-                "/auth/logout",
-                "/auth/signed-out",
-            },
-        )
+        excluded = config["globalValidation"]["excludedPaths"]
+        for path in ("/health", "/ready", "/auth/login", "/auth/logout", "/auth/signed-out"):
+            self.assertIn(f"'{path}'", excluded)
+        self.assertIn("app_service", excluded)
         self.assertTrue(config["httpSettings"]["requireHttps"])
-        provider = config["identityProviders"]["azureActiveDirectory"]
-        self.assertEqual(provider["registration"]["openIdIssuer"], "[parameters('authIssuer')]")
-        self.assertEqual(
-            provider["validation"]["allowedAudiences"], ["[parameters('authClientId')]"]
-        )
+        providers = config["identityProviders"]
+        self.assertIn("azureActiveDirectory", providers)
+        self.assertIn("authIssuer", providers)
+        self.assertIn("allowedAudiences", providers)
+        self.assertIn("allowedApplications", providers)
+        for unused in (
+            "apple",
+            "facebook",
+            "twitter",
+            "legacyMicrosoftAccount",
+            "azureStaticWebApps",
+        ):
+            self.assertIn(f"'{unused}', createObject('enabled', false())", providers)
+        self.assertIn("google", providers)
+        self.assertIn("gitHub", providers)
+        self.assertNotIn("common/v2.0", providers)
+        self.assertIn("socialAuth').tenantId", providers)
         self.assertEqual(config["login"]["allowedExternalRedirectUrls"], [])
         self.assertTrue(config["login"]["tokenStore"]["enabled"])
         self.assertEqual(config["login"]["tokenStore"]["tokenRefreshExtensionHours"], 0)
         self.assertEqual(config["login"]["cookieExpiration"]["timeToExpiration"], "01:00:00")
-        for name in ("authIssuer", "authJwksUri", "authClientId", "authOrigin", "authSecretUri"):
-            self.assertNotIn("defaultValue", self.template["parameters"][name])
+        for name in ("authIssuer", "authJwksUri", "authClientId", "authOrigin"):
+            if name not in {"authIssuer", "authJwksUri"}:
+                self.assertNotIn("defaultValue", self.template["parameters"][name])
             self.assertIn(name, self.dev["parameters"])
             self.assertIn(name, self.prod["parameters"])
-        site = next(r for r in self.app["resources"] if r["type"] == "Microsoft.Web/sites")
-        self.assertIn("userAssignedIdentities", site["properties"]["keyVaultReferenceIdentity"])
 
     def test_tags_and_outputs_have_no_secrets(self) -> None:
         self.assertEqual(
@@ -279,6 +296,50 @@ class FoundationTests(unittest.TestCase):
                 self.assertEqual(output["type"], "string")
                 self.assertNotIn("listKeys", output["value"])
                 self.assertNotIn("ConnectionString", output["value"])
+
+    def test_existing_app_auth_template_reuses_policy_and_preserves_other_settings(self) -> None:
+        template = compile_bicep("infra/app-service-auth.bicep")
+        self.assertEqual(
+            {resource["type"] for resource in template["resources"]},
+            {"Microsoft.Resources/deployments"},
+        )
+
+        module = next(r for r in template["resources"] if "-authentication" in r["name"])
+        foundation = next(r for r in self.app["resources"] if "-authentication" in r["name"])
+        self.assertEqual(module["properties"]["template"], foundation["properties"]["template"])
+        self.assertEqual(module["properties"]["parameters"]["authMode"]["value"], "app_service")
+        text = json.dumps(template)
+        self.assertIn("list(format(", text)
+        self.assertIn("/config/appsettings", text)
+        self.assertNotIn("listApplicationSettings", text)
+        for name in ("ASC_AUTH_ISSUER", "ASC_AUTH_JWKS_URI", "ASC_AUTH_CLIENT_ID"):
+            self.assertIn(name, text)
+        self.assertIn("WEBSITE_AUTH_AAD_ALLOWED_TENANTS", text)
+        settings_module = next(r for r in template["resources"] if "-settings" in r["name"])
+        settings = settings_module["properties"]["parameters"]["settings"]["value"]
+        settings_template = settings_module["properties"]["template"]
+        self.assertEqual(settings_template["parameters"]["settings"]["type"], "secureObject")
+        self.assertNotIn("list(", json.dumps(settings_template))
+        self.assertIn("union(", settings)
+        self.assertIn("'ASC_AUTH_MODE', 'app_service'", settings)
+        self.assertIn("ASC_AUTH_MICROSOFT_TENANT_ID", settings)
+        self.assertIn("WEBSITE_AUTH_AAD_ALLOWED_TENANTS", settings)
+        self.assertIn("defaultHostName", settings)
+        self.assertNotIn("PROVIDER_AUTHENTICATION_SECRET", settings)
+        self.assertNotIn("authSecretUri", template["parameters"])
+        example = json.loads(
+            (ROOT / "infra/environments/dev-auth.parameters.example.json").read_text()
+        )
+        self.assertEqual(set(example["parameters"]), {"appName", "authClientId", "socialAuth"})
+        self.assertEqual(set(template["parameters"]), set(example["parameters"]))
+        self.assertEqual(
+            set(example["parameters"]["socialAuth"]["value"]),
+            {
+                "tenantId",
+                "googleClientId",
+                "githubClientId",
+            },
+        )
 
 
 if __name__ == "__main__":

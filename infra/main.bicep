@@ -59,13 +59,17 @@ param cosmosEndpoint string
 @minLength(1)
 param cosmosDatabase string
 
-@description('Exact issuer from the approved external tenant OpenID metadata, not a workforce tenant.')
-@minLength(1)
-param authIssuer string
+@allowed(['external_id', 'app_service'])
+param authMode string = 'external_id'
 
-@description('jwks_uri from that same approved external tenant metadata.')
-@minLength(1)
-param authJwksUri string
+@description('Exact external-tenant issuer. Required only for external_id mode.')
+param authIssuer string = ''
+
+@description('External-tenant JWKS endpoint. Required only for external_id mode.')
+param authJwksUri string = ''
+
+@description('app_service mode: nonsecret tenantId, googleClientId and githubClientId.')
+param socialAuth object = {}
 
 @description('Consumer web app registration client ID, separate from workload/agent identities.')
 @minLength(36)
@@ -75,10 +79,6 @@ param authClientId string
 @description('Approved browser HTTPS origin, using the actual App Service hostname or custom domain.')
 @minLength(1)
 param authOrigin string
-
-@description('HTTPS Key Vault secret URI containing the external-tenant client credential; never its value.')
-@minLength(1)
-param authSecretUri string
 
 var project = 'ai-sous-chef'
 var namePrefix = '${project}-${environment}'
@@ -127,7 +127,8 @@ module appService 'modules/app-service.bicep' = {
     authJwksUri: authJwksUri
     authClientId: authClientId
     authOrigin: authOrigin
-    authSecretUri: authSecretUri
+    authMode: authMode
+    socialAuth: socialAuth
     foundryProjectEndpoint: foundry.outputs.projectEndpoint
     foundryDeploymentNames: foundryDeploymentNames
     applicationInsightsResourceId: monitoring.outputs.applicationInsightsResourceId
