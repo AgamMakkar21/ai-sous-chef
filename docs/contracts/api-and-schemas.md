@@ -157,6 +157,17 @@ Read-only `GET /me` initialization must be duplicate-safe and create no AI work.
 Onboarding and preference updates never accept `onboardingCompleted`, learned
 state, or timestamps directly; the server controls those fields.
 
+The [implemented profile APIs](../profiles.md) return only `userId`,
+`onboardingCompleted`, `explicitPreferences`, `createdAt` and `updatedAt`.
+New profiles have `explicitPreferences: null` and incomplete onboarding;
+stored groceries and learned preferences start empty. `PUT /me/onboarding`
+requires all nine explicit fields, including explicitly supplied empty safety
+arrays when appropriate. Only that full validation marks onboarding complete.
+`PATCH /me/preferences` requires completed onboarding, rejects an empty update
+or explicitly null fields, and preserves omitted fields. Flavors use `likes`
+and `dislikes`; spice uses the separate enumerated field.
+Neither mutation replaces groceries, learned state or unrelated profile fields.
+
 Sending text normally returns 200 with the completed turn only after the validated
 assistant response is persisted. If a duplicate key finds an existing pending send, return 202
 with its operation URL and safe retry interval, without starting another generation.
