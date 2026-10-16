@@ -41,7 +41,7 @@ resource federation 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedI
   name: 'github-dev'
   properties: {
     issuer: 'https://token.actions.githubusercontent.com'
-    subject: 'repo:AgamMakkar21/ai-sous-chef:environment:dev'
+    subject: 'repo:AgamMakkar21@72168349/ai-sous-chef@1409242851:environment:dev'
     audiences: ['api://AzureADTokenExchange']
   }
 }
