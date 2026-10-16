@@ -3,12 +3,17 @@ from typing import Annotated
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from jwt import InvalidTokenError, PyJWKClient, PyJWKClientConnectionError, PyJWKClientError
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from sous_chef.adapters.app_service_auth import (
+    PROVIDERS,
+    SESSION_COOKIE,
+    AppServiceSessionVerifier,
+)
 from sous_chef.api.problems import problem_response
 from sous_chef.domain.authorization import AuthenticatedUser as AuthenticatedUser
 from sous_chef.settings import Settings
@@ -67,6 +72,9 @@ class AuthenticationMiddleware:
         self.app = app
         self.settings = settings
         self.verifier = TokenVerifier(settings)
+        self.session_verifier = (
+            AppServiceSessionVerifier(settings) if settings.auth_mode == "app_service" else None
+        )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "lifespan":
@@ -78,6 +86,8 @@ class AuthenticationMiddleware:
         public_paths = {"/health", "/ready", "/auth/login", "/auth/logout", "/auth/signed-out"}
         if self.settings.environment == "local":
             public_paths.update({"/docs", "/openapi.json"})
+        if self.session_verifier is not None:
+            public_paths.update(f"/auth/login/{provider}" for provider in PROVIDERS)
         if scope["path"] in public_paths:
             await self.app(scope, receive, send)
             return
@@ -86,7 +96,15 @@ class AuthenticationMiddleware:
         scheme, separator, credential = authorization.partition(" ")
         bearer = scheme.lower() == "bearer" and bool(separator)
         token = credential if bearer else ""
-        if "authorization" not in headers and self.settings.environment != "local":
+        if self.session_verifier is not None:
+            cookies = [
+                item.strip().partition("=")
+                for raw in headers.getlist("cookie")
+                for item in raw.split(";")
+                if item.strip().partition("=")[0] == SESSION_COOKIE
+            ]
+            token = cookies[0][2] if len(cookies) == 1 and "authorization" not in headers else ""
+        elif "authorization" not in headers and self.settings.environment != "local":
             token = headers.get("x-ms-token-aad-id-token", "")
         response: JSONResponse | None = None
         ambiguous_credentials = (
@@ -99,7 +117,11 @@ class AuthenticationMiddleware:
             )
         else:
             try:
-                user = await run_in_threadpool(self.verifier.verify, token)
+                user = (
+                    await self.session_verifier.verify(token)
+                    if self.session_verifier is not None
+                    else await run_in_threadpool(self.verifier.verify, token)
+                )
             except PyJWKClientConnectionError:
                 response = problem_response(
                     503,
@@ -138,7 +160,7 @@ def create_auth_router(settings: Settings) -> APIRouter:
     router = APIRouter(prefix="/auth")
 
     @router.get("/login", include_in_schema=False, response_model=None)
-    async def login(request: Request) -> RedirectResponse | JSONResponse:
+    async def login(request: Request) -> RedirectResponse | JSONResponse | HTMLResponse:
         if request.query_params:
             return problem_response(
                 400, "invalid_input", "Invalid request", "Return URLs are fixed."
@@ -150,8 +172,36 @@ def create_auth_router(settings: Settings) -> APIRouter:
                 "Hosted login required",
                 "Use the dev App Service login or a signed consumer token for local API testing.",
             )
+        if settings.auth_mode == "app_service":
+            links = "".join(
+                f'<li><a href="/auth/login/{provider}">Sign in with {label}</a></li>'
+                for provider, label in PROVIDERS.items()
+            )
+            return HTMLResponse(
+                '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+                "<title>Sign in - AI Sous Chef</title></head>"
+                f"<body><h1>Sign in to AI Sous Chef</h1><ul>{links}</ul></body></html>",
+                headers={
+                    "Cache-Control": "no-store",
+                    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; "
+                    "base-uri 'none'; form-action 'none'",
+                    "X-Content-Type-Options": "nosniff",
+                    "Referrer-Policy": "no-referrer",
+                },
+            )
         return RedirectResponse(
             "/.auth/login/aad?post_login_redirect_uri=%2F", headers={"Cache-Control": "no-store"}
+        )
+
+    @router.get("/login/{provider}", include_in_schema=False, response_model=None)
+    async def provider_login(provider: str, request: Request) -> RedirectResponse | JSONResponse:
+        if settings.auth_mode != "app_service" or provider not in PROVIDERS or request.query_params:
+            return problem_response(
+                400, "invalid_input", "Invalid request", "Choose a configured sign-in provider."
+            )
+        return RedirectResponse(
+            f"/.auth/login/{provider}?post_login_redirect_uri=%2F",
+            headers={"Cache-Control": "no-store"},
         )
 
     @router.get("/logout", include_in_schema=False, response_model=None)

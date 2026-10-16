@@ -324,6 +324,7 @@ def test_real_sdk_factory_uses_project_token_scope_and_disables_retries(
         {"foundry_recipe_nutrition_agent_version": None},
         {"foundry_recipe_nutrition_agent_name": "orchestrator-agent"},
         {"environment": "local", "adapter_mode": "local"},
+        {"agents_enabled": False},
     ],
 )
 def test_gateway_configuration_fails_closed(changes: dict[str, Any]) -> None:

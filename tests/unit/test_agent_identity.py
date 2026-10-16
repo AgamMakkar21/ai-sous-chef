@@ -92,6 +92,11 @@ def test_missing_agent_names_are_a_configuration_error() -> None:
         resolve_agent_identities(settings, FakeAgents({}))
 
 
+def test_disabled_agents_are_not_looked_up_even_with_stale_names() -> None:
+    with pytest.raises(ConfigurationError, match="disabled"):
+        resolve_agent_identities(make_settings(agents_enabled=False), FakeAgents({}))
+
+
 def test_settings_reject_duplicate_principal_ids() -> None:
     with pytest.raises(ConfigurationError, match="distinct"):
         make_settings(

@@ -1,7 +1,5 @@
 {
-  "schema_version": 1,
-  "agents": {
-    "orchestrator": {"name": "orchestrator", "version": "1"},
-    "recipe_nutrition": {"name": "recipe-nutrition", "version": "1"}
-  }
+  "schema_version": 2,
+  "agents_enabled": false,
+  "agents": {}
 }

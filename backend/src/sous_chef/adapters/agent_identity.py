@@ -19,6 +19,8 @@ def resolve_agent_identities(settings: Settings, agents: _Agents) -> list[AgentI
     Legacy agents have no instance identity (they share the project identity), so they fail here.
     Recreate them as new-model agents.
     """
+    if not settings.agents_enabled:
+        raise ConfigurationError("Agent execution is disabled for this release.")
     names = {
         AgentRole.ORCHESTRATOR: settings.foundry_orchestrator_agent_name,
         AgentRole.RECIPE_NUTRITION: settings.foundry_recipe_nutrition_agent_name,

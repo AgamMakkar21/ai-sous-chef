@@ -41,6 +41,34 @@ def test_live_settings_are_required() -> None:
         Settings(environment="prod", adapter_mode="live")
 
 
+def test_disabling_agents_does_not_require_unused_foundry_settings() -> None:
+    settings = Settings(
+        environment="dev",
+        adapter_mode="live",
+        agents_enabled=False,
+        cosmos_endpoint="https://synthetic.documents.azure.com/",
+        cosmos_database="synthetic",
+    )
+    assert settings.agents_enabled is False
+    assert settings.foundry_project_endpoint is None
+    assert Settings(environment="local", adapter_mode="local").agents_enabled is True
+
+
+def test_disabling_agents_does_not_disable_cosmos_validation() -> None:
+    with pytest.raises(ConfigurationError, match="ASC_COSMOS_ENDPOINT"):
+        Settings(environment="dev", adapter_mode="live", agents_enabled=False)
+
+
+@pytest.mark.parametrize(("flag", "expected"), [("true", True), ("false", False)])
+def test_agent_flag_uses_the_exact_values_written_by_delivery(
+    monkeypatch: pytest.MonkeyPatch, flag: str, expected: bool
+) -> None:
+    monkeypatch.setenv("ASC_ENVIRONMENT", "local")
+    monkeypatch.setenv("ASC_ADAPTER_MODE", "local")
+    monkeypatch.setenv("ASC_AGENTS_ENABLED", flag)
+    assert load_settings().agents_enabled is expected
+
+
 def test_live_requires_every_foundry_deployment_name() -> None:
     with pytest.raises(ConfigurationError) as error:
         Settings(
@@ -93,6 +121,7 @@ def test_selected_file_and_environment_override(
     ("name", "value"),
     [
         ("ASC_ADAPTER_MODE", "secret-invalid-mode"),
+        ("ASC_AGENTS_ENABLED", "secret-invalid-flag"),
         ("ASC_READINESS_TIMEOUT_SECONDS", "secret-invalid-number"),
         ("ASC_READINESS_TIMEOUT_SECONDS", "nan"),
         ("ASC_READINESS_TIMEOUT_SECONDS", "inf"),
