@@ -115,6 +115,20 @@ initial delivery pipeline; ASC-09 adds worker delivery before full MVP acceptanc
 
 ## Failures and recovery
 
+If **Verify reviewed dev merge** fails with "No merged dev PR with a current
+peer approval matches this commit", deployment has not started. A merge by a
+collaborator is not itself an approval: a human collaborator other than the PR
+author must submit **Review changes -> Approve** against the final PR head.
+Ordinary comments and approvals of earlier commits do not satisfy the gate.
+
+For a PR already merged without approval, use a new recovery PR into `dev` if
+post-merge approval is unavailable. The reviewer must inspect the previously
+merged deployment changes as well as the recovery diff, submit an explicit
+approval, wait for required checks, and then merge without adding more commits.
+That new merge triggers delivery of the current dev source. Do not disable the
+review gate, fabricate approval, or repeatedly rerun a commit with no approval.
+Check the repository ruleset if an unapproved merge was permitted.
+
 Deployment jobs are serialized without interrupting an in-progress release.
 GitHub can replace queued pending runs with newer ones; superseded commits are
 not guaranteed their own deployment. A stale queued run cannot overwrite a
