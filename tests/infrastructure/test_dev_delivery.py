@@ -42,6 +42,21 @@ ENABLED_MANIFEST = {
 
 
 class DeliveryTests(unittest.TestCase):
+    def test_command_failure_identifies_operation_without_credentials_or_output(self) -> None:
+        with patch(
+            "scripts.deploy_dev.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                [], 1, stdout="private-stdout", stderr="private-stderr"
+            ),
+        ):
+            with self.assertRaises(delivery.DeliveryError) as failure:
+                delivery.command(
+                    "az", "webapp", "config", "appsettings", "set", "--settings", "secret=value"
+                )
+        self.assertIn("az webapp config appsettings set failed", str(failure.exception))
+        for private in ("private-stdout", "private-stderr", "secret=value"):
+            self.assertNotIn(private, str(failure.exception))
+
     def test_workflow_is_separate_from_untrusted_pr_validation(self) -> None:
         workflow = (ROOT / ".github/workflows/deploy-dev.yml").read_text()
         self.assertIn("branches: [dev]", workflow)
@@ -481,8 +496,33 @@ class DeliveryTests(unittest.TestCase):
         settings = {
             "AZURE_CLIENT_ID": "workload-client",
             "ASC_FOUNDRY_PROJECT_ENDPOINT": "https://synthetic.services.ai.azure.com/api/projects/dev",
+            "SCM_DO_BUILD_DURING_DEPLOYMENT": "true",
+            "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET": "private-token",
         }
-        for mode in ("disabled", "enabled", "agent_failure"):
+        failures: dict[str, list[object]] = {
+            "build_error": [delivery.DeliveryError("synthetic build error")],
+            "build_pending": [{"status": 1}],
+            "build_failed": [{"status": 3}],
+            "build_response_missing": [{"id": "synthetic-deployment"}],
+            "build_non_object": [None],
+            "settings_error": [
+                {"status": 4},
+                delivery.DeliveryError("synthetic settings error"),
+            ],
+            "restart_error": [
+                {"status": 4},
+                {},
+                delivery.DeliveryError("synthetic restart error"),
+            ],
+        }
+        for mode in (
+            "disabled",
+            "enabled",
+            "agent_failure",
+            "no_build",
+            "package_mount",
+            *failures,
+        ):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
                 client = MagicMock()
                 credential = MagicMock()
@@ -512,14 +552,32 @@ class DeliveryTests(unittest.TestCase):
                     patch.dict(sys.modules, modules),
                     patch.object(delivery, "command", return_value=SHA),
                     patch.object(delivery, "current_dev_commit", return_value=SHA),
-                    patch.object(delivery, "target", return_value=(app, settings)),
+                    patch.object(
+                        delivery,
+                        "target",
+                        return_value=(
+                            app,
+                            settings
+                            | (
+                                {"SCM_DO_BUILD_DURING_DEPLOYMENT": "false"}
+                                if mode == "no_build"
+                                else {"WEBSITE_RUN_FROM_PACKAGE": "1"}
+                                if mode == "package_mount"
+                                else {}
+                            ),
+                        ),
+                    ),
                     patch.object(
                         delivery,
                         "manifest",
                         return_value={} if mode == "disabled" else ENABLED_MANIFEST["agents"],
                     ),
-                    patch.object(delivery, "az") as cli,
-                    patch.object(delivery, "package") as package,
+                    patch.object(delivery, "az", return_value={"status": 4}) as cli,
+                    patch.object(
+                        delivery,
+                        "package",
+                        side_effect=lambda sha, path: path.write_bytes(b"synthetic-zip"),
+                    ) as package,
                     patch.object(
                         delivery,
                         "release_agents",
@@ -529,20 +587,49 @@ class DeliveryTests(unittest.TestCase):
                         else None,
                     ) as release,
                 ):
-                    if mode == "agent_failure":
+                    if mode in {"agent_failure", "no_build", "package_mount"}:
                         with self.assertRaises(delivery.DeliveryError) as failure:
                             delivery.deploy()
                         self.assertNotIn("private-token", str(failure.exception))
                         cli.assert_not_called()
                         package.assert_not_called()
                         continue
+                    if mode in failures:
+                        cli.side_effect = failures[mode]
+                        with self.assertRaises(delivery.DeliveryError):
+                            delivery.deploy()
+                        self.assertEqual(cli.call_count, len(failures[mode]))
+                        self.assertEqual(cli.call_args_list[0].args[:2], ("webapp", "deploy"))
+                        if len(failures[mode]) > 1:
+                            self.assertEqual(
+                                cli.call_args_list[1].args[:4],
+                                ("webapp", "config", "appsettings", "set"),
+                            )
+                        if len(failures[mode]) > 2:
+                            self.assertEqual(cli.call_args_list[2].args[:2], ("webapp", "restart"))
+                        self.assertFalse((Path(directory) / "asc-dev.zip").exists())
+                        self.assertFalse((Path(directory) / "output").exists())
+                        self.assertFalse((Path(directory) / "summary").exists())
+                        continue
                     delivery.deploy()
-                    updates = cli.call_args_list[0].args
+                    self.assertEqual(cli.call_count, 3)
+                    deployment = cli.call_args_list[0].args
+                    self.assertEqual(deployment[:2], ("webapp", "deploy"))
+                    for flag, value in (
+                        ("--restart", "false"),
+                        ("--async", "true"),
+                        ("--track-status", "false"),
+                    ):
+                        self.assertEqual(deployment[deployment.index(flag) + 1], value)
+                    updates = cli.call_args_list[1].args
+                    self.assertEqual(updates[:4], ("webapp", "config", "appsettings", "set"))
                     expected_flag = "false" if mode == "disabled" else "true"
                     self.assertIn(f"ASC_AGENTS_ENABLED={expected_flag}", updates)
                     self.assertIn("ASC_APP_WORKLOAD_PRINCIPAL_ID=app-principal", updates)
-                    self.assertEqual(cli.call_args_list[1].args[:2], ("webapp", "deploy"))
+                    self.assertNotIn("private-token", " ".join(updates))
+                    self.assertEqual(cli.call_args_list[2].args[:2], ("webapp", "restart"))
                     package.assert_called_once_with(SHA, Path(directory) / "asc-dev.zip")
+                    self.assertFalse((Path(directory) / "asc-dev.zip").exists())
                     summary = (Path(directory) / "summary").read_text()
                     if mode == "disabled":
                         client.assert_not_called()

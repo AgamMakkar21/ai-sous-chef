@@ -145,6 +145,17 @@ secrets in App Service settings are retained when release pins are updated.
 Website Contributor can read those settings; restrict the delivery identity's
 OIDC/environment access and never print settings values to logs.
 
+The existing app must enable `SCM_DO_BUILD_DURING_DEPLOYMENT=true` and must not
+mount `WEBSITE_RUN_FROM_PACKAGE`; a source-only ZIP does not contain installed
+dependencies. Delivery uploads asynchronously with deployment-triggered restart
+and runtime tracking disabled. Azure CLI still polls the **Kudu build**, and the
+script requires its terminal success status (`4`) before continuing; upload
+acceptance or an in-progress status is not success. Only then does it update
+release settings and explicitly restart the app, including when pins are
+unchanged. This prevents a settings-triggered restart from interrupting Oryx or
+starting a container without its build manifest and virtual environment.
+The existing five-minute runtime smoke remains mandatory after restart.
+
 Smoke checks wait up to five minutes for:
 
 - `/health`: exact liveness response **and the expected source commit header**.
@@ -190,10 +201,23 @@ not guaranteed their own deployment. A stale queued run cannot overwrite a
 newer dev release. Any publication, ZIP deployment or smoke failure fails the
 workflow; the summary's URL alone is not successful acceptance.
 
+For `az webapp deploy` failures, inspect **Deployment Center -> Logs** and
+`LogFiles/StartupLogs` before retrying. The 2026-10-16 failure restarted the app
+while Oryx was unfinished: startup could not find `oryx-manifest.toml`, `antenv`
+or `__oryx_packages__`, and exited with `No module named uvicorn`. The corrected
+build/settings/restart ordering addresses that race; increasing startup timeout
+alone does not install missing dependencies. A failed/timed-out CLI request can
+leave a server-side deployment marked "Building"; verify whether the builder is
+still running before starting another deployment. Command errors identify the
+failed operation but deliberately withhold credential-bearing CLI output.
+
 Dev has no deployment slots or automatic rollback. Updating release settings
 restarts the app, so a release can have downtime. A partial agent publication can
 leave unused versions; it does not delete the previous versions. Failures after
 updating settings can leave a mixed/failed dev release, never a claimed success.
+A failed build does not apply new release pins or issue the final restart, but
+Oryx may already have removed/replaced files in the deployment directory; this
+is not an atomic release or a guarantee that the previous app remains healthy.
 Correct or revert the change through a newly reviewed PR into `dev`; its merge
 rebuilds the corresponding source and agent release. Do not delete old versions
 needed by existing app pins.
