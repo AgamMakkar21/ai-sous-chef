@@ -317,7 +317,7 @@ class DeliveryTests(unittest.TestCase):
         federation = next(r for r in resources if "federatedIdentityCredentials" in r["type"])
         self.assertEqual(
             federation["properties"]["subject"],
-            "repo:AgamMakkar21/ai-sous-chef:environment:dev",
+            "repo:AgamMakkar21@72168349/ai-sous-chef@1409242851:environment:dev",
         )
         self.assertEqual(federation["properties"]["audiences"], ["api://AzureADTokenExchange"])
         grants = [r for r in resources if r["type"] == "Microsoft.Authorization/roleAssignments"]

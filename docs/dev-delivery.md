@@ -36,7 +36,10 @@ promote production, implement agent prompts/tools, or claim the full MVP is read
 
    The issuer is `https://token.actions.githubusercontent.com`, audience
    `api://AzureADTokenExchange`, and subject
-   `repo:AgamMakkar21/ai-sous-chef:environment:dev`. The environment's **dev-only
+   `repo:AgamMakkar21@72168349/ai-sous-chef@1409242851:environment:dev`.
+   This matches the ID-qualified subject observed in the GitHub Azure login
+   step; the name-only subject does not match tokens issued for this repository.
+   Issuer, subject and audience must match exactly. The environment's **dev-only
    branch policy is essential** because an environment-subject token does not
    encode a branch. Never add a PR-subject credential or reuse the app identity.
 4. Set these nonsecret **environment variables** in GitHub's `dev` environment:
