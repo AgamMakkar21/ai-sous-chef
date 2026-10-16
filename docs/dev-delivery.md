@@ -36,7 +36,10 @@ promote production, implement agent prompts/tools, or claim the full MVP is read
 
    The issuer is `https://token.actions.githubusercontent.com`, audience
    `api://AzureADTokenExchange`, and subject
-   `repo:AgamMakkar21/ai-sous-chef:environment:dev`. The environment's **dev-only
+   `repo:AgamMakkar21@72168349/ai-sous-chef@1409242851:environment:dev`.
+   This matches the ID-qualified subject observed in the GitHub Azure login
+   step; the name-only subject does not match tokens issued for this repository.
+   Issuer, subject and audience must match exactly. The environment's **dev-only
    branch policy is essential** because an environment-subject token does not
    encode a branch. Never add a PR-subject credential or reuse the app identity.
 4. Set these nonsecret **environment variables** in GitHub's `dev` environment:
@@ -114,6 +117,20 @@ No worker, Web IQ evaluation suite or production promotion system blocks this
 initial delivery pipeline; ASC-09 adds worker delivery before full MVP acceptance.
 
 ## Failures and recovery
+
+If **Verify reviewed dev merge** fails with "No merged dev PR with a current
+peer approval matches this commit", deployment has not started. A merge by a
+collaborator is not itself an approval: a human collaborator other than the PR
+author must submit **Review changes -> Approve** against the final PR head.
+Ordinary comments and approvals of earlier commits do not satisfy the gate.
+
+For a PR already merged without approval, use a new recovery PR into `dev` if
+post-merge approval is unavailable. The reviewer must inspect the previously
+merged deployment changes as well as the recovery diff, submit an explicit
+approval, wait for required checks, and then merge without adding more commits.
+That new merge triggers delivery of the current dev source. Do not disable the
+review gate, fabricate approval, or repeatedly rerun a commit with no approval.
+Check the repository ruleset if an unapproved merge was permitted.
 
 Deployment jobs are serialized without interrupting an in-progress release.
 GitHub can replace queued pending runs with newer ones; superseded commits are

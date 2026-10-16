@@ -58,6 +58,8 @@ class ErrorCategory(StrEnum):
     INVALID_CURSOR = "invalid_cursor"
     IDEMPOTENCY_CONFLICT = "idempotency_conflict"
     CONFIGURATION_UNAVAILABLE = "configuration_unavailable"
+    ONBOARDING_REQUIRED = "onboarding_required"
+    PRECONDITION_REQUIRED = "precondition_required"
 
 
 class Event(StrEnum):

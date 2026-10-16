@@ -6,9 +6,11 @@ feedback-based personalization.
 ## Local backend
 
 The scaffold runs a FastAPI backend with offline readiness doubles and fail-closed
-consumer authentication. Shared Cosmos access, conversation persistence APIs and
-the managed-agent gateway are available; other product endpoints, agent
-instructions and the React UI remain separate work.
+consumer authentication. Profile/onboarding APIs, conversation persistence APIs,
+shared Cosmos access and the managed-agent gateway are available; chat execution,
+other product endpoints, agent instructions and the React UI remain separate work.
+See [profile API setup and usage](docs/profiles.md) and
+[conversation setup and HTTP contracts](docs/conversations.md) for the persistence APIs.
 See [consumer sign-in setup](docs/authentication.md) for the
 External ID tenant, App Service configuration and signed-token local testing.
 

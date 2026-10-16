@@ -26,17 +26,25 @@ def main() -> None:
             "/health": {"get"},
             "/api/v1/conversations": {"get", "post"},
             "/api/v1/conversations/{conversation_id}/turns": {"get"},
+            "/api/v1/me": {"get"},
+            "/api/v1/me/onboarding": {"put"},
+            "/api/v1/me/preferences": {"patch"},
         }
         if response.status_code != 200 or any(
             not methods.issubset(response.json()["paths"].get(path, {}))
             for path, methods in expected_routes.items()
         ):
             raise RuntimeError("Installed-wheel API schema is missing required routes.")
-        for path in ("/api/v1/conversations", "/api/v1/conversations/invalid/turns"):
-            if client.get(path).status_code != 401:
-                raise RuntimeError(
-                    "Installed-wheel conversation routes must require authentication."
-                )
+        for path, method in (
+            ("/api/v1/conversations", "get"),
+            ("/api/v1/conversations", "post"),
+            ("/api/v1/conversations/invalid/turns", "get"),
+            ("/api/v1/me", "get"),
+            ("/api/v1/me/onboarding", "put"),
+            ("/api/v1/me/preferences", "patch"),
+        ):
+            if client.request(method.upper(), path, json={}).status_code != 401:
+                raise RuntimeError("Installed-wheel API routes must require authentication.")
     print("Installed-wheel health, readiness, API schema and authentication checks passed.")
 
 

@@ -9,6 +9,7 @@ from sous_chef.api.health import create_health_router
 from sous_chef.api.limits import ProductBodyLimitMiddleware
 from sous_chef.api.observability import RequestLoggingMiddleware
 from sous_chef.api.problems import problem_response, register_problem_handlers
+from sous_chef.api.profiles import create_profile_router
 from sous_chef.domain.readiness import ReadinessProbe
 from sous_chef.services.readiness import ReadinessService
 from sous_chef.settings import ConfigurationError, Settings, load_settings
@@ -42,6 +43,7 @@ def create_app(
     app.add_middleware(RequestLoggingMiddleware)
     app.include_router(create_auth_router(config))
     app.include_router(create_conversation_router(config))
+    app.include_router(create_profile_router(config))
     app.include_router(
         create_health_router(ReadinessService(probe, config.readiness_timeout_seconds))
     )
