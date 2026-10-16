@@ -60,8 +60,11 @@ async with open_cosmos(settings, deadline=request_deadline) as repository:
 context. It is not a body/header/query `userId`. Every operation derives its
 partition from that context. Creates stamp ownership, ID, record kind, schema
 version and UTC timestamps on the server. Profiles use the trusted user ID;
-other records use UUIDv4. Callers may retain an explicit server-issued UUIDv4
-before dispatch to reconcile an uncertain create.
+public history resources use UUIDv4. The internal conversation-creation receipt
+uses a deterministic `conversation-create:<digest>` ID and is written only
+atomically with its conversation, not through standalone `create`.
+Callers may retain an explicit server-issued UUIDv4 before dispatch to reconcile
+other uncertain creates.
 
 The repository checks returned ownership before returning content, comparing
 ETags or changing/deleting records. An absent point read returns `None`.
@@ -110,6 +113,9 @@ Construct one `HistoryQuery` for a traversal and reuse it with each
 and its timestamp across requests; updates to existing records remain live.
 The default page is 20, the hard maximum is 50, and invalid limits are rejected.
 Tokens are bounded internal SDK tokens, not browser cursors.
+The [conversation APIs](conversations.md) now wrap these tokens in encrypted,
+authenticated, user/query-bound public cursors. Their metadata and creation
+receipt are committed atomically in the same user partition.
 
 Future product endpoints must implement the already-agreed authenticated,
 user/query-bound public cursor with a 24-hour expiry and the first-page upper

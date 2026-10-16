@@ -22,19 +22,30 @@ def main() -> None:
             if response.status_code != 200 or response.json() != expected:
                 raise RuntimeError(f"Installed-wheel smoke check failed for {path}.")
         response = client.get("/openapi.json")
-        if response.status_code != 200 or "/health" not in response.json()["paths"]:
-            raise RuntimeError("Installed-wheel API schema is missing the health contract.")
-        paths = response.json()["paths"]
+        expected_routes = {
+            "/health": {"get"},
+            "/api/v1/conversations": {"get", "post"},
+            "/api/v1/conversations/{conversation_id}/turns": {"get"},
+            "/api/v1/me": {"get"},
+            "/api/v1/me/onboarding": {"put"},
+            "/api/v1/me/preferences": {"patch"},
+        }
+        if response.status_code != 200 or any(
+            not methods.issubset(response.json()["paths"].get(path, {}))
+            for path, methods in expected_routes.items()
+        ):
+            raise RuntimeError("Installed-wheel API schema is missing required routes.")
         for path, method in (
+            ("/api/v1/conversations", "get"),
+            ("/api/v1/conversations", "post"),
+            ("/api/v1/conversations/invalid/turns", "get"),
             ("/api/v1/me", "get"),
             ("/api/v1/me/onboarding", "put"),
             ("/api/v1/me/preferences", "patch"),
         ):
-            if method not in paths.get(path, {}):
-                raise RuntimeError("Installed-wheel API schema is missing a profile contract.")
             if client.request(method.upper(), path, json={}).status_code != 401:
-                raise RuntimeError("Installed-wheel profile authentication did not fail closed.")
-    print("Installed-wheel health, readiness, profile schema and authentication checks passed.")
+                raise RuntimeError("Installed-wheel API routes must require authentication.")
+    print("Installed-wheel health, readiness, API schema and authentication checks passed.")
 
 
 if __name__ == "__main__":

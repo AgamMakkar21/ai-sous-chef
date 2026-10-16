@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 
 from sous_chef.adapters.readiness import LiveReadinessProbe, LocalReadinessProbe
 from sous_chef.api.authentication import AuthenticationMiddleware, create_auth_router
+from sous_chef.api.conversations import create_conversation_router
 from sous_chef.api.health import create_health_router
 from sous_chef.api.limits import ProductBodyLimitMiddleware
 from sous_chef.api.observability import RequestLoggingMiddleware
@@ -41,6 +42,7 @@ def create_app(
     app.add_middleware(AuthenticationMiddleware, settings=config)
     app.add_middleware(RequestLoggingMiddleware)
     app.include_router(create_auth_router(config))
+    app.include_router(create_conversation_router(config))
     app.include_router(create_profile_router(config))
     app.include_router(
         create_health_router(ReadinessService(probe, config.readiness_timeout_seconds))

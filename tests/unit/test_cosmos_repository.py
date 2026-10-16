@@ -226,6 +226,29 @@ class Transport(AsyncHttpTransport[HttpRequest, AsyncHttpResponse]):
         if self.faults[request.method]:
             return await fault(self.faults[request.method].popleft())
         partition = json.loads(headers["x-ms-documentdb-partitionkey"])[0]
+        if request.method == "POST" and isinstance(body, list):
+            documents = [operation["resourceBody"] for operation in body]
+            assert all(operation["operationType"] == "Create" for operation in body)
+            assert all(document["userId"] == partition for document in documents)
+            keys = [(container, partition, document["id"]) for document in documents]
+            conflicts = [index for index, key in enumerate(keys) if key in self.documents]
+            if conflicts:
+                return reply(
+                    200,
+                    [
+                        {"statusCode": 409 if index == conflicts[0] else 424}
+                        for index in range(len(documents))
+                    ],
+                )
+            saved = []
+            for key, document in zip(keys, documents, strict=True):
+                self.revision += 1
+                stored = {**deepcopy(document), "_etag": f'"{self.revision}"'}
+                self.documents[key] = stored
+                saved.append({"statusCode": 201, "resourceBody": stored})
+            if self.write_then_disconnect:
+                raise ServiceResponseError("secret-private-lost-batch-response")
+            return reply(200, saved)
         if request.method == "POST" and body.get("query"):
             assert headers.get("x-ms-documentdb-isquery", "").lower() == "true"
             if self.empty_query_pages:
