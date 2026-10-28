@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from pathlib import Path
 from time import time
 
 import jwt
@@ -19,13 +20,16 @@ def signing_key() -> rsa.RSAPrivateKey:
 
 
 @pytest.fixture
-def local_settings(monkeypatch: pytest.MonkeyPatch, signing_key: rsa.RSAPrivateKey) -> Settings:
+def local_settings(
+    monkeypatch: pytest.MonkeyPatch, signing_key: rsa.RSAPrivateKey, tmp_path: Path
+) -> Settings:
     public_key = jwt.algorithms.RSAAlgorithm.to_jwk(signing_key.public_key(), as_dict=True)
     public_key["kid"] = "synthetic"
     monkeypatch.setattr(PyJWKClient, "fetch_data", lambda self: {"keys": [public_key]})
     return Settings(
         environment="local",
         adapter_mode="local",
+        static_dir=tmp_path / "not-built",
         _env_file=None,
         auth_issuer=AUTH_ISSUER,
         auth_jwks_uri="https://synthetic.ciamlogin.com/discovery/v2.0/keys",

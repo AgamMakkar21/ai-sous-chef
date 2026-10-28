@@ -352,6 +352,9 @@ def release_agents(
 
 
 def package(sha: str, output: Path) -> None:
+    frontend = ROOT / "backend" / "src" / "sous_chef" / "static" / "index.html"
+    if not frontend.is_file():
+        raise DeliveryError("Build the frontend with npm ci and npm run build before packaging.")
     archive = subprocess.run(
         ["git", "archive", "--format=zip", sha, "backend", "requirements.txt"],
         check=True,
@@ -360,8 +363,12 @@ def package(sha: str, output: Path) -> None:
     ).stdout
     with zipfile.ZipFile(io.BytesIO(archive)) as source, zipfile.ZipFile(output, "w") as dest:
         for entry in source.infolist():
-            if entry.filename != "backend/src/sous_chef/release.json":
+            if entry.filename not in {
+                "backend/src/sous_chef/release.json",
+                "backend/src/sous_chef/static/index.html",
+            }:
                 dest.writestr(entry, source.read(entry.filename))
+        dest.writestr("backend/src/sous_chef/static/index.html", frontend.read_bytes())
         dest.writestr("backend/src/sous_chef/release.json", json.dumps({"commit": sha}))
 
 
