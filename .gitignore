@@ -20,3 +20,4 @@ backend/src/sous_chef/static/
 worker/local.settings.json
 worker/release.json
 worker/.python_packages/
+.cache/

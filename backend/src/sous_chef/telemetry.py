@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import StrEnum
@@ -62,6 +63,11 @@ class ErrorCategory(StrEnum):
     PRECONDITION_REQUIRED = "precondition_required"
     DUPLICATE_GROCERY = "duplicate_grocery"
     GROCERY_LIMIT_REACHED = "grocery_limit_reached"
+    ORCHESTRATOR_INVALID_RESULT = "orchestrator_invalid_result"
+    ORCHESTRATOR_BUDGET_EXHAUSTED = "orchestrator_budget_exhausted"
+    ORCHESTRATOR_TIMEOUT = "orchestrator_timeout"
+    ORCHESTRATOR_SPECIALIST_FAILED = "orchestrator_specialist_failed"
+    ORCHESTRATOR_CANDIDATE_REJECTED = "orchestrator_candidate_rejected"
 
 
 class Event(StrEnum):
@@ -73,6 +79,10 @@ class Event(StrEnum):
     FOUNDRY_FAILED = "foundry_failed"
     FOUNDRY_CANCELLED = "foundry_cancelled"
     COSMOS_FAILED = "cosmos_failed"
+    ORCHESTRATOR_COMPLETED = "orchestrator_completed"
+    ORCHESTRATOR_FAILED = "orchestrator_failed"
+    ORCHESTRATOR_CANCELLED = "orchestrator_cancelled"
+    ORCHESTRATOR_INVOKED = "orchestrator_invoked"
 
 
 @dataclass(frozen=True)
@@ -82,6 +92,9 @@ class _OperationalEvent:
     category: ErrorCategory | None
     status: int | None
     duration_ms: float | None
+    agent_name: str | None = None
+    agent_version: str | None = None
+    agent_principal_id: str | None = None
 
     def serialize(self) -> str:
         fields: dict[str, str | int | float] = {"event": self.event.value}
@@ -93,6 +106,15 @@ class _OperationalEvent:
             fields["status"] = self.status
         if self.duration_ms is not None:
             fields["duration_ms"] = round(self.duration_ms, 2)
+        if self.event == Event.ORCHESTRATOR_INVOKED:
+            fields["agent_role"] = "orchestrator"
+            for name, value in (
+                ("agent_name", self.agent_name),
+                ("agent_version", self.agent_version),
+                ("agent_principal_id", self.agent_principal_id),
+            ):
+                if value is not None:
+                    fields[name] = value
         return json.dumps(fields, separators=(",", ":"), allow_nan=False)
 
 
@@ -102,20 +124,53 @@ def operational_event(
     category: ErrorCategory | None = None,
     status: int | None = None,
     duration_ms: float | None = None,
+    agent_name: str | None = None,
+    agent_version: str | None = None,
+    agent_principal_id: str | None = None,
 ) -> None:
     if status is not None and not 100 <= status <= 599:
         raise ValueError("Operational status must be an HTTP status code.")
     if duration_ms is not None and (not isfinite(duration_ms) or duration_ms < 0):
         raise ValueError("Operational duration must be finite and nonnegative.")
+    if event == Event.ORCHESTRATOR_INVOKED:
+        if (
+            agent_name is None
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", agent_name)
+            or agent_version is None
+            or not re.fullmatch(r"[1-9][0-9]{0,9}", agent_version)
+            or agent_principal_id is None
+            or not re.fullmatch(
+                r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}", agent_principal_id
+            )
+        ):
+            raise ValueError("Agent telemetry requires validated deployment identity metadata.")
+    elif any(value is not None for value in (agent_name, agent_version, agent_principal_id)):
+        raise ValueError("Identity metadata is only permitted for an agent invocation.")
     level = (
         logging.ERROR
-        if event in {Event.REQUEST_FAILED, Event.FOUNDRY_FAILED, Event.COSMOS_FAILED}
+        if event
+        in {
+            Event.REQUEST_FAILED,
+            Event.FOUNDRY_FAILED,
+            Event.COSMOS_FAILED,
+            Event.ORCHESTRATOR_FAILED,
+        }
         else logging.INFO
     )
     if event in {Event.READINESS_UNAVAILABLE, Event.READINESS_TIMEOUT}:
         level = logging.WARNING
     logging.getLogger("sous_chef.operational").log(
-        level, _OperationalEvent(event, trace_id.get(), category, status, duration_ms)
+        level,
+        _OperationalEvent(
+            event,
+            trace_id.get(),
+            category,
+            status,
+            duration_ms,
+            agent_name,
+            agent_version,
+            agent_principal_id,
+        ),
     )
 
 

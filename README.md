@@ -14,6 +14,8 @@ consumer authentication. Profile/onboarding, grocery inventory and conversation
 persistence APIs, shared Cosmos access and the managed-agent gateway are available.
 The React frontend adds the authenticated three-tab shell and onboarding/profile
 editing. Grocery, chat and recipe-history screen contents remain follow-on work.
+Live chat execution, other product endpoints and specialist instructions remain
+separate work.
 See [frontend setup and scope](docs/frontend.md).
 See [profile API setup and usage](docs/profiles.md) and
 [conversation setup and HTTP contracts](docs/conversations.md) for the persistence APIs.
@@ -22,6 +24,8 @@ Google/GitHub/single-tenant Microsoft App Service sign-in, the original External
 ID option, owner setup and signed-token local testing.
 See [grocery inventory APIs](docs/groceries.md) for adding, editing and removing
 owned groceries without AI calls.
+See [bounded request context](docs/conversations.md#bounded-request-context-asc-23--24)
+for current-profile refresh, conversation selection, token budgets and learned-input wiring.
 
 Use **Ubuntu 24.04 in WSL 2**, CPython **3.12**, and a checkout in the Linux
 filesystem. Windows supplies the editor and browser. Do not share a virtual
@@ -70,8 +74,10 @@ python -m mypy
 python -m pytest
 ```
 
-Tests use offline probes and generated frontend fixtures; no Azure account,
-credentials or network access are needed.
+Tests use offline probes and generated frontend fixtures; no Azure account or
+credentials are needed. Populate the public
+[tokenizer cache](docs/conversations.md#budget-and-tokenizer-setup) during setup
+before running context tests offline.
 
 ## Pull request quality checks
 
@@ -216,7 +222,12 @@ pinned by runtime name and version. It uses managed identity in dev/prod,
 bounded async deadlines, caller cancellation, correlation IDs and distinct safe
 failures, with no automatic invocation retries or model-only fallback.
 See [gateway configuration, failure contract and approved dev smoke](docs/foundry-gateway.md).
-Agent instructions and user chat integration remain separate deliverables.
+
+ASC-25 adds source-versioned Orchestrator instructions, strict New Foundry
+function-call routing, backend-enforced call/revision budgets, and mocked
+specialist/tool contracts. See [Orchestrator policy and source publication](docs/orchestrator.md).
+This does not enable agents in the release manifest or complete live recipe chat.
+Specialist instructions and user chat integration remain separate deliverables.
 
 ## User-scoped Cosmos access
 
