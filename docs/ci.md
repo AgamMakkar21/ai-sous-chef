@@ -8,8 +8,10 @@ pending. GitHub tests the PR merge result, not just the feature branch.
 ## Checks and local equivalents
 
 Use Python 3.12 and the locked installation commands in the README. Each job
-installs `requirements-dev.txt`, installs the application without resolving more
-dependencies, and runs `python -m pip check`.
+installs `requirements-dev.txt` and the separate `worker/requirements.txt`,
+installs the application without resolving more dependencies, and runs
+`python -m pip check`. Worker dependencies support host acceptance/type checks;
+they are not added to the web application's deployment package.
 
 | Required check name | Commands |
 | --- | --- |

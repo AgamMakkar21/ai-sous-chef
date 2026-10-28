@@ -1,5 +1,9 @@
 # ai-sous-chef
 
+The [feedback Functions host](docs/feedback-host.md) is deployed independently
+from the web app using the reviewed dev workflow. This infrastructure slice adds
+host health and keyless connections only, not feedback processing or learning.
+
 AI Sous Chef combines current groceries, grounded recipe generation, and
 feedback-based personalization.
 

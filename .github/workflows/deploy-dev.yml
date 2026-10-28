@@ -29,7 +29,7 @@ jobs:
         run: python scripts/deploy_dev.py reviewed
 
   deploy:
-    name: Deploy App Service and configured agent release
+    name: Deploy App Service, agents and feedback host
     needs: reviewed
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-24.04
@@ -46,6 +46,7 @@ jobs:
       AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       ASC_RESOURCE_GROUP: ${{ vars.ASC_RESOURCE_GROUP }}
       ASC_APP_NAME: ${{ vars.ASC_APP_NAME }}
+      ASC_FUNCTION_APP_NAME: ${{ vars.ASC_FUNCTION_APP_NAME }}
       ASC_FOUNDRY_ACCOUNT_NAME: ${{ vars.ASC_FOUNDRY_ACCOUNT_NAME }}
       ASC_FOUNDRY_PROJECT_NAME: ${{ vars.ASC_FOUNDRY_PROJECT_NAME }}
     steps:
@@ -69,6 +70,10 @@ jobs:
         run: python scripts/deploy_dev.py deploy
       - name: Check deployed commit, authentication and dependencies
         run: python scripts/deploy_dev.py smoke
+      - name: Deploy feedback host from the same reviewed commit
+        run: python scripts/deploy_dev.py worker-deploy
+      - name: Check feedback host startup and deployed commit
+        run: python scripts/deploy_dev.py worker-smoke
       - name: Clear Azure login
         if: always()
         run: az logout

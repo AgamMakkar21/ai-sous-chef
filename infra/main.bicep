@@ -51,6 +51,9 @@ param appServiceLocation string
 ])
 param appServiceSku string = 'B1'
 
+@description('Existing owner-approved delegated subnet for web access to private Cosmos endpoints.')
+param appServiceIntegrationSubnetResourceId string = ''
+
 @description('Nonsecret Cosmos DB endpoint the app connects to.')
 @minLength(1)
 param cosmosEndpoint string
@@ -120,6 +123,7 @@ module appService 'modules/app-service.bicep' = {
     namePrefix: namePrefix
     tags: tags
     skuName: appServiceSku
+    integrationSubnetResourceId: appServiceIntegrationSubnetResourceId
     environment: environment
     cosmosEndpoint: cosmosEndpoint
     cosmosDatabase: cosmosDatabase
