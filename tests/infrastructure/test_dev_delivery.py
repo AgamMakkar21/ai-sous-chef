@@ -750,10 +750,14 @@ class DeliveryTests(unittest.TestCase):
         )
         self.assertEqual(federation["properties"]["audiences"], ["api://AzureADTokenExchange"])
         grants = [r for r in resources if r["type"] == "Microsoft.Authorization/roleAssignments"]
-        self.assertEqual(len(grants), 2)
+        self.assertEqual(len(grants), 3)
         self.assertTrue(all("scope" in grant for grant in grants))
         self.assertIn("Microsoft.Web/sites", grants[0]["scope"])
-        self.assertIn("Microsoft.CognitiveServices/accounts/projects", grants[1]["scope"])
+        self.assertIn("Microsoft.Web/sites", grants[1]["scope"])
+        self.assertIn("parameters('functionAppName')", grants[1]["scope"])
+        self.assertEqual(grants[1]["condition"], "[not(empty(parameters('functionAppName')))]")
+        self.assertEqual(template["parameters"]["functionAppName"]["defaultValue"], "")
+        self.assertIn("Microsoft.CognitiveServices/accounts/projects", grants[2]["scope"])
         for forbidden in (
             "b24988ac-6180-42a0-ab88-20f7382dd24c",
             "8e3af657-a8ff-443c-a75c-2fe8c4bcb635",

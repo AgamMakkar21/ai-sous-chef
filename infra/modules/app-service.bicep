@@ -15,6 +15,7 @@ param tags object
   'P1v3'
 ])
 param skuName string
+param integrationSubnetResourceId string = ''
 
 @description('Environment name passed to the app as ASC_ENVIRONMENT.')
 @allowed([
@@ -193,6 +194,14 @@ resource scmPolicy 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-
   name: 'scm'
   properties: {
     allow: false
+  }
+}
+
+module vnetIntegration 'site-vnet.bicep' = if (!empty(integrationSubnetResourceId)) {
+  name: '${namePrefix}-web-vnet'
+  params: {
+    appName: app.name
+    integrationSubnetResourceId: integrationSubnetResourceId
   }
 }
 
