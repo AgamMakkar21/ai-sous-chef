@@ -227,25 +227,45 @@ class Transport(AsyncHttpTransport[HttpRequest, AsyncHttpResponse]):
             return await fault(self.faults[request.method].popleft())
         partition = json.loads(headers["x-ms-documentdb-partitionkey"])[0]
         if request.method == "POST" and isinstance(body, list):
-            documents = [operation["resourceBody"] for operation in body]
-            assert all(operation["operationType"] == "Create" for operation in body)
-            assert all(document["userId"] == partition for document in documents)
-            keys = [(container, partition, document["id"]) for document in documents]
-            conflicts = [index for index, key in enumerate(keys) if key in self.documents]
-            if conflicts:
-                return reply(
-                    200,
-                    [
-                        {"statusCode": 409 if index == conflicts[0] else 424}
-                        for index in range(len(documents))
-                    ],
-                )
+            staged = []
+            for index, operation in enumerate(body):
+                kind = operation["operationType"]
+                if kind == "Create":
+                    document = deepcopy(operation["resourceBody"])
+                    assert document["userId"] == partition
+                    key = (container, partition, document["id"])
+                    status = 409 if key in self.documents else 201
+                else:
+                    assert kind == "Patch", operation
+                    key = (container, partition, operation["id"])
+                    document = deepcopy(self.documents.get(key))
+                    status = (
+                        404
+                        if document is None
+                        else 200
+                        if operation["ifMatch"] == document["_etag"]
+                        else 412
+                    )
+                    if status == 200:
+                        assert document is not None
+                        for patch in operation["resourceBody"]["operations"]:
+                            assert patch["op"] == "set"
+                            document[patch["path"][1:]] = patch["value"]
+                if status >= 400:
+                    return reply(
+                        200,
+                        [
+                            {"statusCode": status if offset == index else 424}
+                            for offset in range(len(body))
+                        ],
+                    )
+                staged.append((key, document, status))
             saved = []
-            for key, document in zip(keys, documents, strict=True):
+            for key, document, status in staged:
                 self.revision += 1
                 stored = {**deepcopy(document), "_etag": f'"{self.revision}"'}
                 self.documents[key] = stored
-                saved.append({"statusCode": 201, "resourceBody": stored})
+                saved.append({"statusCode": status, "resourceBody": stored})
             if self.write_then_disconnect:
                 raise ServiceResponseError("secret-private-lost-batch-response")
             return reply(200, saved)

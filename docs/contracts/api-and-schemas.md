@@ -190,6 +190,13 @@ Known failures can be retried with a new key only through an explicit retry acti
 bind that action to the existing owned failed turn, allocate a new operation,
 and retain the same `turnIndex` and user message. Reset its state to pending
 under the same conversation guard without incrementing the turn counter.
+ASC-22 implements that action as `{ "content": "...", "retryOfTurnId": "..." }`
+on the send endpoint, using the original trimmed content and a new key.
+Known execution/validation failures return 502 and uncertain execution returns
+504, with `Location` pointing to the operation. Expired pending operations become
+`outcomeUnknown` on inspection/replay and continue to hold the conversation guard.
+See [the implemented send contract](../conversations.md#durable-chat-sends-asc-22)
+for the injected executor boundary and reconciliation limitations.
 Operation history is separate
 bounded records, not a growing attempt array inside the turn. A completed turn
 cannot be replayed as a retry; a recipe revision creates a new turn in the same

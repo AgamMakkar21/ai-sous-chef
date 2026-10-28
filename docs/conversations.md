@@ -1,9 +1,10 @@
 # Conversation persistence APIs
 
 ASC-21 / #18 adds empty conversation creation, metadata listing and bounded turn
-retrieval. Cosmos `ChatHistory` remains the durable history authority. There is
-no model invocation, send endpoint, profile write, transcript copy, automatic
-title generation or deployment in this change.
+retrieval. ASC-22 / #25 adds idempotent sends, durable operation state and explicit
+failed-turn retries. Cosmos `ChatHistory` remains the durable history authority.
+There is no production agent pipeline, transcript copy, automatic title generation
+or deployment in these changes.
 
 ## Setup
 
@@ -116,9 +117,120 @@ at 4,000 characters. Invalid stored exchange/state combinations return a safe
 502 rather than a false empty/successful history.
 
 Internal prompts, provider response IDs, operation records and raw Cosmos
-metadata never enter these responses. Structured recipe views and persisted
-send/retry state are later chat-generation deliverables, not arbitrary private
-payload passthrough here. These endpoints do not create turns or invoke agents.
+metadata never enter these responses. Structured recipe views remain a later chat-generation deliverable, not arbitrary
+private payload passthrough here. The read endpoints do not invoke agents.
+
+## Durable chat sends (ASC-22)
+
+| Route | Request | Response |
+| --- | --- | --- |
+| `POST /api/v1/conversations/{conversationId}/turns` | Required `Idempotency-Key`; `{ "content": "Suggest dinner" }` | 200 `{ "data": turn }` only after atomic completion; pending duplicate returns 202 `{ "data": operation }` |
+| `GET /api/v1/conversations/{conversationId}/operations/{operationId}` | Owned UUIDv4 references; no query parameters | 200 `{ "data": operation }`; never invokes the executor |
+
+Both require the existing authentication/CSRF boundary and return `no-store`.
+Send responses include `Location` pointing to the operation, including known
+execution failures. Pending responses include `Retry-After: 2`.
+An operation view contains `operationId`, `conversationId`, `turnId`, `status`,
+safe `failureCode` (or null), and the current public `turn`. Internal hashes,
+provider response references and Cosmos metadata are excluded.
+
+`content` is a strict, trimmed string of 1-4,000 Unicode code points; the shared
+128-KiB transport limit still applies. Unknown properties/queries and duplicate
+idempotency headers are rejected. Clients cannot supply ownership, roles,
+message IDs, timestamps, state, turn counters or provider references. Missing
+and inaccessible conversations return the same 404 before execution.
+Completed onboarding is required before admitting new execution.
+
+The key has the same 1-128 printable non-space ASCII constraints as conversation
+creation. Its operation UUID is derived deterministically from the authenticated
+user, conversation, send operation name and key; the raw key is not stored.
+A canonical payload hash includes the trimmed content and retry reference.
+Reusing a key with changed input returns 409 `idempotency_conflict`.
+Deduplication records do not expire and are retained with the conversation.
+
+### Admission, ordering and completion
+
+Only one send may be active in an owned conversation, across all processes.
+An ETag-conditional transaction creates a user-only `pending` turn, a
+`sendOperation`, and increments `nextTurnIndex` while setting `activeOperationId`.
+All three writes share the `ChatHistory` user partition. A losing transaction
+leaves no orphan turn/operation and consumes no turn index. The same key returns
+the existing operation; a different competing key returns 409 `send_conflict`.
+Different conversations remain independent.
+
+Only the process that successfully admits the batch invokes the executor.
+Completion atomically appends the validated assistant message to that same
+bounded turn, finalizes the operation and releases the conversation guard.
+Each message has a server-issued UUID, server-controlled role/entity and UTC
+timestamp. Optional `generatedRecipeId` and `providerResponseId` references are
+stored internally from validated executor output, never accepted from clients.
+A lost completion response is reconciled by point-reading the operation; a
+completed key can be replayed after an application restart even without an
+executor configured.
+Transient finalization failures allow at most three completion attempts within
+the original deadline. Each re-reads the durable operation and uses conditional
+ETags, retaining the already validated reply rather than invoking the executor
+again. This is reconciliation of a guarded write, not a generation retry.
+
+The overall send deadline is 60 seconds, including database setup, admission,
+execution, validation and final persistence. Execution stops at most 55 seconds
+after send starts, reserving five seconds for completion. Database calls retain
+their smaller configured operation deadlines. No successful response is
+returned before the completion batch is persisted.
+
+### Failure and explicit retry
+
+A confirmed executor failure returns 502 `execution_failed`. An invalid public
+reply returns 502 `invalid_assistant_response`. Both atomically mark the turn
+and operation `failed`, retain the user message, and release the guard.
+Repeating the original key returns that failure, **not another invocation**.
+
+Retry a known failed turn with a new key and its original content:
+
+```json
+{
+  "content": "Suggest dinner",
+  "retryOfTurnId": "existing-owned-failed-turn-uuid"
+}
+```
+
+Admission conditionally resets that same turn to `pending` and creates a new
+operation without changing its `turnId`, `turnIndex`, user message or creation
+time. Completed/pending/unknown turns and changed content cannot be retried.
+Operation attempts are separate bounded documents, never a growing array.
+Older failed operations retain their original status; their public `turn`
+field reflects the latest state of that same turn, possibly completed by a retry.
+
+A timeout returns 504 `execution_outcome_unknown`, retains a user-only turn and
+holds the conversation guard. An interrupted worker or uncertain database write
+can leave a `pending` operation. Polling its operation or replaying its key after
+the persisted 60-second expiry conditionally marks it `outcomeUnknown`, without
+invoking anything. Late completions cannot overwrite that terminal state.
+Unknown outcomes cannot be explicitly retried or bypassed with a new send.
+This intentionally fails closed: the real pipeline must reconcile a provider
+response before allowing further execution; there is no recovery worker or
+automatic model replay in this issue.
+
+Database failures use the shared safe Cosmos problem envelope. If admission
+may have committed, repeat the same payload/key to inspect its state. If
+completion cannot be persisted, do not claim success or mark a potentially
+completed execution as a known retryable failure.
+
+### Executor setup
+
+`create_app(settings, chat_executor=...)` injects the `ChatExecutor` interface.
+It receives server-derived user/conversation/turn/operation IDs, user text,
+validated explicit preferences and a monotonic execution deadline. It must
+return a `ValidatedReply` containing only final public output after the real
+pipeline's deterministic safety checks. Explicit-over-learned precedence,
+distinct agent identities and provider reconciliation remain that pipeline's
+responsibility (ASC-38 / #39); this boundary does not change them.
+
+The deterministic fake exists **only in `tests/unit/test_chat_api.py`**.
+There is no environment switch, default fake, live Foundry invocation, or
+success-shaped fallback. The normal application has no executor yet and
+returns 503 `configuration_unavailable` before admitting a new turn; reads,
+operation inspection and existing-key replay remain available.
 
 ## Offline coverage and live boundary
 
@@ -126,11 +238,13 @@ payload passthrough here. These endpoints do not create turns or invoke agents.
 API, service, pinned Cosmos SDK and synthetic HTTP transport together. It covers
 independent conversations, complete/incomplete turns, deterministic timestamp
 ties, bounded metadata-only listing, continuation bounds/expiry, two-user
-isolation, atomic/concurrent/uncertain creation and privacy-safe failures.
+isolation, atomic/concurrent/uncertain creation and privacy-safe failures. `tests/unit/test_chat_api.py` adds durable send/retry,
+first-admission races, pending duplicates, atomic completion, interrupted
+execution, actual deadlines, stale-result fencing and pre-invocation validation.
 The shared Cosmos tests continue to cover deadlines, throttling and cleanup.
 
 ```bash
-python -m pytest tests/unit/test_conversation_api.py tests/unit/test_cosmos_repository.py
+python -m pytest tests/unit/test_chat_api.py tests/unit/test_conversation_api.py tests/unit/test_cosmos_repository.py
 ```
 
 These checks do not prove Azure connectivity or live deployment. Approved
