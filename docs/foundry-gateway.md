@@ -34,6 +34,14 @@ Names and versions are optional for the application scaffold, but mandatory when
 constructing this gateway. Versions are configuration pins, not discovered or
 silently upgraded at invocation time.
 
+ASC-25 additionally exposes `coordinate()` for the Orchestrator's strict
+`recipe_specialist` function handoff. Unlike the original text-only `invoke()`,
+this path accepts one typed function action or structured clarification/fit
+answer and requires provider token usage plus distinct agent/workload principal
+pins. It is stateless and records safe pinned identity attribution. See
+[Orchestrator policy, bounds and source publication](orchestrator.md); it does not
+wire live recipe chat or change the existing `invoke()` contract.
+
 The [staged dev release](dev-delivery.md#release-stages) currently sets
 `ASC_AGENTS_ENABLED=false` from its reviewed manifest. It deploys the backend
 without publishing agents or probing Foundry agent metadata; Cosmos and
