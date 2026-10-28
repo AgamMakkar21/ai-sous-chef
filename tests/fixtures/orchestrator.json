@@ -1,0 +1,49 @@
+[
+  {
+    "name": "valid_pantry_request",
+    "request": "Use my rice for a dinner in 30 minutes.",
+    "action": {
+      "requirements": "Make a pantry rice dinner, honoring the complete explicit profile.",
+      "time_budget_minutes": 30,
+      "use_web": false
+    },
+    "expected": "candidate"
+  },
+  {
+    "name": "missing_referent",
+    "request": "Make that one again.",
+    "action": {
+      "status": "clarification",
+      "explanation": "Which recipe would you like to make again?"
+    },
+    "expected": "clarification"
+  },
+  {
+    "name": "contradictory_requirements",
+    "request": "Make a fully vegan dinner with real beef.",
+    "action": {
+      "status": "clarification",
+      "explanation": "Would you prefer a vegan alternative or a beef recipe?"
+    },
+    "expected": "clarification"
+  },
+  {
+    "name": "impossible_time_budget",
+    "request": "Roast a whole raw turkey from scratch in five minutes.",
+    "action": {
+      "status": "clarification",
+      "explanation": "That cannot fit five minutes. Would you prefer a quick alternative?"
+    },
+    "expected": "clarification"
+  },
+  {
+    "name": "explicit_over_learned",
+    "request": "Keep dinner mild even if older feedback preferred hot dishes.",
+    "action": {
+      "requirements": "Make mild rice, not the conflicting learned hot preference.",
+      "time_budget_minutes": 30,
+      "use_web": false
+    },
+    "expected": "candidate"
+  }
+]

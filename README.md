@@ -12,7 +12,7 @@ feedback-based personalization.
 The scaffold runs a FastAPI backend with offline readiness doubles and fail-closed
 consumer authentication. Profile/onboarding, grocery inventory and conversation
 persistence APIs, shared Cosmos access and the managed-agent gateway are available.
-Chat execution, other product endpoints, agent instructions and the React UI
+Live chat execution, other product endpoints, specialist instructions and the React UI
 remain separate work.
 See [profile API setup and usage](docs/profiles.md) and
 [conversation setup and HTTP contracts](docs/conversations.md) for the persistence APIs.
@@ -216,7 +216,12 @@ pinned by runtime name and version. It uses managed identity in dev/prod,
 bounded async deadlines, caller cancellation, correlation IDs and distinct safe
 failures, with no automatic invocation retries or model-only fallback.
 See [gateway configuration, failure contract and approved dev smoke](docs/foundry-gateway.md).
-Agent instructions and user chat integration remain separate deliverables.
+
+ASC-25 adds source-versioned Orchestrator instructions, strict New Foundry
+function-call routing, backend-enforced call/revision budgets, and mocked
+specialist/tool contracts. See [Orchestrator policy and source publication](docs/orchestrator.md).
+This does not enable agents in the release manifest or complete live recipe chat.
+Specialist instructions and user chat integration remain separate deliverables.
 
 ## User-scoped Cosmos access
 
