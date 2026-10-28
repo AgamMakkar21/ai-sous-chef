@@ -88,11 +88,14 @@ class HistoryQuery(StorageInput):
     kind: Literal["conversation", "turn", "recipe"]
     conversation_id: UUID4 | None = None
     created_before: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC), repr=False)
+    completed_only: bool = False
 
     @model_validator(mode="after")
     def validate_conversation(self) -> Self:
         if (self.kind == "turn") != (self.conversation_id is not None):
             raise ValueError("Only a turn query requires a conversation ID.")
+        if self.completed_only and self.kind != "turn":
+            raise ValueError("Only turn context can request completed exchanges.")
         return self
 
 

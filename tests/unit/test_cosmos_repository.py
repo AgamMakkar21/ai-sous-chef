@@ -286,9 +286,13 @@ class Transport(AsyncHttpTransport[HttpRequest, AsyncHttpResponse]):
                     "@conversation" not in parameters
                     or document.get("conversationId") == parameters["@conversation"]
                 )
+                and ("@status" not in parameters or document.get("status") == parameters["@status"])
             ]
             if parameters["@kind"] == "turn":
-                items.sort(key=lambda item: (item["turnIndex"], item["id"]))
+                items.sort(
+                    key=lambda item: (item["turnIndex"], item["id"]),
+                    reverse="c.turnIndex DESC" in body["query"],
+                )
             else:
                 items.sort(key=lambda item: (item["createdAt"], item["id"]), reverse=True)
             offset = int(headers.get("x-ms-continuation", "0"))

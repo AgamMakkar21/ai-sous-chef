@@ -6,6 +6,95 @@ failed-turn retries. Cosmos `ChatHistory` remains the durable history authority.
 There is no production agent pipeline, transcript copy, automatic title generation
 or deployment in these changes.
 
+## Bounded request context (ASC-23 / #24)
+
+New sends and explicit failed-turn retries read the current owned `Users` profile
+and groceries before admission. Context is attached to `ChatExecution.context`;
+no context snapshot is reused from a previous conversation or provider response.
+Completed-key replays still return the original result without rebuilding or invoking.
+`content` and `explicit_preferences` remain read-only executor conveniences.
+
+The context contains complete explicit preferences (including allergies,
+restrictions, tastes, nutrition goals, skill and time), current groceries with
+quantity/unit, up to 10 recent completed exchanges in chronological order, up to
+20 eligible learned preferences, and the current request once. The database query
+filters by authenticated partition, selected conversation and completed status
+**before** limiting; pending, failed and outcome-unknown turns are excluded.
+It reads newest first using the reverse of the existing turn composite index,
+follows bounded SDK pages under the request deadline, and never loads lifetime chat.
+Public UI history remains chronological and includes unsuccessful turns as before.
+
+### Budget and tokenizer setup
+
+The complete `context.prompt`, including its fixed trust/precedence instructions,
+is counted using pinned `tiktoken==0.12.0` and `o200k_base`, the GPT-5 deployment
+family encoding. Counting adds a 64-token framing allowance. The context ceiling
+is **11,000 input tokens**, leaving **1,000** for executor/agent instructions and
+**4,000** for bounded tools within the ADR's **16,000 input-token** per-call ceiling.
+The future production executor must count its *complete* provider request, reserve
+output capacity separately, and enforce cumulative request token limits; these
+reservations do not authorize unchecked tool or instruction growth.
+
+Install the updated locked dependencies. Before offline tests or a network-restricted
+deployment, populate the public tokenizer-data cache during environment/image setup:
+
+```bash
+export TIKTOKEN_CACHE_DIR="$PWD/.cache/tiktoken"
+python -c "import tiktoken; tiktoken.get_encoding('o200k_base')"
+```
+
+Keep that cache available at runtime (do not commit it). The initial download is
+public vocabulary data only; no profile, prompt, credential or chat is sent.
+An unavailable tokenizer is not replaced with a character-count estimate.
+
+To fit the ceiling, remove oldest *complete* exchanges first, then lowest-ranked
+learned preferences, then lowest-priority grocery rows. Groceries are ranked by
+case-insensitive full-name match in the request, then stable grocery UUID; omitted
+rows are reported by `omittedGroceryCount`. Explicit preferences and the current
+request are never truncated. If those alone exceed the budget, return safe HTTP
+422 `context_limit_exceeded` with clarification guidance, before writing a pending
+turn or invoking an executor.
+
+### Learned input and trust boundary
+
+New profiles have `learnedPreferences: []`. That is normal and needs no reader
+or model call. No chat, context build or explicit edit writes learned state or
+turns casual conversation into a durable preference.
+
+`LearnedCandidate` types the bounded stored summary from the contract;
+`policyVersion` is integer `1` for the reviewed MVP rule. When nonempty learned
+state exists, inject `LearnedPreferenceReader` through
+`create_app(learned_preference_reader=...)`. Its `resolve` method must validate
+current owned source revisions, deletion/supersession, and the latest 100 independent
+occasions against backend history. It returns one `ResolvedPreference` per candidate,
+including empty evidence for invalidated candidates. Large evidence lists remain
+outside `Users`. This interface does not implement the extraction worker.
+Until a real reader is wired, nonempty state returns explicit safe 503
+`configuration_unavailable`, rather than treating unverified summaries as learning.
+
+The context builder rejects foreign evidence, duplicate occasion contributions,
+missing/duplicate/mismatched candidates and unsupported stored schemas. It rechecks
+the 180-day evidence window at each request, ignores future evidence, and recomputes
+confidence from current contributions: cooked feedback weighs 3, weak behavior
+weighs 1, with the ADR's 3/6 smoothing prior. At least two supporting cooked
+occasions and confidence >= 0.65 are required; stored aggregate claims cannot
+qualify an insight. Eligible preferences rank by confidence, latest evidence and key.
+
+Learned input is a structured soft field/value, never a safety override or raw
+extracted instruction. Different explicit spice choices, opposing explicit tastes
+and incompatible explicit selections suppress it. Ingredient likes also pass the
+existing deterministic allergy/diet/dislike check; unresolved ingredients are
+conservatively excluded when hard restrictions exist. Candidate prose, source
+records, revisions, internal prompts and provider identifiers do not enter model
+context. User-controlled strings remain JSON-escaped untrusted data.
+
+Executors must use this selected input, not append provider-managed conversations
+or chain `previous_response_id` around it. Deterministic final ingredient checks
+remain the generation pipeline's responsibility. The send service also rereads
+safety state before completion: if allergies/restrictions changed during execution,
+it records a known failed turn without publishing the stale answer. An explicit
+retry builds fresh context.
+
 ## Setup
 
 Use the existing [consumer authentication](authentication.md) and

@@ -8,6 +8,7 @@ from starlette.exceptions import HTTPException
 
 from sous_chef.domain.authorization import OwnedResourceNotFound
 from sous_chef.domain.chat import SendConflict
+from sous_chef.domain.context import ContextLimitExceeded
 from sous_chef.domain.conversations import IdempotencyConflict, InvalidCursor
 from sous_chef.domain.cosmos import CosmosError, CosmosFailure
 from sous_chef.domain.groceries import GROCERY_FIELDS, DuplicateGrocery, GroceryLimitReached
@@ -41,6 +42,15 @@ def problem_response(
 
 
 def register_problem_handlers(app: FastAPI) -> None:
+    @app.exception_handler(ContextLimitExceeded)
+    async def context_limit(_request: Request, _exc: ContextLimitExceeded) -> JSONResponse:
+        return problem_response(
+            422,
+            "context_limit_exceeded",
+            "Cooking context is too large",
+            "Shorten your request or explicit preferences, keeping all safety constraints.",
+        )
+
     @app.exception_handler(DuplicateGrocery)
     async def duplicate_grocery(_request: Request, exc: DuplicateGrocery) -> JSONResponse:
         return problem_response(

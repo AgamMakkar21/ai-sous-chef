@@ -582,7 +582,14 @@ class CosmosRepository:
         if query.conversation_id is not None:
             sql += " AND c.conversationId = @conversation"
             parameters.append({"name": "@conversation", "value": str(query.conversation_id)})
-            sql += " ORDER BY c.recordKind ASC, c.conversationId ASC, c.turnIndex ASC, c.id ASC"
+            if query.completed_only:
+                sql += " AND c.status = @status"
+                parameters.append({"name": "@status", "value": "completed"})
+            direction = "DESC" if query.completed_only else "ASC"
+            sql += (
+                f" ORDER BY c.recordKind {direction}, c.conversationId {direction},"
+                f" c.turnIndex {direction}, c.id {direction}"
+            )
         else:
             sql += " ORDER BY c.recordKind ASC, c.createdAt DESC, c.id DESC"
         limit = page.limit if page.limit is not None else self._settings.cosmos_page_size
@@ -605,9 +612,13 @@ class CosmosRepository:
                 if len(records) == limit:
                     raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4())
                 record = self._record(raw, user, container)
-                if record.body["recordKind"] != query.kind or (
-                    query.conversation_id is not None
-                    and record.body.get("conversationId") != str(query.conversation_id)
+                if (
+                    record.body["recordKind"] != query.kind
+                    or (
+                        query.conversation_id is not None
+                        and record.body.get("conversationId") != str(query.conversation_id)
+                    )
+                    or (query.completed_only and record.body.get("status") != "completed")
                 ):
                     raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4())
                 records.append(record)

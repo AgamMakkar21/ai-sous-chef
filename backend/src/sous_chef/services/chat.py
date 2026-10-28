@@ -23,6 +23,7 @@ from sous_chef.domain.chat import (
     TurnStatus,
     ValidatedReply,
 )
+from sous_chef.domain.context import LearnedPreferenceReader
 from sous_chef.domain.conversations import ConversationModel, IdempotencyConflict, TurnMessage
 from sous_chef.domain.cosmos import (
     CosmosError,
@@ -33,7 +34,8 @@ from sous_chef.domain.cosmos import (
     RecordPatch,
     StoredRecord,
 )
-from sous_chef.domain.profiles import OnboardingRequired, require_onboarding
+from sous_chef.domain.profiles import OnboardingRequired
+from sous_chef.services.context import ContextService
 from sous_chef.services.conversations import ConversationService, StoredConversation
 from sous_chef.services.profiles import _view as profile_view
 from sous_chef.settings import ConfigurationError, Settings
@@ -108,9 +110,15 @@ def _view(record: StoredRecord, turn: StoredRecord, conversation_id: UUID4) -> O
 
 
 class ChatService:
-    def __init__(self, settings: Settings, executor: ChatExecutor | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        executor: ChatExecutor | None = None,
+        learned_reader: LearnedPreferenceReader | None = None,
+    ) -> None:
         self.settings = settings
         self.executor = executor
+        self.context_service = ContextService(learned_reader)
 
     async def _finish(
         self,
@@ -256,7 +264,18 @@ class ChatService:
             profile = await repository.read(user, ProductContainer.USERS, user.user_id)
             if profile is None:
                 raise OnboardingRequired
-            preferences = require_onboarding(profile_view(profile))
+            try:
+                async with asyncio.timeout_at(deadline - 5):
+                    context = await self.context_service.build(
+                        repository,
+                        user,
+                        conversation_id,
+                        profile,
+                        request.content,
+                        deadline=deadline - 5,
+                    )
+            except TimeoutError:
+                raise CosmosError(CosmosFailure.TIMEOUT, uuid4()) from None
             if self.executor is None:
                 raise ConfigurationError("Chat execution is not configured for this release.")
             creates: tuple[NewRecord, ...]
@@ -358,8 +377,7 @@ class ChatService:
                         conversation_id=conversation_id,
                         turn_id=turn_id,
                         operation_id=operation_id,
-                        content=request.content,
-                        explicit_preferences=preferences,
+                        context=context,
                         deadline=deadline - 5,
                     )
                 )
@@ -375,6 +393,22 @@ class ChatService:
             status, failure = "outcomeUnknown", "execution_outcome_unknown"
 
         async with open_cosmos(self.settings, deadline=deadline) as repository:
+            if reply is not None:
+                latest = await repository.read(user, ProductContainer.USERS, user.user_id)
+                latest_profile = profile_view(latest) if latest is not None else None
+                latest_preferences = (
+                    latest_profile.explicit_preferences if latest_profile is not None else None
+                )
+                if (
+                    latest_profile is None
+                    or not latest_profile.onboarding_completed
+                    or latest_preferences is None
+                    or latest_preferences.allergies != context.explicit_preferences.allergies
+                    or latest_preferences.dietary_restrictions
+                    != context.explicit_preferences.dietary_restrictions
+                ):
+                    reply = None
+                    status, failure = "failed", "execution_failed"
             for attempt in range(3):
                 operation_record = await repository.read(user, CHAT, str(operation_id))
                 if operation_record is None:

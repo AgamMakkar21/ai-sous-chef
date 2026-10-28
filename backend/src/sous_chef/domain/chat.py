@@ -6,6 +6,7 @@ from typing import Annotated, Literal, Protocol
 from pydantic import UUID4, Field, StringConstraints
 
 from sous_chef.domain.authorization import AuthenticatedUser
+from sous_chef.domain.context import RequestContext
 from sous_chef.domain.conversations import ConversationModel, ConversationTurn
 from sous_chef.domain.profiles import ExplicitPreferences
 
@@ -43,9 +44,16 @@ class ChatExecution:
     conversation_id: UUID4
     turn_id: UUID4
     operation_id: UUID4
-    content: str
-    explicit_preferences: ExplicitPreferences
+    context: RequestContext
     deadline: float
+
+    @property
+    def content(self) -> str:
+        return self.context.current_request
+
+    @property
+    def explicit_preferences(self) -> ExplicitPreferences:
+        return self.context.explicit_preferences
 
 
 class ChatExecutor(Protocol):
