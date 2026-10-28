@@ -142,9 +142,12 @@ GitHub's Azure CLI credential is used only by deployment. In App Service,
 dependency checks and application calls still use only the configured workload
 managed identity, with no developer/cloud-secret fallback.
 
-The source ZIP comes from `git archive <event-sha> backend requirements.txt`,
-not an untrusted PR artifact or a dirty working directory. It includes a release
-commit marker. Oryx installs the locked runtime dependencies using the existing
+The backend source ZIP comes from `git archive <event-sha> backend requirements.txt`,
+not an untrusted PR artifact or a dirty working directory. The job builds the
+[frontend](frontend.md) from that same reviewed checkout with Node 24 and `npm ci`
+before Azure login. Packaging adds its self-contained static HTML and a release
+commit marker, and rejects a missing frontend build.
+Oryx installs the locked runtime dependencies using the existing
 App Service startup configuration. No `.env`, publishing profile, user data,
 credential or secret value is included. Existing authentication and provider
 secrets in App Service settings are retained when release pins are updated.

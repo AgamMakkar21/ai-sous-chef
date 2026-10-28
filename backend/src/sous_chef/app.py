@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response
+from starlette.types import Scope
 
 from sous_chef.adapters.readiness import LiveReadinessProbe, LocalReadinessProbe
 from sous_chef.api.authentication import AuthenticationMiddleware, create_auth_router
@@ -16,6 +18,14 @@ from sous_chef.domain.readiness import ReadinessProbe
 from sous_chef.services.readiness import ReadinessService
 from sous_chef.settings import ConfigurationError, Settings, load_settings
 from sous_chef.telemetry import configure_safe_telemetry
+
+
+class FrontendFiles(StaticFiles):
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
 
 
 def create_app(
@@ -63,7 +73,7 @@ def create_app(
         return problem_response(404, "not_found", "Not found", "The resource was not found.")
 
     if (config.static_dir / "index.html").is_file():
-        app.mount("/", StaticFiles(directory=config.static_dir, html=True), name="frontend")
+        app.mount("/", FrontendFiles(directory=config.static_dir, html=True), name="frontend")
     else:
 
         @app.get("/", include_in_schema=False)

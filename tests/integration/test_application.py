@@ -94,8 +94,12 @@ def test_hosted_scaffold_is_not_ready_without_live_adapters(environment: str) ->
         create_app(settings, readiness_probe=LocalReadinessProbe())
 
 
-def test_missing_frontend_does_not_claim_to_be_a_working_ui(client: TestClient) -> None:
-    response = client.get("/")
+def test_missing_frontend_does_not_claim_to_be_a_working_ui(
+    tmp_path: Path, local_settings: Settings, auth_headers: dict[str, str]
+) -> None:
+    settings = local_settings.model_copy(update={"static_dir": tmp_path / "not-built"})
+    with TestClient(create_app(settings), headers=auth_headers) as test_client:
+        response = test_client.get("/")
     assert response.status_code == 503
     assert response.json()["code"] == "frontend_unavailable"
 
@@ -108,13 +112,21 @@ def test_built_frontend_and_assets_use_the_same_server(
     (tmp_path / "assets" / "test.js").write_text("console.log('fixture');")
     settings = local_settings.model_copy(update={"static_dir": tmp_path})
     with TestClient(create_app(settings), headers=auth_headers) as test_client:
-        assert "frontend fixture" in test_client.get("/").text
-        assert test_client.get("/assets/test.js").status_code == 200
+        response = test_client.get("/")
+        assert "frontend fixture" in response.text
+        assert response.headers["cache-control"] == "no-store"
+        assert response.headers["referrer-policy"] == "no-referrer"
+        response = test_client.get("/assets/test.js")
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
         assert test_client.get("/health").json() == {"status": "ok"}
         response = test_client.get("/api/v1/not-implemented")
         assert response.status_code == 404
         assert response.headers["content-type"] == "application/problem+json"
         assert test_client.get("/../.env.local").status_code == 404
+    with TestClient(create_app(settings)) as anonymous:
+        assert anonymous.get("/").status_code == 401
+        assert anonymous.get("/assets/test.js").status_code == 401
 
 
 def test_unknown_routes_have_safe_problem_responses(client: TestClient) -> None:

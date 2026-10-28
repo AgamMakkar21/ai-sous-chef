@@ -12,6 +12,9 @@ from sous_chef.settings import Settings
 def main() -> None:
     if package_file is None or not Path(package_file).is_relative_to(Path(sys.prefix)):
         raise RuntimeError("Smoke check must import the installed wheel from the environment.")
+    frontend = Path(package_file).parent / "static" / "index.html"
+    if not frontend.is_file() or 'id="root"' not in frontend.read_text(encoding="utf-8"):
+        raise RuntimeError("Installed wheel must include the compiled frontend.")
     settings = Settings(environment="local", adapter_mode="local", _env_file=None)
     with TestClient(create_app(settings)) as client:
         for path, expected in (
@@ -38,6 +41,7 @@ def main() -> None:
         ):
             raise RuntimeError("Installed-wheel API schema is missing required routes.")
         for path, method in (
+            ("/", "get"),
             ("/api/v1/conversations", "get"),
             ("/api/v1/conversations", "post"),
             ("/api/v1/conversations/invalid/turns", "get"),
@@ -51,7 +55,9 @@ def main() -> None:
         ):
             if client.request(method.upper(), path, json={}).status_code != 401:
                 raise RuntimeError("Installed-wheel API routes must require authentication.")
-    print("Installed-wheel health, readiness, API schema and authentication checks passed.")
+    print(
+        "Installed-wheel frontend, health, readiness, API schema and authentication checks passed."
+    )
 
 
 if __name__ == "__main__":

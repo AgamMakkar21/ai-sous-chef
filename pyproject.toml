@@ -33,6 +33,9 @@ dev = [
     "ruff==0.16.10",
 ]
 
+[tool.hatch.build]
+artifacts = ["backend/src/sous_chef/static/index.html"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["backend/src/sous_chef"]
 

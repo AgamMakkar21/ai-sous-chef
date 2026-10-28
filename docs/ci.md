@@ -20,11 +20,18 @@ they are not added to the web application's deployment package.
 | `CI / tests` | `python -m pytest` (unit and API/contract tests) |
 | `CI / build` | Build sdist/wheel, install the wheel, and smoke-test its health, readiness, and OpenAPI contracts |
 | `CI / infrastructure` | Pinned Bicep 0.48.1 compilation and offline ARM-template tests |
+| `CI / frontend` | Node 24, `npm ci`, Oxlint/Prettier, strict TypeScript, and Playwright production-bundle desktop/phone checks |
+
+The frontend job has no Python or cloud dependency. The Python build job also
+runs `npm ci` and `npm run build` in `frontend/` before packaging, so its installed
+wheel contains the browser application. See [frontend setup](frontend.md) for
+browser installation and local commands.
 
 Run the package smoke check in a disposable virtual environment: it replaces the
 editable installation with the wheel. In WSL/Linux:
 
 ```bash
+(cd frontend && npm ci && npm run build)
 python -m build --no-isolation
 python -m pip install --no-deps --force-reinstall dist/*.whl
 python -I scripts/smoke_wheel.py
@@ -62,7 +69,7 @@ credentials only in its environment-bound deployment job.
 Workflow files do not enforce merges by themselves. An administrator must wire
 the checks into GitHub settings after GitHub has reported these exact names.
 
-1. Open a feature PR into `dev` and confirm all five named checks pass. In a
+1. Open a feature PR into `dev` and confirm all six named checks pass. In a
    temporary commit, introduce an unused Python import and a failing fixture
    assertion; confirm `CI / lint` and `CI / tests` fail respectively. Remove
    these deliberate failures, rerun successfully, and request fresh peer review.
@@ -72,11 +79,13 @@ the checks into GitHub settings after GitHub has reported these exact names.
 3. Require a PR, at least one approving review from another collaborator, dismiss
    stale approvals after new commits, and require approval of the most recent
    reviewable push. Block deletion and force pushes; do not grant routine bypass.
-4. Add all five exact check names above as required status checks, select
+4. Add all six exact check names above as required status checks, select
    **GitHub Actions** as their source, and require branches to be up to date.
    Enable the ruleset only after the checks exist. If repository-plan restrictions
    prevent enforcement, record the actual limitation; documentation is not
    enforcement.
+   The existing recorded rules below contain the original five checks;
+   `CI / frontend` needs an owner update after its first successful run.
 5. Verify a PR with failed checks or no peer approval cannot merge, and that a new
    commit invalidates its prior approval. Verify the same policy targets `main`
    when promoting `dev`. Do not self-approve or merge a test PR to bypass policy.

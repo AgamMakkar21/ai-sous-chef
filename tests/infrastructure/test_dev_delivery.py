@@ -432,14 +432,52 @@ class DeliveryTests(unittest.TestCase):
                         self.assertNotIn(value, str(failure.exception))
 
     def test_archive_contains_exact_git_commit_and_no_environment_secrets(self) -> None:
-        sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
         with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "reviewed"
+            backend = root / "backend" / "src" / "sous_chef"
+            backend.mkdir(parents=True)
+            (backend / "app.py").write_text("# reviewed backend fixture\n")
+            (backend / "release.json").write_text('{"commit":"old"}')
+            (root / "requirements.txt").write_text("# locked requirement fixture\n")
+            (root / ".gitignore").write_text(".env*\nbackend/src/sous_chef/static/\n")
+            subprocess.run(["git", "init", "--quiet", str(root)], check=True)
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Verification",
+                    "-c",
+                    "user.email=verification@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "-c",
+                    f"core.hooksPath={root / 'no-hooks'}",
+                    "commit",
+                    "--quiet",
+                    "-m",
+                    "Synthetic reviewed source",
+                ],
+                cwd=root,
+                check=True,
+            )
+            sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+            (backend / "app.py").write_text("# unreviewed working-tree fixture\n")
+            (root / ".env.local").write_text("SYNTHETIC_SECRET=must-not-be-packaged\n")
+            (backend / "static").mkdir()
+            frontend = b"<html><body>compiled frontend fixture</body></html>"
+            (backend / "static" / "index.html").write_bytes(frontend)
             archive = Path(directory) / "app.zip"
-            delivery.package(sha, archive)
+            with patch.object(delivery, "ROOT", root):
+                delivery.package(sha, archive)
             with zipfile.ZipFile(archive) as package:
                 names = package.namelist()
                 self.assertIn("requirements.txt", names)
                 self.assertIn("backend/src/sous_chef/app.py", names)
+                self.assertEqual(
+                    package.read("backend/src/sous_chef/app.py"), b"# reviewed backend fixture\n"
+                )
+                self.assertEqual(package.read("backend/src/sous_chef/static/index.html"), frontend)
                 self.assertEqual(
                     json.loads(package.read("backend/src/sous_chef/release.json")), {"commit": sha}
                 )
@@ -447,6 +485,18 @@ class DeliveryTests(unittest.TestCase):
                 self.assertTrue(
                     all(name == "requirements.txt" or name.startswith("backend/") for name in names)
                 )
+
+    def test_archive_rejects_a_missing_frontend_build(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (
+                patch.object(delivery, "ROOT", root),
+                patch("scripts.deploy_dev.subprocess.run") as archive,
+            ):
+                with self.assertRaisesRegex(delivery.DeliveryError, "Build the frontend"):
+                    delivery.package(SHA, root / "app.zip")
+                archive.assert_not_called()
+                self.assertFalse((root / "app.zip").exists())
 
     def test_agent_release_preserves_approved_definition_and_separate_identities(self) -> None:
         definitions = [

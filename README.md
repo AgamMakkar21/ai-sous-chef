@@ -12,8 +12,9 @@ feedback-based personalization.
 The scaffold runs a FastAPI backend with offline readiness doubles and fail-closed
 consumer authentication. Profile/onboarding, grocery inventory and conversation
 persistence APIs, shared Cosmos access and the managed-agent gateway are available.
-Chat execution, other product endpoints, agent instructions and the React UI
-remain separate work.
+The React frontend adds the authenticated three-tab shell and onboarding/profile
+editing. Grocery, chat and recipe-history screen contents remain follow-on work.
+See [frontend setup and scope](docs/frontend.md).
 See [profile API setup and usage](docs/profiles.md) and
 [conversation setup and HTTP contracts](docs/conversations.md) for the persistence APIs.
 See [consumer sign-in setup](docs/authentication.md) for the
@@ -54,8 +55,9 @@ Open <http://localhost:8000/health> in the Windows browser. It returns exactly
 `{"status":"ok"}`. <http://localhost:8000/ready> returns `{"status":"ready"}` in
 explicit local-double mode. Local API documentation is at
 <http://localhost:8000/docs>. Protected routes, including the root URL, return 401
-without authentication. After authentication the root returns a truthful 503 until
-a frontend build is installed; it is not a cooking demo.
+without authentication. After authentication the root serves the frontend when
+its build is installed; otherwise it returns a truthful 503. Local readiness
+doubles do not supply a browser login or fake profiles.
 
 In another Ubuntu terminal, verify the scaffold:
 
@@ -75,7 +77,8 @@ credentials or network access are needed.
 
 PRs targeting `dev` or `main` run formatting/lint, strict type checking,
 unit/API contract tests, installed-wheel smoke checks, and offline infrastructure
-tests. See [CI setup and required-check wiring](docs/ci.md) for exact check names,
+tests, plus frontend lint/types and desktop/phone browser checks.
+See [CI setup and required-check wiring](docs/ci.md) for exact check names,
 local commands, safety boundaries, and the administrator's enforcement checklist.
 This workflow validates code only; it does not deploy to Azure.
 
@@ -180,11 +183,12 @@ in `services/`, and concrete probes in `adapters/`. Future user-data endpoints u
 `/api/v1` and the contracts below; no authentication bypass or placeholder CRUD
 is supplied.
 
-The same FastAPI server mounts a built frontend when its directory contains
-`index.html`. Future React/TypeScript/Vite work uses Node.js 24 LTS and npm;
-copy its build into `backend/src/sous_chef/static` or set `ASC_STATIC_DIR`.
-Generated output is ignored by Git. Frontend implementation and client-side
-routing remain separate work.
+The same authenticated FastAPI server mounts the React/TypeScript/Vite frontend.
+With Node.js 24 LTS, run `npm ci` and `npm run build` in `frontend/`; Vite writes
+a self-contained `backend/src/sous_chef/static/index.html`. Generated output is
+ignored by Git but included in built Python packages and reviewed dev source ZIPs.
+Build it before `python -m build --no-isolation`. Fixed tab hashes avoid server
+fallback routes that could swallow API requests. See [frontend setup](docs/frontend.md).
 
 ## Reproducible dependencies
 

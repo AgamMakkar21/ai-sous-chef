@@ -63,5 +63,46 @@ jobs:
           python -m pip install -r worker/requirements.txt
           python -m pip install --no-build-isolation --no-deps -e .
           python -m pip check
+      - name: Set up Node for package build
+        if: matrix.check == 'build'
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build frontend for the installed wheel
+        if: matrix.check == 'build'
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
       - name: Run ${{ matrix.check }}
         run: ${{ matrix.command }}
+
+  frontend:
+    name: CI / frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Check frontend formatting, lint and types
+        working-directory: frontend
+        run: |
+          npm run lint
+          npm run typecheck
+      - name: Install browser
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Test production frontend
+        working-directory: frontend
+        run: npm test
