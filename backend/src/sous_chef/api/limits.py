@@ -14,7 +14,7 @@ class ProductBodyLimitMiddleware:
         if (
             scope["type"] != "http"
             or not scope["path"].startswith("/api/v1/")
-            or scope["method"] not in {"POST", "PUT", "PATCH"}
+            or scope["method"] not in {"POST", "PUT", "PATCH", "DELETE"}
         ):
             await self.app(scope, receive, send)
             return

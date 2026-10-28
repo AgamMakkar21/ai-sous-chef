@@ -333,6 +333,8 @@ class Transport(AsyncHttpTransport[HttpRequest, AsyncHttpResponse]):
             current[operation["path"][1:]] = operation["value"]
         self.revision += 1
         current["_etag"] = f'"{self.revision}"'
+        if self.write_then_disconnect:
+            raise ServiceResponseError("secret-private-lost-patch-response")
         return reply(200, current, etag=current["_etag"])
 
 

@@ -60,6 +60,8 @@ class ErrorCategory(StrEnum):
     CONFIGURATION_UNAVAILABLE = "configuration_unavailable"
     ONBOARDING_REQUIRED = "onboarding_required"
     PRECONDITION_REQUIRED = "precondition_required"
+    DUPLICATE_GROCERY = "duplicate_grocery"
+    GROCERY_LIMIT_REACHED = "grocery_limit_reached"
 
 
 class Event(StrEnum):
