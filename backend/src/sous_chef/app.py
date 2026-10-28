@@ -10,6 +10,7 @@ from sous_chef.api.limits import ProductBodyLimitMiddleware
 from sous_chef.api.observability import RequestLoggingMiddleware
 from sous_chef.api.problems import problem_response, register_problem_handlers
 from sous_chef.api.profiles import create_profile_router
+from sous_chef.domain.chat import ChatExecutor
 from sous_chef.domain.readiness import ReadinessProbe
 from sous_chef.services.readiness import ReadinessService
 from sous_chef.settings import ConfigurationError, Settings, load_settings
@@ -17,7 +18,10 @@ from sous_chef.telemetry import configure_safe_telemetry
 
 
 def create_app(
-    settings: Settings | None = None, *, readiness_probe: ReadinessProbe | None = None
+    settings: Settings | None = None,
+    *,
+    readiness_probe: ReadinessProbe | None = None,
+    chat_executor: ChatExecutor | None = None,
 ) -> FastAPI:
     configure_safe_telemetry()
     config = settings if settings is not None else load_settings()
@@ -42,7 +46,7 @@ def create_app(
     app.add_middleware(AuthenticationMiddleware, settings=config)
     app.add_middleware(RequestLoggingMiddleware)
     app.include_router(create_auth_router(config))
-    app.include_router(create_conversation_router(config))
+    app.include_router(create_conversation_router(config, chat_executor))
     app.include_router(create_profile_router(config))
     app.include_router(
         create_health_router(ReadinessService(probe, config.readiness_timeout_seconds))

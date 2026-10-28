@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 
 from sous_chef.domain.authorization import OwnedResourceNotFound
+from sous_chef.domain.chat import SendConflict
 from sous_chef.domain.conversations import IdempotencyConflict, InvalidCursor
 from sous_chef.domain.cosmos import CosmosError, CosmosFailure
 from sous_chef.domain.profiles import PREFERENCE_FIELDS, OnboardingRequired
@@ -39,6 +40,15 @@ def problem_response(
 
 
 def register_problem_handlers(app: FastAPI) -> None:
+    @app.exception_handler(SendConflict)
+    async def send_conflict(_request: Request, _exc: SendConflict) -> JSONResponse:
+        return problem_response(
+            409,
+            "send_conflict",
+            "Conversation cannot accept this send",
+            "Reconcile the active operation or select a known failed turn to retry.",
+        )
+
     @app.exception_handler(InvalidCursor)
     async def invalid_cursor(_request: Request, _exc: InvalidCursor) -> JSONResponse:
         return problem_response(
@@ -50,8 +60,8 @@ def register_problem_handlers(app: FastAPI) -> None:
         return problem_response(
             409,
             "idempotency_conflict",
-            "Creation key already used",
-            "Use the original request with this key, or a new key for a new conversation.",
+            "Idempotency key already used",
+            "Use the original request with this key, or a new key for a new operation.",
         )
 
     @app.exception_handler(OnboardingRequired)
