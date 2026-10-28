@@ -13,6 +13,7 @@ from sous_chef.domain.chat import (
     SendMessage,
     TurnEnvelope,
 )
+from sous_chef.domain.context import LearnedPreferenceReader
 from sous_chef.domain.conversations import (
     ConversationEnvelope,
     ConversationSummary,
@@ -32,7 +33,9 @@ def _query(request: Request) -> None:
 
 
 def create_conversation_router(
-    settings: Settings, executor: ChatExecutor | None = None
+    settings: Settings,
+    executor: ChatExecutor | None = None,
+    learned_reader: LearnedPreferenceReader | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1/conversations", tags=["conversations"])
 
@@ -90,7 +93,7 @@ def create_conversation_router(
     ) -> TurnEnvelope | OperationEnvelope | JSONResponse:
         if request.query_params or len(request.headers.getlist("idempotency-key")) != 1:
             raise RequestValidationError([{"type": "extra_forbidden", "loc": ("request",)}])
-        operation = await ChatService(settings, executor).send(
+        operation = await ChatService(settings, executor, learned_reader).send(
             user, conversation_id, payload, idempotency_key
         )
         location = f"/api/v1/conversations/{conversation_id}/operations/{operation.operation_id}"

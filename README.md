@@ -21,6 +21,8 @@ Google/GitHub/single-tenant Microsoft App Service sign-in, the original External
 ID option, owner setup and signed-token local testing.
 See [grocery inventory APIs](docs/groceries.md) for adding, editing and removing
 owned groceries without AI calls.
+See [bounded request context](docs/conversations.md#bounded-request-context-asc-23--24)
+for current-profile refresh, conversation selection, token budgets and learned-input wiring.
 
 Use **Ubuntu 24.04 in WSL 2**, CPython **3.12**, and a checkout in the Linux
 filesystem. Windows supplies the editor and browser. Do not share a virtual
@@ -68,8 +70,10 @@ python -m mypy
 python -m pytest
 ```
 
-Tests use offline probes and generated frontend fixtures; no Azure account,
-credentials or network access are needed.
+Tests use offline probes and generated frontend fixtures; no Azure account or
+credentials are needed. Populate the public
+[tokenizer cache](docs/conversations.md#budget-and-tokenizer-setup) during setup
+before running context tests offline.
 
 ## Pull request quality checks
 
