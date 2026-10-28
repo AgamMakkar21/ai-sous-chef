@@ -2,7 +2,8 @@ import os
 from pathlib import Path
 from typing import Literal, Self
 
-from pydantic import Field, HttpUrl, ValidationError, model_validator
+from cryptography.fernet import Fernet
+from pydantic import Field, HttpUrl, SecretStr, ValidationError, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -46,6 +47,7 @@ class Settings(BaseSettings):
     cosmos_operation_timeout_seconds: float = Field(default=5, gt=0, le=5, allow_inf_nan=False)
     cosmos_max_attempts: int = Field(default=3, ge=1, le=5)
     cosmos_page_size: int = Field(default=20, ge=1, le=50)
+    pagination_key: SecretStr | None = Field(default=None, repr=False)
     foundry_project_endpoint: HttpUrl | None = Field(default=None, repr=False)
     foundry_project_resource_id: str | None = Field(
         default=None, pattern=_PROJECT_RESOURCE_ID, repr=False
@@ -95,6 +97,13 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_environment(self) -> Self:
+        if self.pagination_key is not None:
+            try:
+                Fernet(self.pagination_key.get_secret_value().encode("ascii"))
+            except (ValueError, UnicodeError):
+                raise ConfigurationError(
+                    "ASC_PAGINATION_KEY must be a generated Fernet key; see docs/conversations.md."
+                ) from None
         auth_values = (self.auth_issuer, self.auth_jwks_uri, self.auth_client_id, self.auth_origin)
         if self.auth_mode == "app_service":
             if self.auth_origin is None or self.environment == "local":

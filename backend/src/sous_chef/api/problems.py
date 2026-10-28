@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 
 from sous_chef.domain.authorization import OwnedResourceNotFound
+from sous_chef.domain.conversations import IdempotencyConflict, InvalidCursor
 from sous_chef.domain.cosmos import CosmosError, CosmosFailure
 from sous_chef.domain.profiles import PREFERENCE_FIELDS, OnboardingRequired
 from sous_chef.settings import ConfigurationError
@@ -38,6 +39,21 @@ def problem_response(
 
 
 def register_problem_handlers(app: FastAPI) -> None:
+    @app.exception_handler(InvalidCursor)
+    async def invalid_cursor(_request: Request, _exc: InvalidCursor) -> JSONResponse:
+        return problem_response(
+            400, "invalid_cursor", "Invalid cursor", "Restart listing with a new first page."
+        )
+
+    @app.exception_handler(IdempotencyConflict)
+    async def idempotency_conflict(_request: Request, _exc: IdempotencyConflict) -> JSONResponse:
+        return problem_response(
+            409,
+            "idempotency_conflict",
+            "Creation key already used",
+            "Use the original request with this key, or a new key for a new conversation.",
+        )
+
     @app.exception_handler(OnboardingRequired)
     async def onboarding_required(_request: Request, _exc: OnboardingRequired) -> JSONResponse:
         return problem_response(

@@ -6,11 +6,12 @@ feedback-based personalization.
 ## Local backend
 
 The scaffold runs a FastAPI backend with offline readiness doubles and fail-closed
-consumer authentication. Profile/onboarding APIs, shared Cosmos access and the
-managed-agent gateway are available; chat execution, other product endpoints,
-agent instructions and the React UI remain separate work.
+consumer authentication. Profile/onboarding APIs, conversation persistence APIs,
+shared Cosmos access and the managed-agent gateway are available; chat execution,
+other product endpoints, agent instructions and the React UI remain separate work.
 See [profile API setup and usage](docs/profiles.md) and
-[consumer sign-in setup](docs/authentication.md) for the
+[conversation setup and HTTP contracts](docs/conversations.md) for the persistence APIs.
+See [consumer sign-in setup](docs/authentication.md) for the
 Google/GitHub/single-tenant Microsoft App Service sign-in, the original External
 ID option, owner setup and signed-token local testing.
 
@@ -91,11 +92,12 @@ settings with field names and setup guidance, never the rejected values.
 | `ASC_STATIC_DIR` | Optional frontend build directory; default `backend/src/sous_chef/static` |
 | `ASC_COSMOS_ENDPOINT` | Required in live mode; HTTPS URL without credentials or query parameters |
 | `ASC_COSMOS_DATABASE` | Required nonempty database name in live mode |
+| `ASC_PAGINATION_KEY` | Protected Fernet key required for conversation APIs; see [setup](docs/conversations.md) |
 | `ASC_FOUNDRY_PROJECT_ENDPOINT` | Required in live mode when agents are enabled; HTTPS URL without credentials or query parameters |
 
 `.env.local.example`, `.env.dev.example` and `.env.prod.example` contain no live
 endpoints or secrets. Empty live values must be supplied by deployment configuration.
-Actual `.env` files are ignored by Git. Do not add service keys: hosted integrations
+Actual `.env` files are ignored by Git. Do not add cloud service keys: hosted integrations
 must use managed identity, and each interactive agent must retain a distinct
 Entra Agent identity when those integrations are implemented.
 
@@ -212,6 +214,15 @@ bounded history pages in the authenticated user's partition. It preserves
 unrelated profile fields, bounds safe retries and reports uncertain writes
 instead of replaying them. It adds no product endpoints or deployments.
 See [configuration, failure contract and approved dev acceptance](docs/cosmos-access.md).
+
+## Conversation persistence
+
+ASC-21 adds authenticated empty-conversation creation, paginated metadata listing
+and conversation-scoped turn retrieval. Creation is durably idempotent, and
+encrypted cursors preserve user scope, ordering and the first-page upper bound.
+Set the protected `ASC_PAGINATION_KEY` alongside the existing live Cosmos/auth
+configuration. See [conversation setup and HTTP contracts](docs/conversations.md).
+No chat sends, agent execution or transcript copying are implemented here.
 
 ## Recipe corpus ingestion
 

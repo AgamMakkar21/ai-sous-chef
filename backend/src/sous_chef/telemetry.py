@@ -55,6 +55,8 @@ class ErrorCategory(StrEnum):
     DUPLICATE_RESOURCE = "duplicate_resource"
     RECORD_TOO_LARGE = "record_too_large"
     BODY_TOO_LARGE = "body_too_large"
+    INVALID_CURSOR = "invalid_cursor"
+    IDEMPOTENCY_CONFLICT = "idempotency_conflict"
     CONFIGURATION_UNAVAILABLE = "configuration_unavailable"
     ONBOARDING_REQUIRED = "onboarding_required"
     PRECONDITION_REQUIRED = "precondition_required"

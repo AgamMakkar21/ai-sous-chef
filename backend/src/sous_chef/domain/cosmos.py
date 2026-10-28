@@ -25,6 +25,7 @@ class ProductContainer(StrEnum):
 class RecordKind(StrEnum):
     PROFILE = "profile"
     CONVERSATION = "conversation"
+    CONVERSATION_CREATION = "conversationCreation"
     TURN = "turn"
     SEND_OPERATION = "sendOperation"
     RECIPE = "recipe"

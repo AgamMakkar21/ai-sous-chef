@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from copy import deepcopy
@@ -21,7 +22,11 @@ from azure.core.exceptions import (
 )
 from azure.cosmos.aio import ContainerProxy, CosmosClient
 from azure.cosmos.documents import ConnectionPolicy
-from azure.cosmos.exceptions import CosmosClientTimeoutError, CosmosHttpResponseError
+from azure.cosmos.exceptions import (
+    CosmosBatchOperationError,
+    CosmosClientTimeoutError,
+    CosmosHttpResponseError,
+)
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from sous_chef.adapters.credentials import build_async_credential
@@ -50,6 +55,7 @@ _KINDS = {
     ProductContainer.USERS: {RecordKind.PROFILE},
     ProductContainer.CHAT_HISTORY: {
         RecordKind.CONVERSATION,
+        RecordKind.CONVERSATION_CREATION,
         RecordKind.TURN,
         RecordKind.SEND_OPERATION,
     },
@@ -174,7 +180,9 @@ class CosmosRepository:
         )
 
     @staticmethod
-    def _retry_after(error: CosmosHttpResponseError, attempt: int) -> float:
+    def _retry_after(
+        error: CosmosHttpResponseError | CosmosBatchOperationError, attempt: int
+    ) -> float:
         headers = {key.lower(): value for key, value in error.headers.items()}
         try:
             if "x-ms-retry-after-ms" in headers:
@@ -217,7 +225,7 @@ class CosmosRepository:
                             if monotonic() >= deadline:
                                 raise TimeoutError
                             return result
-                        except CosmosHttpResponseError as error:
+                        except (CosmosHttpResponseError, CosmosBatchOperationError) as error:
                             status = error.status_code
                             retryable = status == 429 or (
                                 read_only and status in {408, 500, 502, 503, 504}
@@ -297,17 +305,8 @@ class CosmosRepository:
 
         return await self._run(action, deadline=deadline)
 
-    async def create(
-        self,
-        user: AuthenticatedUser,
-        request: NewRecord,
-        *,
-        deadline: float | None = None,
-    ) -> StoredRecord:
-        deadline = self._deadline(deadline)
+    def _new_body(self, user: AuthenticatedUser, request: NewRecord) -> dict[str, JsonValue]:
         scope = self._scope(user)
-        request = NewRecord.model_validate(request)
-        container = next(name for name, kinds in _KINDS.items() if request.kind in kinds)
         now = _timestamp()
         body: dict[str, JsonValue] = {
             **deepcopy(request.fields),
@@ -322,6 +321,80 @@ class CosmosRepository:
         }
         if _size(body) > MAX_RECORD_BYTES:
             raise CosmosError(CosmosFailure.TOO_LARGE, uuid4())
+        return body
+
+    async def create_conversation(
+        self,
+        user: AuthenticatedUser,
+        request: NewRecord,
+        *,
+        receipt_id: str,
+        request_hash: str,
+    ) -> StoredRecord:
+        """Commit metadata and durable creation deduplication in the same user partition."""
+        deadline = self._deadline(None)
+        request = NewRecord.model_validate(request)
+        if (
+            request.kind != RecordKind.CONVERSATION
+            or re.fullmatch(r"conversation-create:[0-9a-f]{64}", receipt_id) is None
+            or re.fullmatch(r"[0-9a-f]{64}", request_hash) is None
+        ):
+            raise ValueError("A conversation and bounded creation receipt are required.")
+        body = self._new_body(user, request)
+        receipt = {
+            **self._new_body(
+                user,
+                NewRecord(
+                    kind=RecordKind.CONVERSATION_CREATION,
+                    fields={"resourceId": body["id"], "requestHash": request_hash},
+                ),
+            ),
+            "id": receipt_id,
+        }
+
+        async def action() -> StoredRecord:
+            results = await self._containers[ProductContainer.CHAT_HISTORY].execute_item_batch(
+                batch_operations=[("create", (receipt,)), ("create", (body,))],
+                partition_key=user.user_id,
+                retry_write=0,
+            )
+            if len(results) != 2 or any(
+                not isinstance(result, dict) or result.get("statusCode") != 201
+                for result in results
+            ):
+                raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4(), outcome_unknown=True)
+            saved_receipt = self._record(
+                results[0].get("resourceBody"), user, ProductContainer.CHAT_HISTORY
+            )
+            record = self._record(
+                results[1].get("resourceBody"), user, ProductContainer.CHAT_HISTORY
+            )
+            if (
+                saved_receipt.body["id"] != receipt_id
+                or saved_receipt.body["recordKind"] != RecordKind.CONVERSATION_CREATION
+                or saved_receipt.body.get("resourceId") != body["id"]
+                or saved_receipt.body.get("requestHash") != request_hash
+                or record.body["id"] != body["id"]
+                or record.body["recordKind"] != RecordKind.CONVERSATION
+            ):
+                raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4(), outcome_unknown=True)
+            return record
+
+        return await self._run(action, deadline=deadline, read_only=False)
+
+    async def create(
+        self,
+        user: AuthenticatedUser,
+        request: NewRecord,
+        *,
+        deadline: float | None = None,
+    ) -> StoredRecord:
+        deadline = self._deadline(deadline)
+        request = NewRecord.model_validate(request)
+        if request.kind == RecordKind.CONVERSATION_CREATION:
+            raise ValueError("Conversation creation receipts must be committed with metadata.")
+        container = next(name for name, kinds in _KINDS.items() if request.kind in kinds)
+        body = self._new_body(user, request)
 
         async def action() -> StoredRecord:
             raw = await self._containers[container].create_item(body=body, retry_write=0)
