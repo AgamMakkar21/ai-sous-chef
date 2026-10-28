@@ -25,14 +25,29 @@ class DeliveryError(RuntimeError):
 def command(*args: str) -> str:
     result = subprocess.run(args, capture_output=True, text=True, cwd=ROOT)
     if result.returncode:
-        raise DeliveryError(f"{args[0]} {args[1]} failed; inspect the service deployment logs.")
+        operation = list(args[:2])
+        if args[0] == "az":
+            for argument in args[2:]:
+                if argument.startswith("-"):
+                    break
+                operation.append(argument)
+        raise DeliveryError(
+            f"{' '.join(operation)} failed; inspect deployment and startup logs. "
+            "Command output is withheld because it can contain credentials."
+        )
     return result.stdout
 
 
-def az(*args: str) -> Any:
-    return json.loads(
-        command("az", *args, "--subscription", required("AZURE_SUBSCRIPTION_ID"), "-o", "json")
+def az(*args: str, expect_json: bool = True) -> Any:
+    output = command(
+        "az",
+        *args,
+        "--subscription",
+        required("AZURE_SUBSCRIPTION_ID"),
+        "-o",
+        "json" if expect_json else "none",
     )
+    return json.loads(output) if expect_json else None
 
 
 def required(name: str) -> str:
@@ -106,11 +121,19 @@ def manifest() -> dict[str, dict[str, str]]:
     data = json.loads((ROOT / "deploy" / "agents.dev.json").read_text(encoding="utf-8"))
     if (
         not isinstance(data, dict)
-        or data.get("schema_version") != 1
+        or set(data) != {"schema_version", "agents_enabled", "agents"}
+        or type(data.get("schema_version")) is not int
+        or data.get("schema_version") != 2
+        or type(data.get("agents_enabled")) is not bool
         or not isinstance(data.get("agents"), dict)
-        or set(data["agents"]) != set(ROLES)
     ):
-        raise DeliveryError("The reviewed dev agent manifest must contain both agent roles.")
+        raise DeliveryError("Use a schema-version-2 manifest with an explicit agents_enabled flag.")
+    if data["agents_enabled"] is False:
+        if data["agents"]:
+            raise DeliveryError("Disabled agent releases must have an empty agents mapping.")
+        return {}
+    if set(data["agents"]) != set(ROLES):
+        raise DeliveryError("Enabled agent releases must contain both agent roles.")
     agents = data["agents"]
     validated = {}
     for role in ROLES:
@@ -172,7 +195,21 @@ def target() -> tuple[dict[str, Any], dict[str, str]]:
         or not app.get("identity", {}).get("userAssignedIdentities")
     ):
         raise DeliveryError("Dev app settings, Foundry target or managed identity do not match.")
-    authentication = az("webapp", "auth", "show", "-g", group, "-n", app_name)
+    authentication = az(
+        "rest",
+        "--method",
+        "GET",
+        "--url",
+        f"https://management.azure.com{app['id']}/config/authsettingsV2/list"
+        "?api-version=2024-04-01",
+    ).get("properties", {})
+    validate_authentication(authentication, settings, app.get("defaultHostName", ""))
+    return app, settings
+
+
+def validate_authentication(
+    authentication: dict[str, Any], settings: dict[str, str], hostname: str
+) -> None:
     if (
         authentication.get("platform", {}).get("enabled") is not True
         or authentication.get("globalValidation", {}).get("requireAuthentication") is not True
@@ -182,7 +219,86 @@ def target() -> tuple[dict[str, Any], dict[str, str]]:
         raise DeliveryError(
             "App Service authentication must be enabled and reject anonymous access."
         )
-    return app, settings
+    mode = settings.get("ASC_AUTH_MODE", "external_id")
+    if mode == "external_id":
+        return
+    if mode != "app_service":
+        raise DeliveryError("Select a supported ASC_AUTH_MODE.")
+    paths = {
+        "/health",
+        "/ready",
+        "/auth/login",
+        "/auth/logout",
+        "/auth/signed-out",
+        "/auth/login/aad",
+        "/auth/login/google",
+        "/auth/login/github",
+    }
+    login = authentication.get("login", {})
+    if (
+        not re.fullmatch(r"[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*\.azurewebsites\.net", hostname)
+        or settings.get("ASC_AUTH_ORIGIN", "").rstrip("/") != f"https://{hostname}"
+        or any(
+            settings.get(key)
+            for key in ("ASC_AUTH_ISSUER", "ASC_AUTH_JWKS_URI", "ASC_AUTH_CLIENT_ID")
+        )
+        or authentication.get("httpSettings", {}).get("requireHttps") is not True
+        or set(authentication.get("globalValidation", {}).get("excludedPaths", [])) != paths
+        or login.get("allowedExternalRedirectUrls", []) != []
+        or login.get("cookieExpiration", {}).get("convention") != "FixedTime"
+        or login.get("cookieExpiration", {}).get("timeToExpiration") != "01:00:00"
+        or login.get("tokenStore", {}).get("enabled") is not True
+        or login.get("tokenStore", {}).get("tokenRefreshExtensionHours") != 0
+    ):
+        raise DeliveryError("App Service session policy or canonical auth origin does not match.")
+    providers = authentication.get("identityProviders", {})
+    expected = {
+        "azureActiveDirectory": "MICROSOFT",
+        "google": "GOOGLE",
+        "gitHub": "GITHUB",
+    }
+    if {name for name, provider in providers.items() if provider.get("enabled") is True} != set(
+        expected
+    ):
+        raise DeliveryError("Enable exactly the Microsoft, Google and GitHub sign-in providers.")
+    for name, prefix in expected.items():
+        registration = providers[name].get("registration", {})
+        secret_name = f"{prefix}_PROVIDER_AUTHENTICATION_SECRET"
+        secret = settings.get(secret_name, "")
+        if (
+            not registration.get("clientId")
+            or registration.get("clientSecretSettingName") != secret_name
+            or not secret.strip()
+            or secret.lstrip().lower().startswith("@microsoft.keyvault(")
+        ):
+            raise DeliveryError(
+                "Each login provider needs its own registration and a nonempty secret stored "
+                "directly in its protected App Service setting, not a Key Vault reference."
+            )
+    aad = providers["azureActiveDirectory"]
+    registration = aad["registration"]
+    guid = r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}"
+    tenant = settings.get("ASC_AUTH_MICROSOFT_TENANT_ID", "").lower()
+    if (
+        not re.fullmatch(guid, registration["clientId"])
+        or not re.fullmatch(guid, tenant)
+        or registration.get("openIdIssuer") != f"https://login.microsoftonline.com/{tenant}/v2.0"
+        or aad.get("validation", {}).get("allowedAudiences") != [registration["clientId"]]
+        or aad.get("validation", {})
+        .get("defaultAuthorizationPolicy", {})
+        .get("allowedApplications")
+        != [registration["clientId"]]
+        or settings.get("WEBSITE_AUTH_AAD_ALLOWED_TENANTS", "").lower() != tenant
+        or aad.get("validation", {})
+        .get("defaultAuthorizationPolicy", {})
+        .get("allowedPrincipals", {})
+        .get("identities")
+    ):
+        raise DeliveryError(
+            "Microsoft sign-in requires the configured single-tenant v2 issuer, "
+            "registered audience, this-application client policy, matching tenant allowlist "
+            "and no user-specific allowlist."
+        )
 
 
 def release_agents(
@@ -250,19 +366,20 @@ def package(sha: str, output: Path) -> None:
 
 
 def deploy() -> None:
-    from azure.ai.projects import AIProjectClient
-    from azure.core.exceptions import AzureError
-    from azure.identity import AzureCliCredential
-    from sous_chef.telemetry import configure_safe_telemetry
-
-    configure_safe_telemetry()
     sha = commit()
     if command("git", "rev-parse", "HEAD").strip() != sha:
         raise DeliveryError("Checkout does not match the reviewed merge commit.")
     if current_dev_commit() != sha:
         raise DeliveryError("This run is superseded by a newer dev commit; no deployment started.")
-    app, settings = target()
     agents = manifest()
+    app, settings = target()
+    if settings.get("SCM_DO_BUILD_DURING_DEPLOYMENT", "").lower() != "true" or settings.get(
+        "WEBSITE_RUN_FROM_PACKAGE", ""
+    ) not in {"", "0"}:
+        raise DeliveryError(
+            "Source ZIP delivery requires SCM_DO_BUILD_DURING_DEPLOYMENT=true "
+            "and no WEBSITE_RUN_FROM_PACKAGE mount; ask the foundation owner to configure them."
+        )
     identity = app["identity"]["userAssignedIdentities"]
     app_principals = [
         value["principalId"]
@@ -271,38 +388,33 @@ def deploy() -> None:
     ]
     if len(app_principals) != 1:
         raise DeliveryError("App Service must use its configured user-assigned identity.")
-    try:
-        with (
-            AzureCliCredential() as credential,
-            AIProjectClient(
-                endpoint=settings["ASC_FOUNDRY_PROJECT_ENDPOINT"],
-                credential=credential,
-                api_version="v1",
-                retry_total=0,
-            ) as project,
-        ):
-            pins = release_agents(project, agents, app_principals[0])
-    except AzureError as exc:
-        raise DeliveryError(f"Foundry agent release failed: {type(exc).__name__}.") from None
+    pins = {"ASC_AGENTS_ENABLED": "true" if agents else "false"}
+    if agents:
+        from azure.ai.projects import AIProjectClient
+        from azure.core.exceptions import AzureError
+        from azure.identity import AzureCliCredential
+        from sous_chef.telemetry import configure_safe_telemetry
+
+        configure_safe_telemetry()
+        try:
+            with (
+                AzureCliCredential() as credential,
+                AIProjectClient(
+                    endpoint=settings["ASC_FOUNDRY_PROJECT_ENDPOINT"],
+                    credential=credential,
+                    api_version="v1",
+                    retry_total=0,
+                ) as project,
+            ):
+                pins.update(release_agents(project, agents, app_principals[0]))
+        except AzureError as exc:
+            raise DeliveryError(f"Foundry agent release failed: {type(exc).__name__}.") from None
     pins["ASC_APP_WORKLOAD_PRINCIPAL_ID"] = app_principals[0]
     pins["ASC_READINESS_TIMEOUT_SECONDS"] = "10"
-    # Persist only new pins: never replace or print existing authentication/Key Vault settings.
-    az(
-        "webapp",
-        "config",
-        "appsettings",
-        "set",
-        "-g",
-        required("ASC_RESOURCE_GROUP"),
-        "-n",
-        required("ASC_APP_NAME"),
-        "--settings",
-        *(f"{name}={value}" for name, value in pins.items()),
-    )
     archive = Path(os.environ["RUNNER_TEMP"]) / "asc-dev.zip"
     package(sha, archive)
     try:
-        az(
+        deployment = az(
             "webapp",
             "deploy",
             "-g",
@@ -316,17 +428,52 @@ def deploy() -> None:
             "--clean",
             "true",
             "--restart",
+            "false",
+            "--async",
             "true",
             "--track-status",
-            "true",
+            "false",
         )
+        # Without runtime tracking, CLI polls the Kudu build even for an async upload.
+        if not isinstance(deployment, dict) or deployment.get("status") != 4:
+            raise DeliveryError(
+                "App Service ZIP build did not report success; runtime settings were not changed."
+            )
     finally:
         archive.unlink(missing_ok=True)
+    # Settings updates restart the app; never apply them while Oryx is building.
+    az(
+        "webapp",
+        "config",
+        "appsettings",
+        "set",
+        "-g",
+        required("ASC_RESOURCE_GROUP"),
+        "-n",
+        required("ASC_APP_NAME"),
+        "--settings",
+        *(f"{name}={value}" for name, value in pins.items()),
+    )
+    # Explicitly activate the new artifact even when the settings are unchanged.
+    az(
+        "webapp",
+        "restart",
+        "-g",
+        required("ASC_RESOURCE_GROUP"),
+        "-n",
+        required("ASC_APP_NAME"),
+        expect_json=False,
+    )
     url = f"https://{app['defaultHostName']}"
     with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
         output.write(f"url={url}\n")
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
         summary.write(f"Deployed `{sha}` to [dev]({url}). Smoke checks must pass below.\n")
+        summary.write(
+            "Agents enabled: pinned agent versions published.\n"
+            if agents
+            else "Agents disabled: app-only release; AI features remain unavailable.\n"
+        )
         for name, value in pins.items():
             if name.endswith("_AGENT_VERSION"):
                 summary.write(f"- `{name}`: `{value}`\n")
@@ -340,7 +487,10 @@ def smoke() -> None:
         def redirect_request(self, *args: Any, **kwargs: Any) -> None:
             return None
 
-    app, _ = target()
+    agents = manifest()
+    app, settings = target()
+    if settings.get("ASC_AGENTS_ENABLED") != ("true" if agents else "false"):
+        raise DeliveryError("The deployed agent feature flag does not match the reviewed manifest.")
     origin = f"https://{app['defaultHostName']}"
     opener = build_opener(NoRedirect())
     deadline = time.monotonic() + 300

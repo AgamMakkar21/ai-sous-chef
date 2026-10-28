@@ -21,6 +21,7 @@ Gateway construction requires `ASC_ADAPTER_MODE=live` and these values:
 
 | Setting | Requirement |
 | --- | --- |
+| `ASC_AGENTS_ENABLED` | Defaults to `true`; `false` explicitly blocks managed-agent construction and identity lookup |
 | `ASC_FOUNDRY_PROJECT_ENDPOINT` | Intended New Foundry project HTTPS endpoint |
 | `ASC_FOUNDRY_ORCHESTRATOR_AGENT_NAME` | Deployed Orchestrator runtime agent name |
 | `ASC_FOUNDRY_ORCHESTRATOR_AGENT_VERSION` | Explicit positive numeric version, not `latest` |
@@ -32,6 +33,13 @@ Gateway construction requires `ASC_ADAPTER_MODE=live` and these values:
 Names and versions are optional for the application scaffold, but mandatory when
 constructing this gateway. Versions are configuration pins, not discovered or
 silently upgraded at invocation time.
+
+The [staged dev release](dev-delivery.md#release-stages) currently sets
+`ASC_AGENTS_ENABLED=false` from its reviewed manifest. It deploys the backend
+without publishing agents or probing Foundry agent metadata; Cosmos and
+authentication checks remain required. The gateway refuses invocation rather
+than falling back to a direct model or fake result. A later reviewed manifest
+enables both approved agents and restores their strict readiness checks.
 
 In dev/prod, the credential factory constructs only `ManagedIdentityCredential`;
 missing identity configuration fails rather than trying developer credentials,

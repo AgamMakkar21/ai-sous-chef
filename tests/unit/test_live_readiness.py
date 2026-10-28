@@ -31,8 +31,22 @@ def settings() -> Settings:
 
 
 @pytest.mark.parametrize("failure", ["none", "cosmos", "foundry", "shared", "disabled", "pinned"])
-def test_live_probe_reads_only_metadata_and_fails_closed(failure: str) -> None:
+@pytest.mark.parametrize("session_auth", [False, True])
+def test_live_probe_reads_only_metadata_and_fails_closed(failure: str, session_auth: bool) -> None:
     config = settings()
+    if session_auth:
+        config = Settings(
+            **(
+                config.model_dump()
+                | {
+                    "auth_mode": "app_service",
+                    "auth_microsoft_tenant_id": "11111111-1111-1111-1111-111111111111",
+                    "auth_issuer": None,
+                    "auth_jwks_uri": None,
+                    "auth_client_id": None,
+                }
+            )
+        )
     if failure == "pinned":
         config = config.model_copy(
             update={
@@ -89,6 +103,65 @@ def test_live_probe_reads_only_metadata_and_fails_closed(failure: str) -> None:
 
 def test_unconfigured_live_probe_does_not_attempt_credentials() -> None:
     config = settings().model_copy(update={"foundry_orchestrator_agent_version": None})
+    with patch("sous_chef.adapters.readiness.build_async_credential") as credential:
+        with pytest.raises(DependencyUnavailable, match="incomplete"):
+            asyncio.run(LiveReadinessProbe(config).check())
+        credential.assert_not_called()
+
+
+@pytest.mark.parametrize("cosmos_failure", [False, True])
+@pytest.mark.parametrize("stale_agent_pins", [False, True])
+def test_app_only_probe_keeps_cosmos_checks_without_contacting_foundry(
+    cosmos_failure: bool, stale_agent_pins: bool
+) -> None:
+    values = settings().model_dump() | {"agents_enabled": False}
+    if not stale_agent_pins:
+        values.update(
+            {
+                "foundry_project_endpoint": None,
+                "foundry_orchestrator_deployment": None,
+                "foundry_recipe_nutrition_deployment": None,
+                "foundry_extraction_deployment": None,
+                "foundry_orchestrator_agent_name": None,
+                "foundry_recipe_nutrition_agent_name": None,
+                "foundry_orchestrator_agent_version": None,
+                "foundry_recipe_nutrition_agent_version": None,
+            }
+        )
+    config = Settings(**values)
+    credential, context = AsyncMock(), AsyncMock()
+    cosmos = MagicMock()
+    context.__aenter__.return_value = cosmos
+    database = cosmos.get_database_client.return_value
+    container = database.get_container_client.return_value
+    container.read = AsyncMock()
+    if cosmos_failure:
+        container.read.side_effect = HttpResponseError("private-token")
+    with (
+        patch("sous_chef.adapters.readiness.build_async_credential", return_value=credential),
+        patch("sous_chef.adapters.readiness.CosmosClient", return_value=context),
+        patch("sous_chef.adapters.readiness.AIProjectClient") as foundry,
+    ):
+        if cosmos_failure:
+            with pytest.raises(DependencyUnavailable, match="verification failed"):
+                asyncio.run(LiveReadinessProbe(config).check())
+        else:
+            asyncio.run(LiveReadinessProbe(config).check())
+            assert [call.args[0] for call in database.get_container_client.call_args_list] == [
+                "Users",
+                "ChatHistory",
+                "RecipeHistory",
+            ]
+        foundry.assert_not_called()
+        container.read_item.assert_not_called()
+        container.query_items.assert_not_called()
+        context.__aexit__.assert_awaited()
+        credential.__aexit__.assert_awaited()
+
+
+@pytest.mark.parametrize("missing", ["auth_issuer", "app_workload_principal_id"])
+def test_app_only_still_requires_authentication_and_workload_configuration(missing: str) -> None:
+    config = settings().model_copy(update={"agents_enabled": False, missing: None})
     with patch("sous_chef.adapters.readiness.build_async_credential") as credential:
         with pytest.raises(DependencyUnavailable, match="incomplete"):
             asyncio.run(LiveReadinessProbe(config).check())

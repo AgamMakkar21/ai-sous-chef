@@ -29,8 +29,11 @@ class Settings(BaseSettings):
 
     environment: Literal["local", "dev", "prod"]
     adapter_mode: Literal["local", "live"]
+    agents_enabled: bool = True
     readiness_timeout_seconds: float = Field(default=2, gt=0, le=10, allow_inf_nan=False)
     static_dir: Path = Path(__file__).parent / "static"
+    auth_mode: Literal["external_id", "app_service"] = "external_id"
+    auth_microsoft_tenant_id: str | None = Field(default=None, pattern=_GUID, repr=False)
     auth_issuer: HttpUrl | None = Field(default=None, repr=False)
     auth_jwks_uri: HttpUrl | None = Field(default=None, repr=False)
     auth_client_id: str | None = Field(
@@ -102,7 +105,35 @@ class Settings(BaseSettings):
                     "ASC_PAGINATION_KEY must be a generated Fernet key; see docs/conversations.md."
                 ) from None
         auth_values = (self.auth_issuer, self.auth_jwks_uri, self.auth_client_id, self.auth_origin)
-        if any(value is not None for value in auth_values):
+        if self.auth_mode == "app_service":
+            if self.auth_origin is None or self.environment == "local":
+                raise ConfigurationError(
+                    "App Service authentication requires a hosted environment and ASC_AUTH_ORIGIN."
+                )
+            if self.auth_microsoft_tenant_id is None:
+                raise ConfigurationError(
+                    "Set ASC_AUTH_MICROSOFT_TENANT_ID to the approved Microsoft sign-in tenant."
+                )
+            if any(value is not None for value in auth_values[:3]):
+                raise ConfigurationError(
+                    "Remove ASC_AUTH_ISSUER, ASC_AUTH_JWKS_URI and ASC_AUTH_CLIENT_ID "
+                    "when selecting ASC_AUTH_MODE=app_service."
+                )
+            origin = self.auth_origin
+            if (
+                origin.scheme != "https"
+                or origin.port != 443
+                or not (origin.host or "").endswith(".azurewebsites.net")
+                or origin.path != "/"
+                or origin.username is not None
+                or origin.password is not None
+                or origin.query is not None
+                or origin.fragment is not None
+            ):
+                raise ConfigurationError(
+                    "App Service auth requires the app's canonical HTTPS azurewebsites.net origin."
+                )
+        elif any(value is not None for value in auth_values):
             if any(value is None for value in auth_values):
                 raise ConfigurationError(
                     "Set ASC_AUTH_ISSUER, ASC_AUTH_JWKS_URI, "
@@ -136,24 +167,26 @@ class Settings(BaseSettings):
                 "Use live adapters for dev and prod."
             )
         if self.adapter_mode == "live":
-            missing = [
-                name
-                for name, value in (
-                    ("ASC_COSMOS_ENDPOINT", self.cosmos_endpoint),
-                    ("ASC_COSMOS_DATABASE", self.cosmos_database),
-                    ("ASC_FOUNDRY_PROJECT_ENDPOINT", self.foundry_project_endpoint),
-                    (
-                        "ASC_FOUNDRY_ORCHESTRATOR_DEPLOYMENT",
-                        self.foundry_orchestrator_deployment,
-                    ),
-                    (
-                        "ASC_FOUNDRY_RECIPE_NUTRITION_DEPLOYMENT",
-                        self.foundry_recipe_nutrition_deployment,
-                    ),
-                    ("ASC_FOUNDRY_EXTRACTION_DEPLOYMENT", self.foundry_extraction_deployment),
-                )
-                if value is None
+            required = [
+                ("ASC_COSMOS_ENDPOINT", self.cosmos_endpoint),
+                ("ASC_COSMOS_DATABASE", self.cosmos_database),
             ]
+            if self.agents_enabled:
+                required.extend(
+                    [
+                        ("ASC_FOUNDRY_PROJECT_ENDPOINT", self.foundry_project_endpoint),
+                        (
+                            "ASC_FOUNDRY_ORCHESTRATOR_DEPLOYMENT",
+                            self.foundry_orchestrator_deployment,
+                        ),
+                        (
+                            "ASC_FOUNDRY_RECIPE_NUTRITION_DEPLOYMENT",
+                            self.foundry_recipe_nutrition_deployment,
+                        ),
+                        ("ASC_FOUNDRY_EXTRACTION_DEPLOYMENT", self.foundry_extraction_deployment),
+                    ]
+                )
+            missing = [name for name, value in required if value is None]
             if missing:
                 raise ConfigurationError("Set required live settings: " + ", ".join(missing) + ".")
         pinned = [

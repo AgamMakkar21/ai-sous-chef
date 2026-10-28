@@ -42,7 +42,20 @@ param authIssuer string
 param authJwksUri string
 param authClientId string
 param authOrigin string
-param authSecretUri string
+@allowed(['external_id', 'app_service'])
+param authMode string = 'external_id'
+param socialAuth object = {}
+
+var authSettings = authMode == 'app_service'
+  ? [
+      { name: 'ASC_AUTH_MICROSOFT_TENANT_ID', value: socialAuth.tenantId }
+      { name: 'WEBSITE_AUTH_AAD_ALLOWED_TENANTS', value: socialAuth.tenantId }
+    ]
+  : [
+      { name: 'ASC_AUTH_ISSUER', value: authIssuer }
+      { name: 'ASC_AUTH_JWKS_URI', value: authJwksUri }
+      { name: 'ASC_AUTH_CLIENT_ID', value: authClientId }
+    ]
 
 var appName = '${namePrefix}-web-${take(uniqueString(resourceGroup().id), 6)}'
 var pythonVersion = '3.12'
@@ -89,7 +102,6 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
     httpsOnly: true
     clientAffinityEnabled: false
     publicNetworkAccess: 'Enabled'
-    keyVaultReferenceIdentity: identity.id
     siteConfig: {
       linuxFxVersion: 'PYTHON|${pythonVersion}'
       appCommandLine: startupCommand
@@ -98,97 +110,73 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
       minTlsVersion: '1.2'
       ftpsState: 'Disabled'
       healthCheckPath: '/health'
-      appSettings: [
-        { name: 'ASC_ENVIRONMENT', value: environment }
-        { name: 'ASC_ADAPTER_MODE', value: 'live' }
-        { name: 'ASC_AUTH_ISSUER', value: authIssuer }
-        { name: 'ASC_AUTH_JWKS_URI', value: authJwksUri }
-        { name: 'ASC_AUTH_CLIENT_ID', value: authClientId }
-        { name: 'ASC_AUTH_ORIGIN', value: authOrigin }
-        {
-          name: 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET'
-          value: '@Microsoft.KeyVault(SecretUri=${authSecretUri})'
-        }
-        { name: 'ASC_COSMOS_ENDPOINT', value: cosmosEndpoint }
-        { name: 'ASC_COSMOS_DATABASE', value: cosmosDatabase }
-        { name: 'ASC_FOUNDRY_PROJECT_ENDPOINT', value: foundryProjectEndpoint }
-        { name: 'ASC_FOUNDRY_ORCHESTRATOR_DEPLOYMENT', value: foundryDeploymentNames.orchestrator }
-        {
-          name: 'ASC_FOUNDRY_RECIPE_NUTRITION_DEPLOYMENT'
-          value: foundryDeploymentNames.recipeNutrition
-        }
-
-        { name: 'ASC_FOUNDRY_EXTRACTION_DEPLOYMENT', value: foundryDeploymentNames.extraction }
-        { name: 'AZURE_CLIENT_ID', value: identity.properties.clientId }
-        { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
-        { name: 'ApplicationInsightsAgent_EXTENSION_VERSION', value: 'disabled' }
-        { name: 'AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED', value: 'false' }
-        { name: 'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT', value: 'false' }
-        { name: 'OTEL_SDK_DISABLED', value: 'true' }
-        { name: 'OTEL_TRACES_EXPORTER', value: 'none' }
-        { name: 'OTEL_METRICS_EXPORTER', value: 'none' }
-        { name: 'OTEL_LOGS_EXPORTER', value: 'none' }
-        { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'true' }
-      ]
     }
   }
 }
 
-resource authentication 'Microsoft.Web/sites/config@2024-04-01' = {
-  parent: app
-  name: 'authsettingsV2'
-  properties: {
-    platform: {
-      enabled: true
-      runtimeVersion: '~1'
-    }
-    globalValidation: {
-      requireAuthentication: true
-      unauthenticatedClientAction: 'Return401'
-      excludedPaths: [
-        '/health'
-        '/ready'
-        '/auth/login'
-        '/auth/logout'
-        '/auth/signed-out'
-      ]
-    }
-    httpSettings: {
-      requireHttps: true
-    }
-    identityProviders: {
-      azureActiveDirectory: {
-        enabled: true
-        registration: {
-          clientId: authClientId
-          clientSecretSettingName: 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET'
-          openIdIssuer: authIssuer
-        }
-        validation: {
-          allowedAudiences: [
-            authClientId
-          ]
-        }
-        login: {
-          loginParameters: [
-            'scope=openid profile email'
-          ]
-        }
-      }
-    }
-    login: {
-      preserveUrlFragmentsForLogins: false
-      allowedExternalRedirectUrls: []
-      cookieExpiration: {
-        convention: 'FixedTime'
-        timeToExpiration: '01:00:00'
-      }
-      tokenStore: {
-        enabled: true
-        tokenRefreshExtensionHours: 0
-      }
-    }
+var baseAppSettings = [
+  { name: 'ASC_ENVIRONMENT', value: environment }
+  { name: 'ASC_ADAPTER_MODE', value: 'live' }
+  { name: 'ASC_AUTH_MODE', value: authMode }
+  { name: 'ASC_AUTH_ORIGIN', value: authOrigin }
+  { name: 'ASC_COSMOS_ENDPOINT', value: cosmosEndpoint }
+  { name: 'ASC_COSMOS_DATABASE', value: cosmosDatabase }
+  { name: 'ASC_FOUNDRY_PROJECT_ENDPOINT', value: foundryProjectEndpoint }
+  { name: 'ASC_FOUNDRY_ORCHESTRATOR_DEPLOYMENT', value: foundryDeploymentNames.orchestrator }
+  {
+    name: 'ASC_FOUNDRY_RECIPE_NUTRITION_DEPLOYMENT'
+    value: foundryDeploymentNames.recipeNutrition
   }
+
+  { name: 'ASC_FOUNDRY_EXTRACTION_DEPLOYMENT', value: foundryDeploymentNames.extraction }
+  { name: 'AZURE_CLIENT_ID', value: identity.properties.clientId }
+  { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
+  { name: 'ApplicationInsightsAgent_EXTENSION_VERSION', value: 'disabled' }
+  { name: 'AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED', value: 'false' }
+  { name: 'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT', value: 'false' }
+  { name: 'OTEL_SDK_DISABLED', value: 'true' }
+  { name: 'OTEL_TRACES_EXPORTER', value: 'none' }
+  { name: 'OTEL_METRICS_EXPORTER', value: 'none' }
+  { name: 'OTEL_LOGS_EXPORTER', value: 'none' }
+  { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'true' }
+]
+
+var retainedSettings = toObject(
+  filter(
+    items(list('${app.id}/config/appsettings', '2024-04-01').properties),
+    item => !contains([
+      'ASC_AUTH_ISSUER'
+      'ASC_AUTH_JWKS_URI'
+      'ASC_AUTH_CLIENT_ID'
+      'ASC_AUTH_MICROSOFT_TENANT_ID'
+      'WEBSITE_AUTH_AAD_ALLOWED_TENANTS'
+    ], item.key)
+  ),
+  item => item.key,
+  item => item.value
+)
+
+module appSettings 'app-settings.bicep' = {
+  name: '${namePrefix}-settings'
+  params: {
+    appName: app.name
+    settings: union(
+      retainedSettings,
+      toObject(concat(baseAppSettings, authSettings), item => item.name, item => item.value)
+    )
+  }
+}
+
+module authentication 'auth-policy.bicep' = {
+  name: '${namePrefix}-authentication'
+  params: {
+    appName: app.name
+    authMode: authMode
+    authIssuer: authIssuer
+    authClientId: authClientId
+    socialAuth: socialAuth
+  }
+  dependsOn: [appSettings]
 }
 
 // Deployments use Entra tokens (az webapp deploy), not shared publishing passwords.

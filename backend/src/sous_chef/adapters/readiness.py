@@ -42,9 +42,16 @@ class LiveReadinessProbe:
         )
         if (
             settings.cosmos_database is None
-            or settings.auth_issuer is None
+            or (
+                settings.auth_origin is None
+                if settings.auth_mode == "app_service"
+                else settings.auth_issuer is None
+            )
             or settings.app_workload_principal_id is None
-            or any(not name or not version for _, name, version, _ in targets)
+            or (
+                settings.agents_enabled
+                and any(not name or not version for _, name, version, _ in targets)
+            )
         ):
             raise DependencyUnavailable("Live dependency configuration is incomplete.")
         try:
@@ -55,30 +62,31 @@ class LiveReadinessProbe:
                     database = cosmos.get_database_client(settings.cosmos_database)
                     for container_name in ("Users", "ChatHistory", "RecipeHistory"):
                         await database.get_container_client(container_name).read()
-                async with AIProjectClient(
-                    endpoint=str(settings.foundry_project_endpoint),
-                    credential=credential,
-                    api_version="v1",
-                    retry_total=0,
-                ) as project:
-                    identities = []
-                    for role, name, version, expected in targets:
-                        assert name is not None and version is not None
-                        details = await project.agents.get(name)
-                        instance = details.instance_identity
-                        if (
-                            details.state != "enabled"
-                            or instance is None
-                            or (
-                                expected is not None
-                                and expected.lower() != instance.principal_id.lower()
+                if settings.agents_enabled:
+                    async with AIProjectClient(
+                        endpoint=str(settings.foundry_project_endpoint),
+                        credential=credential,
+                        api_version="v1",
+                        retry_total=0,
+                    ) as project:
+                        identities = []
+                        for role, name, version, expected in targets:
+                            assert name is not None and version is not None
+                            details = await project.agents.get(name)
+                            instance = details.instance_identity
+                            if (
+                                details.state != "enabled"
+                                or instance is None
+                                or (
+                                    expected is not None
+                                    and expected.lower() != instance.principal_id.lower()
+                                )
+                            ):
+                                raise DependencyUnavailable("Agent identity verification failed.")
+                            identities.append(
+                                AgentIdentity(role, name, instance.principal_id, instance.client_id)
                             )
-                        ):
-                            raise DependencyUnavailable("Agent identity verification failed.")
-                        identities.append(
-                            AgentIdentity(role, name, instance.principal_id, instance.client_id)
-                        )
-                        await project.agents.get_version(name, version)
-                    verify_distinct(identities, settings.app_workload_principal_id)
+                            await project.agents.get_version(name, version)
+                        verify_distinct(identities, settings.app_workload_principal_id)
         except (AzureError, IdentityError, ConfigurationError):
             raise DependencyUnavailable("Live dependency verification failed.") from None

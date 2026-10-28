@@ -12,7 +12,8 @@ other product endpoints, agent instructions and the React UI remain separate wor
 See [profile API setup and usage](docs/profiles.md) and
 [conversation setup and HTTP contracts](docs/conversations.md) for the persistence APIs.
 See [consumer sign-in setup](docs/authentication.md) for the
-External ID tenant, App Service configuration and signed-token local testing.
+Google/GitHub/single-tenant Microsoft App Service sign-in, the original External
+ID option, owner setup and signed-token local testing.
 
 Use **Ubuntu 24.04 in WSL 2**, CPython **3.12**, and a checkout in the Linux
 filesystem. Windows supplies the editor and browser. Do not share a virtual
@@ -86,12 +87,13 @@ settings with field names and setup guidance, never the rejected values.
 | --- | --- |
 | `ASC_ENVIRONMENT` | Required explicit environment selection |
 | `ASC_ADAPTER_MODE` | Required `local` or `live`; local doubles are forbidden in dev/prod |
+| `ASC_AGENTS_ENABLED` | Default `true`; staged dev delivery sets `false` to disable managed agents until their tools are ready |
 | `ASC_READINESS_TIMEOUT_SECONDS` | Positive finite readiness deadline, at most 10 seconds; default 2 |
 | `ASC_STATIC_DIR` | Optional frontend build directory; default `backend/src/sous_chef/static` |
 | `ASC_COSMOS_ENDPOINT` | Required in live mode; HTTPS URL without credentials or query parameters |
 | `ASC_COSMOS_DATABASE` | Required nonempty database name in live mode |
 | `ASC_PAGINATION_KEY` | Protected Fernet key required for conversation APIs; see [setup](docs/conversations.md) |
-| `ASC_FOUNDRY_PROJECT_ENDPOINT` | Required in live mode; HTTPS URL without credentials or query parameters |
+| `ASC_FOUNDRY_PROJECT_ENDPOINT` | Required in live mode when agents are enabled; HTTPS URL without credentials or query parameters |
 
 `.env.local.example`, `.env.dev.example` and `.env.prod.example` contain no live
 endpoints or secrets. Empty live values must be supplied by deployment configuration.
@@ -105,11 +107,15 @@ dependency probe. An unavailable dependency or timeout returns a generic 503
 Errors include an opaque `traceId`. Logs do not include exception contents,
 settings, endpoints or user data. API docs are disabled outside local mode.
 
-Live readiness reads Cosmos container metadata and both configured, explicitly
-pinned Foundry agent versions with the workload identity. It verifies separate,
+Live readiness reads Cosmos container metadata and, when agents are enabled,
+both configured, explicitly pinned Foundry agent versions with the workload identity. It verifies separate,
 enabled agent identities without reading user documents or invoking models/tools.
-Missing agent pins, workload principal ID or authentication configuration remain
-**not ready**. Valid configuration alone is not proof of connectivity. Automated
+Missing agent pins in an agent-enabled release, workload principal ID or
+authentication configuration remain **not ready**. An explicitly app-only dev
+release skips Foundry agent metadata and refuses managed-agent execution; it does
+not skip Cosmos/authentication checks or return fake AI results. The same
+[reviewed workflow](docs/dev-delivery.md#release-stages) enables pinned agent
+releases later. Valid configuration alone is not proof of connectivity. Automated
 dev packages also report their source commit in `X-ASC-Commit` on successful
 health/readiness responses; the JSON bodies are unchanged.
 

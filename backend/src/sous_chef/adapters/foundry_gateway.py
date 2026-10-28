@@ -74,6 +74,8 @@ class FoundryGateway:
     def __init__(self, settings: Settings, *, client_factory: ClientFactory | None = None) -> None:
         if settings.adapter_mode != "live":
             raise ConfigurationError("The Foundry gateway requires ASC_ADAPTER_MODE=live.")
+        if not settings.agents_enabled:
+            raise ConfigurationError("Agent execution is disabled for this release.")
         required = {
             "ASC_FOUNDRY_PROJECT_ENDPOINT": settings.foundry_project_endpoint,
             "ASC_FOUNDRY_ORCHESTRATOR_AGENT_NAME": settings.foundry_orchestrator_agent_name,

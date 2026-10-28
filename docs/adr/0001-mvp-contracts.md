@@ -35,12 +35,12 @@ precise implementation choices.
 
 The authenticated browser communicates with one Python Azure App Service for all
 product data. The same App Service serves the frontend and API. Browser redirects
-to Microsoft Entra External ID for authentication are not direct product-data
+to the configured login providers for authentication are not direct product-data
 access. Never give the browser Cosmos, Foundry, or USDA credentials.
 
 | Component | Required responsibility |
 | --- | --- |
-| Microsoft Entra External ID and App Service authentication | Consumer identity; backend derives trusted user scope |
+| App Service authentication with Google, GitHub and single-tenant Microsoft Entra ID; retained External ID mode | Browser identity; backend verifies the session/token and derives trusted user scope |
 | Python Azure App Service | Browser boundary, authorization, CRUD, frontend assets, context construction, agent invocation, validation, persistence |
 | Cosmos DB for NoSQL `Users` | One bounded current-state profile per user, including groceries and separate explicit/learned preferences |
 | Cosmos DB for NoSQL `ChatHistory` | Separate conversation metadata, bounded complete-exchange turn documents, and send-operation records; never a lifetime array in `Users` or one ever-growing conversation document |
@@ -143,6 +143,121 @@ extraction traces to their feedback revision and Function identity. Identity aud
 logs complement, rather than replace, agent/tool execution traces. Do not log
 tokens or raw user content; unavailable attribution is an explicit verification
 gap, not an inferred principal. See Microsoft's [agent identity guidance](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/agent-identity).
+
+### Browser identity and OAuth credentials (MVP decision)
+
+Dev uses explicit `ASC_AUTH_MODE=app_service`: Google, GitHub OAuth and the
+existing organization's **single-tenant Microsoft Entra ID** registration.
+Creating an External ID customer tenant is not a prerequisite for this path.
+The original `external_id` mode remains the default for environments configured
+for its consumer tenant and signed-JWT verification; never silently fall back
+between modes.
+
+The Microsoft registration uses `AzureADMyOrg`, a tenant-specific
+`https://login.microsoftonline.com/<tenant-id>/v2.0` issuer, the same backend
+`ASC_AUTH_MICROSOFT_TENANT_ID` and platform tenant allowlist, and **This application
+only** client restriction. Organization policy rejected the proposed
+`AzureADandPersonalMicrosoftAccount` audience. Do not switch to `common`,
+multitenant or personal-Microsoft sign-in to bypass that policy. Google and
+GitHub remain available to personal accounts, subject to their registration,
+consent and organization policies.
+
+App Service Easy Auth owns provider callbacks and its session cookie. The backend
+independently verifies that cookie with `/.auth/me` at the configured canonical
+HTTPS app origin, never a request-supplied host. It accepts only the three approved
+providers, rejects explicit bearer credentials in this mode, and does not trust
+client-supplied principal headers. Microsoft sessions additionally require the
+approved tenant and issuer. Derive user scope from the stable provider subject,
+app origin and provider namespace, including Microsoft's tenant; never link
+accounts by matching email. Existing ownership checks and cookie-mutation
+CSRF/Origin checks remain mandatory.
+
+Require authentication and HTTPS, return 401 for anonymous protected requests,
+use fixed one-hour sessions with no refresh grace, disable unused providers,
+and allow no external post-login/logout redirects. Only the exact health,
+readiness and login/logout wrapper paths are public. Session-service outages
+fail closed rather than creating a local authentication bypass.
+
+**OAuth client-secret storage exception:** store the three provider secret
+**values directly in protected App Service environment settings**:
+`MICROSOFT_PROVIDER_AUTHENTICATION_SECRET`,
+`GOOGLE_PROVIDER_AUTHENTICATION_SECRET` and
+`GITHUB_PROVIDER_AUTHENTICATION_SECRET`. Easy Auth references these setting names;
+the backend does not need to read the credentials. This exception is for OAuth
+provider credentials, not Cosmos/Foundry keys or deployment passwords.
+Service-to-service access continues to use managed identities and GitHub OIDC.
+
+Key Vault is **not an MVP authentication prerequisite**. The attempted dev vault
+was provisioned, but organization policy `KeyVault_PublicNetwork_Modify` under
+`MCAPSGovDeployPolicies` disabled public access. Secret creation failed with
+`ForbiddenByConnection`; operator Secrets Officer assignments did not solve the
+network restriction. Private endpoints, DNS and operator/App Service private
+connectivity are outside this change. Use the approved App Service storage
+decision instead of changing or bypassing that network policy. The existing
+vault and its role assignments remain unused and are not automatically deleted;
+no OAuth credentials were migrated there by this implementation.
+
+The environment/application owner enters and rotates each secret in the Azure
+portal, records its expiry/rotation owner without recording its value, verifies
+fresh login, then revokes the old credential. Never put secret values in source,
+parameter files, `.env` files, GitHub variables, commands, prompts, PRs or logs.
+Foundation and auth-only templates preserve existing provider settings; neither
+accepts secret values or Secret URIs. A new app requires owner-entered credentials
+before login or release acceptance. The delivery guard rejects missing/blank
+credentials and Key Vault references without printing their values.
+The templates read existing settings at the parent deployment scope and pass
+the merged settings to an internal nested deployment as a secure object; do not
+read and write the same app-settings resource in one ARM resource expression.
+
+App Service encrypts settings at rest, but this is not Key Vault's separately
+scoped secret-read boundary: identities able to read app settings can read these
+credentials. That includes the app-scoped Website Contributor deployment
+identity. Keep its OIDC subject/environment and reviewed-merge gate restricted;
+limit operator access and never emit app settings or token-bearing auth responses
+to deployment logs. Do not apply read/merge/write settings deployments concurrently.
+
+Provider registrations and the dev authentication policy/runtime settings were
+configured on 2026-10-16. The matching backend change still requires reviewed
+deployment and live sign-in, sign-out, expiry, CSRF and
+cross-user isolation acceptance for all three providers; registration presence
+and offline checks alone do not establish completion. See
+[authentication setup and acceptance](../authentication.md).
+
+### Staged dev delivery while agent tools are unfinished
+
+The 2026-10-16 rollout decision permits reviewed GitHub merges to deploy the
+backend/authentication and available non-AI APIs before the interactive agents
+and their tool integrations are complete. This is an **app-only release**, not
+full MVP or full ASC-59 acceptance.
+
+App Service source builds must finish before restart-triggering release settings
+are applied. Delivery waits for terminal Kudu build success, then updates pins,
+explicitly restarts the app and requires the exact-commit/auth/Cosmos smoke.
+Asynchronous upload acceptance is not deployment success. This ordering corrects
+the 2026-10-16 startup failure (`No module named uvicorn`) when a restart raced
+with an unfinished Oryx build; it does not bypass readiness or guarantee rollback
+on this single-slot dev app.
+Successful no-output operations such as the Azure CLI restart are explicitly
+handled without JSON parsing; structured build/read results remain mandatory,
+and command failures still stop delivery.
+
+`deploy/agents.dev.json` schema version 2 explicitly controls this boundary.
+With `agents_enabled: false`, `agents` must be empty. Delivery skips agent
+publication and sets `ASC_AGENTS_ENABLED=false`; the managed-agent gateway and
+identity lookup reject execution even if stale agent pins remain. Readiness
+still checks authentication configuration, workload configuration and Cosmos
+container access, but does not contact Foundry agents. No local data doubles,
+model-only AI fallback, fake nutrition or successful placeholder output is added.
+This switch does not delete existing Foundry objects or stop separate workloads.
+
+When the approved agent definitions, required tools and distinct Entra identities
+are ready, a peer-reviewed PR sets `agents_enabled: true` and supplies both
+explicit source name/version pins. The same workflow then publishes versions,
+sets `ASC_AGENTS_ENABLED=true` and restores strict agent readiness. Missing
+agents, failed publication or invalid configuration fail the release; they never
+implicitly select app-only mode. Runtime settings default to agents enabled
+outside an explicit staged release, and smoke checks require the deployed flag
+to match the reviewed manifest. Production promotion remains separately approved.
 
 ### Agent memory and the diagram's read boundary
 
