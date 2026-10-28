@@ -6,14 +6,17 @@ feedback-based personalization.
 ## Local backend
 
 The scaffold runs a FastAPI backend with offline readiness doubles and fail-closed
-consumer authentication. Profile/onboarding APIs, conversation persistence APIs,
-shared Cosmos access and the managed-agent gateway are available; chat execution,
-other product endpoints, agent instructions and the React UI remain separate work.
+consumer authentication. Profile/onboarding, grocery inventory and conversation
+persistence APIs, shared Cosmos access and the managed-agent gateway are available.
+Chat execution, other product endpoints, agent instructions and the React UI
+remain separate work.
 See [profile API setup and usage](docs/profiles.md) and
 [conversation setup and HTTP contracts](docs/conversations.md) for the persistence APIs.
 See [consumer sign-in setup](docs/authentication.md) for the
 Google/GitHub/single-tenant Microsoft App Service sign-in, the original External
 ID option, owner setup and signed-token local testing.
+See [grocery inventory APIs](docs/groceries.md) for adding, editing and removing
+owned groceries without AI calls.
 
 Use **Ubuntu 24.04 in WSL 2**, CPython **3.12**, and a checkout in the Linux
 filesystem. Windows supplies the editor and browser. Do not share a virtual

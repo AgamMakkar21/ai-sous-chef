@@ -9,6 +9,7 @@ from starlette.exceptions import HTTPException
 from sous_chef.domain.authorization import OwnedResourceNotFound
 from sous_chef.domain.conversations import IdempotencyConflict, InvalidCursor
 from sous_chef.domain.cosmos import CosmosError, CosmosFailure
+from sous_chef.domain.groceries import GROCERY_FIELDS, DuplicateGrocery, GroceryLimitReached
 from sous_chef.domain.profiles import PREFERENCE_FIELDS, OnboardingRequired
 from sous_chef.settings import ConfigurationError
 from sous_chef.telemetry import ErrorCategory, error_category, new_trace_id, trace_id
@@ -39,6 +40,26 @@ def problem_response(
 
 
 def register_problem_handlers(app: FastAPI) -> None:
+    @app.exception_handler(DuplicateGrocery)
+    async def duplicate_grocery(_request: Request, exc: DuplicateGrocery) -> JSONResponse:
+        return problem_response(
+            409,
+            "duplicate_grocery",
+            "Grocery already exists",
+            "A grocery with this name and unit already exists.",
+            errors=[{"field": "name", "code": "duplicate", "groceryId": str(exc.grocery_id)}],
+        )
+
+    @app.exception_handler(GroceryLimitReached)
+    async def grocery_limit(_request: Request, _exc: GroceryLimitReached) -> JSONResponse:
+        return problem_response(
+            422,
+            "grocery_limit_reached",
+            "Inventory is full",
+            "Remove an existing grocery before adding another.",
+            errors=[{"field": "groceries", "code": "too_many_items"}],
+        )
+
     @app.exception_handler(InvalidCursor)
     async def invalid_cursor(_request: Request, _exc: InvalidCursor) -> JSONResponse:
         return problem_response(
@@ -134,7 +155,12 @@ def register_problem_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(_request: Request, exc: RequestValidationError) -> JSONResponse:
-        if _request.url.path in {"/api/v1/me/onboarding", "/api/v1/me/preferences"} and any(
+        grocery = _request.url.path == "/api/v1/groceries" or _request.url.path.startswith(
+            "/api/v1/groceries/"
+        )
+        if (
+            grocery or _request.url.path in {"/api/v1/me/onboarding", "/api/v1/me/preferences"}
+        ) and any(
             error["type"] == "missing" and error["loc"] == ("header", "If-Match")
             for error in exc.errors()
         ):
@@ -142,15 +168,19 @@ def register_problem_handlers(app: FastAPI) -> None:
                 428,
                 "precondition_required",
                 "A current revision is required",
-                "Retrieve the profile and send its ETag in If-Match.",
+                "Retrieve the profile or grocery list and send its ETag in If-Match.",
             )
         malformed_json = any(error["type"] == "json_invalid" for error in exc.errors())
         fields: list[dict[str, str]] = []
-        if not malformed_json and _request.url.path in {
-            "/api/v1/me",
-            "/api/v1/me/onboarding",
-            "/api/v1/me/preferences",
-        }:
+        if not malformed_json and (
+            grocery
+            or _request.url.path
+            in {
+                "/api/v1/me",
+                "/api/v1/me/onboarding",
+                "/api/v1/me/preferences",
+            }
+        ):
             codes = {
                 "missing": "required",
                 "extra_forbidden": "unknown_field",
@@ -159,23 +189,28 @@ def register_problem_handlers(app: FastAPI) -> None:
                 "too_long": "too_many_items",
                 "greater_than_equal": "out_of_range",
                 "less_than_equal": "out_of_range",
+                "greater_than": "must_be_positive",
+                "decimal_max_places": "too_many_decimal_places",
                 "unsupported_safety_constraint": "unsupported_constraint",
                 "null_not_allowed": "null_not_allowed",
                 "empty_update": "empty_update",
             }
+            allowed_fields = GROCERY_FIELDS if grocery else PREFERENCE_FIELDS
             for error in exc.errors():
                 location = error["loc"]
-                field = "preferences" if location == ("body",) else "request"
-                if (
-                    len(location) >= 2
-                    and location[0] == "body"
-                    and location[1] in PREFERENCE_FIELDS
-                ):
+                field = (
+                    ("groceries" if grocery else "preferences")
+                    if location == ("body",)
+                    else "request"
+                )
+                if len(location) >= 2 and location[0] == "body" and location[1] in allowed_fields:
                     field = str(location[1])
                     if len(location) == 3 and type(location[2]) is int:
                         field += "." + str(location[2])
                 elif location == ("header", "If-Match"):
                     field = "If-Match"
+                elif grocery and location == ("path", "grocery_id"):
+                    field = "groceryId"
                 entry = {"field": field, "code": codes.get(error["type"], "invalid_value")}
                 if entry not in fields:
                     fields.append(entry)

@@ -138,7 +138,7 @@ none accepts a `userId` route/body field.
 | `PATCH /me/preferences` | Update specified explicit fields only; no AI or learned writes |
 | `GET /groceries` | Current bounded rows and collection ETag |
 | `POST /groceries` | Add name, optional quantity/unit; duplicate check and collection ETag |
-| `PATCH /groceries/{groceryId}` | Set an explicit positive quantity and/or selected unit/name, conditionally |
+| `PATCH /groceries/{groceryId}` | Set a positive quantity or explicit unknown (`null`), and/or selected unit/name, conditionally |
 | `DELETE /groceries/{groceryId}` | Remove a confirmed row conditionally |
 | `POST /conversations` | Create an empty owned conversation |
 | `GET /conversations` | Paginated summaries |
@@ -167,6 +167,11 @@ arrays when appropriate. Only that full validation marks onboarding complete.
 or explicitly null fields, and preserves omitted fields. Flavors use `likes`
 and `dislikes`; spice uses the separate enumerated field.
 Neither mutation replaces groceries, learned state or unrelated profile fields.
+
+The [implemented grocery APIs](../groceries.md) use the same profile revision.
+Their +/- controls submit conditional absolute quantity updates; zero/negative
+amounts are rejected and removal requires a separate conditional DELETE.
+Duplicate errors identify the existing owned row without combining quantities.
 
 Sending text normally returns 200 with the completed turn only after the validated
 assistant response is persisted. If a duplicate key finds an existing pending send, return 202
