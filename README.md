@@ -1,5 +1,9 @@
 # ai-sous-chef
 
+The [feedback Functions host](docs/feedback-host.md) is deployed independently
+from the web app using the reviewed dev workflow. This infrastructure slice adds
+host health and keyless connections only, not feedback processing or learning.
+
 AI Sous Chef combines current groceries, grounded recipe generation, and
 feedback-based personalization.
 
@@ -225,7 +229,11 @@ and conversation-scoped turn retrieval. Creation is durably idempotent, and
 encrypted cursors preserve user scope, ordering and the first-page upper bound.
 Set the protected `ASC_PAGINATION_KEY` alongside the existing live Cosmos/auth
 configuration. See [conversation setup and HTTP contracts](docs/conversations.md).
-No chat sends, agent execution or transcript copying are implemented here.
+ASC-22 adds durable chat sends, operation inspection and explicit failed-turn
+retries behind an injected execution boundary. No production executor or fake
+success fallback is installed: new sends return a safe 503 until the real
+pipeline is wired in ASC-38. Completed sends remain replayable without an executor.
+See the [send/retry contract](docs/conversations.md#durable-chat-sends-asc-22).
 
 ## Recipe corpus ingestion
 

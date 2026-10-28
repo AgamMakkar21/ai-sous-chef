@@ -530,12 +530,215 @@ def smoke() -> None:
     raise DeliveryError(f"Dev smoke failed at {last_failure} after five minutes; inspect dev logs.")
 
 
+def worker_target() -> dict[str, Any]:
+    dev_event()
+    group = required("ASC_RESOURCE_GROUP")
+    worker: dict[str, Any] = az(
+        "webapp", "show", "-g", group, "-n", required("ASC_FUNCTION_APP_NAME")
+    )
+    web = az("webapp", "show", "-g", group, "-n", required("ASC_APP_NAME"))
+    for resource in (worker, web):
+        if (
+            resource.get("tags", {}).get("environment") != "dev"
+            or resource.get("tags", {}).get("project") != "ai-sous-chef"
+        ):
+            raise DeliveryError("Worker and web targets must be tagged ai-sous-chef/dev.")
+    if (
+        worker["id"].lower() == web["id"].lower()
+        or "functionapp" not in worker.get("kind", "").lower().split(",")
+        or worker.get("httpsOnly") is not True
+        or not re.fullmatch(
+            r"[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*\.azurewebsites\.net",
+            worker.get("defaultHostName", ""),
+        )
+    ):
+        raise DeliveryError("Select a separate HTTPS Function App with an Azure hostname.")
+    identities = worker.get("identity", {}).get("userAssignedIdentities", {})
+    web_identities = web.get("identity", {}).get("userAssignedIdentities", {})
+    if (
+        worker.get("identity", {}).get("type") != "UserAssigned"
+        or len(identities) != 1
+        or not web_identities
+        or web.get("identity", {}).get("principalId")
+        or any(key.lower() in {item.lower() for item in web_identities} for key in identities)
+    ):
+        raise DeliveryError(
+            "Worker must have one user-assigned identity, separate from the web app."
+        )
+    identity = next(iter(identities.values()))
+    if (
+        not identity.get("principalId")
+        or not identity.get("clientId")
+        or any(
+            identity.get(field) == other.get(field)
+            for other in web_identities.values()
+            for field in ("principalId", "clientId")
+        )
+    ):
+        raise DeliveryError("Worker and web managed identities must be distinct.")
+    settings = {
+        item["name"]: item["value"]
+        for item in az(
+            "webapp",
+            "config",
+            "appsettings",
+            "list",
+            "-g",
+            group,
+            "-n",
+            required("ASC_FUNCTION_APP_NAME"),
+        )
+    }
+    expected = {
+        "ASC_ENVIRONMENT": "dev",
+        "FUNCTIONS_EXTENSION_VERSION": "~4",
+        "FUNCTIONS_WORKER_RUNTIME": "python",
+        "AZURE_CLIENT_ID": identity["clientId"],
+        "ASC_COSMOS_DATABASE": "sous-chef",
+        "ASC_FEEDBACK_CONTAINER": "RecipeHistory",
+        "ASC_LEASE_CONTAINER": "leases",
+        "SCM_DO_BUILD_DURING_DEPLOYMENT": "true",
+        "ENABLE_ORYX_BUILD": "true",
+        "APPLICATIONINSIGHTS_AUTHENTICATION_STRING": (
+            f"ClientId={identity['clientId']};Authorization=AAD"
+        ),
+    }
+    for prefix in ("AzureWebJobsStorage", "FeedbackCosmos", "FeedbackLeases"):
+        expected[f"{prefix}__credential"] = "managedidentity"
+        expected[f"{prefix}__clientId"] = identity["clientId"]
+        if settings.get(prefix):
+            raise DeliveryError("Worker connections must not contain connection strings.")
+    if (
+        any(settings.get(key) != value for key, value in expected.items())
+        or not re.fullmatch(r"[a-z0-9]{3,24}", settings.get("AzureWebJobsStorage__accountName", ""))
+        or not re.fullmatch(
+            r"https://[a-z0-9-]+\.documents\.azure\.com(?::443)?/?",
+            settings.get("FeedbackCosmos__accountEndpoint", ""),
+        )
+        or settings.get("FeedbackCosmos__accountEndpoint")
+        != settings.get("FeedbackLeases__accountEndpoint")
+        or not settings.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
+        or settings.get("WEBSITE_RUN_FROM_PACKAGE", "") not in {"", "0"}
+        or settings.get("WEBSITE_CONTENTAZUREFILECONNECTIONSTRING")
+    ):
+        raise DeliveryError(
+            "Worker runtime, keyless connections, monitoring or build settings mismatch."
+        )
+    config = az("webapp", "config", "show", "-g", group, "-n", required("ASC_FUNCTION_APP_NAME"))
+    if (
+        config.get("linuxFxVersion", "").lower() != "python|3.12"
+        or config.get("alwaysOn") is not True
+        or config.get("healthCheckPath") != "/api/health"
+    ):
+        raise DeliveryError("Worker requires Python 3.12, Always On and the host health check.")
+    return worker
+
+
+def worker_package(sha: str, output: Path) -> None:
+    archive = subprocess.run(
+        ["git", "archive", "--format=zip", sha, "worker"],
+        check=True,
+        capture_output=True,
+        cwd=ROOT,
+    ).stdout
+    with zipfile.ZipFile(io.BytesIO(archive)) as source, zipfile.ZipFile(output, "w") as dest:
+        for entry in source.infolist():
+            relative = entry.filename.removeprefix("worker/")
+            if not entry.is_dir() and relative != "release.json":
+                dest.writestr(relative, source.read(entry.filename))
+        dest.writestr("release.json", json.dumps({"commit": sha}))
+
+
+def worker_deploy() -> None:
+    sha = commit()
+    if command("git", "rev-parse", "HEAD").strip() != sha or current_dev_commit() != sha:
+        raise DeliveryError("Worker checkout must match the current reviewed dev commit.")
+    worker_target()
+    archive = Path(os.environ["RUNNER_TEMP"]) / "asc-worker-dev.zip"
+    try:
+        worker_package(sha, archive)
+        deployment = az(
+            "webapp",
+            "deploy",
+            "-g",
+            required("ASC_RESOURCE_GROUP"),
+            "-n",
+            required("ASC_FUNCTION_APP_NAME"),
+            "--src-path",
+            str(archive),
+            "--type",
+            "zip",
+            "--clean",
+            "true",
+            "--restart",
+            "false",
+            "--async",
+            "true",
+            "--track-status",
+            "false",
+        )
+        if not isinstance(deployment, dict) or deployment.get("status") != 4:
+            raise DeliveryError("Worker ZIP build did not report success; inspect dev host logs.")
+    finally:
+        archive.unlink(missing_ok=True)
+    az(
+        "webapp",
+        "restart",
+        "-g",
+        required("ASC_RESOURCE_GROUP"),
+        "-n",
+        required("ASC_FUNCTION_APP_NAME"),
+        expect_json=False,
+    )
+
+
+def worker_smoke() -> None:
+    from urllib.error import HTTPError, URLError
+    from urllib.request import HTTPRedirectHandler, build_opener
+
+    class NoRedirect(HTTPRedirectHandler):
+        def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+            return None
+
+    worker = worker_target()
+    opener = build_opener(NoRedirect())
+    deadline = time.monotonic() + 300
+    while time.monotonic() < deadline:
+        try:
+            with opener.open(
+                f"https://{worker['defaultHostName']}/api/health", timeout=15
+            ) as response:
+                if (
+                    response.status != 200
+                    or json.load(response) != {"status": "ok", "scope": "host-only"}
+                    or response.headers.get("X-ASC-Commit") != commit()
+                ):
+                    raise DeliveryError("Worker health did not report the reviewed commit.")
+            with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
+                summary.write(
+                    f"Worker `{commit()}` host health passed. "
+                    "No feedback event processing or learning is implemented in this slice.\n"
+                )
+            print("Worker host-only smoke passed.")
+            return
+        except (HTTPError, URLError, TimeoutError, ValueError, DeliveryError):
+            time.sleep(10)
+    raise DeliveryError("Worker host health failed after five minutes; inspect dev host logs.")
+
+
 def main() -> int:
     try:
         action = sys.argv[1] if len(sys.argv) == 2 else ""
-        if action not in {"reviewed", "deploy", "smoke"}:
-            raise DeliveryError("Choose reviewed, deploy or smoke.")
-        {"reviewed": reviewed, "deploy": deploy, "smoke": smoke}[action]()
+        actions = {
+            "reviewed": reviewed,
+            "deploy": deploy,
+            "smoke": smoke,
+            "worker-deploy": worker_deploy,
+            "worker-smoke": worker_smoke,
+        }
+        if action not in actions:
+            raise DeliveryError("Choose reviewed, deploy, smoke, worker-deploy or worker-smoke.")
+        actions[action]()
     except (DeliveryError, OSError, ValueError, subprocess.CalledProcessError) as exc:
         message = str(exc) if isinstance(exc, DeliveryError) else type(exc).__name__
         print(f"Dev delivery failed: {message}", file=sys.stderr)

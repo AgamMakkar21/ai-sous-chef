@@ -12,6 +12,9 @@ param foundryProjectName string
 @description('Location of the deployment identity only.')
 param location string
 
+@description('Existing dev feedback Function App; empty preserves the web-only bootstrap.')
+param functionAppName string = ''
+
 resource app 'Microsoft.Web/sites@2024-04-01' existing = {
   name: appName
 }
@@ -49,6 +52,20 @@ resource federation 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedI
 resource appPublisher 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(app.id, identity.id, 'dev-app-publisher')
   scope: app
+  properties: {
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'de139f84-1756-47ae-9be6-808fbbe84772')
+  }
+}
+
+resource functionApp 'Microsoft.Web/sites@2024-04-01' existing = {
+  name: functionAppName
+}
+
+resource functionPublisher 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(functionAppName)) {
+  name: guid(functionApp.id, identity.id, 'dev-function-publisher')
+  scope: functionApp
   properties: {
     principalId: identity.properties.principalId
     principalType: 'ServicePrincipal'

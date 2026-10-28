@@ -405,6 +405,86 @@ class CosmosRepository:
 
         return await self._run(action, deadline=deadline, read_only=False)
 
+    async def commit_chat(
+        self,
+        user: AuthenticatedUser,
+        *,
+        creates: tuple[NewRecord, ...] = (),
+        patches: tuple[tuple[StoredRecord, RecordPatch], ...],
+        deadline: float | None = None,
+    ) -> tuple[StoredRecord, ...]:
+        """Atomically guard conversation admission/completion with its turn and receipt."""
+        deadline = self._deadline(deadline)
+        scope = self._scope(user)
+        if not patches or len(creates) + len(patches) > 3:
+            raise ValueError("A chat transition requires one bounded conditional batch.")
+        bodies = []
+        operations: list[
+            tuple[str, tuple[object, ...]] | tuple[str, tuple[object, ...], dict[str, object]]
+        ] = []
+        for request in creates:
+            request = NewRecord.model_validate(request)
+            if request.kind not in {RecordKind.TURN, RecordKind.SEND_OPERATION}:
+                raise ValueError("Only turn and send-operation creation is allowed.")
+            body = self._new_body(user, request)
+            bodies.append(body)
+            operations.append(("create", (body,)))
+        for current, patch in patches:
+            current = self._record(current.body, user, ProductContainer.CHAT_HISTORY)
+            patch = RecordPatch.model_validate(patch)
+            if (
+                current.body["recordKind"]
+                not in {RecordKind.CONVERSATION, RecordKind.TURN, RecordKind.SEND_OPERATION}
+                or current.etag != patch.etag
+            ):
+                raise ValueError("A chat patch requires its current owned revision.")
+            changes = {**deepcopy(patch.fields), "updatedAt": _timestamp()}
+            body = {**current.body, **changes}
+            if _size(body) > MAX_RECORD_BYTES:
+                raise CosmosError(CosmosFailure.TOO_LARGE, uuid4())
+            bodies.append(body)
+            operations.append(
+                (
+                    "patch",
+                    (
+                        body["id"],
+                        [
+                            {"op": "set", "path": "/" + name, "value": value}
+                            for name, value in changes.items()
+                        ],
+                    ),
+                    {"if_match_etag": patch.etag},
+                )
+            )
+        if len({str(body["id"]) for body in bodies}) != len(bodies):
+            raise ValueError("A chat batch must address distinct records.")
+
+        async def action() -> tuple[StoredRecord, ...]:
+            results = await self._containers[ProductContainer.CHAT_HISTORY].execute_item_batch(
+                batch_operations=operations,
+                partition_key=scope,
+                retry_write=0,
+            )
+            if len(results) != len(bodies):
+                raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4(), outcome_unknown=True)
+            records = []
+            for result, body in zip(results, bodies, strict=True):
+                if not isinstance(result, dict) or result.get("statusCode") not in {200, 201}:
+                    raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4(), outcome_unknown=True)
+                record = self._record(
+                    result.get("resourceBody"), user, ProductContainer.CHAT_HISTORY
+                )
+                if any(
+                    record.body.get(key) != value
+                    for key, value in body.items()
+                    if key not in _SYSTEM_FIELDS
+                ):
+                    raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4(), outcome_unknown=True)
+                records.append(record)
+            return tuple(records)
+
+        return await self._run(action, deadline=deadline, read_only=False)
+
     async def patch(
         self,
         user: AuthenticatedUser,

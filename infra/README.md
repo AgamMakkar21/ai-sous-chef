@@ -321,3 +321,15 @@ cost grows with telemetry volume. Check the
 for the approved subscription/region before enabling ingestion. No fixed monthly
 estimate or hard spending cap is claimed. Budgets/alerts and dashboards are later
 work; the owner must review usage and costs.
+
+## Feedback host
+
+The additive dev-only `functions.bicep` entrypoint provisions the separate Python
+Functions host, host storage, identity and narrow data-plane/monitoring grants.
+See [worker setup, costs, role scopes and live acceptance](../docs/feedback-host.md).
+It does not create a feedback trigger or claim preference learning works.
+
+When Cosmos public access is prohibited, use the additive
+`cosmos-private-network.bicep` entrypoint to reuse owner-supplied subnets and DNS.
+See [private Cosmos networking](../docs/private-cosmos-network.md). It never
+redeploys the VNet, subnets, Cosmos account, application settings or RBAC.

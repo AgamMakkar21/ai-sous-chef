@@ -4,8 +4,12 @@
 `.github/workflows/deploy-dev.yml`. It publishes the Python source and exact,
 versioned New Foundry prompt-agent configuration to **existing dev resources**
 when agents are explicitly enabled in the reviewed release manifest.
-It does not provision the application foundation, deploy the Function worker,
+It does not provision the application foundation,
 promote production, implement agent prompts/tools, or claim the full MVP is ready.
+ASC-09 extends the same reviewed job to deploy the
+[feedback Functions host](feedback-host.md) after web smoke checks. Complete its
+one-time provisioning, worker-scoped publisher grant and `ASC_FUNCTION_APP_NAME`
+environment variable before merging that extension; missing setup fails delivery.
 
 ## One-time owner setup
 
@@ -63,6 +67,7 @@ promote production, implement agent prompts/tools, or claim the full MVP is read
    | `AZURE_SUBSCRIPTION_ID` | Approved dev subscription ID |
    | `ASC_RESOURCE_GROUP` | Approved existing dev group (`test-2`) |
    | `ASC_APP_NAME` | Existing dev web app name |
+   | `ASC_FUNCTION_APP_NAME` | Separate dev feedback Function App name (ASC-09) |
    | `ASC_FOUNDRY_ACCOUNT_NAME` | Existing dev Foundry account name |
    | `ASC_FOUNDRY_PROJECT_NAME` | Existing dev project name |
 

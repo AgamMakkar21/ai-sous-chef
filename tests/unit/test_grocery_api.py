@@ -163,8 +163,8 @@ def test_unknown_quantities_and_mapping_changes_are_explicit(
         ({"quantity": "2"}, "quantity", "invalid_value"),
         ({"name": "  "}, "name", "blank"),
         ({"name": "x" * 101}, "name", "too_long"),
-        ({"name": "bad\x00name"}, "name", "invalid_value"),
-        ({"name": "bad\nname"}, "name", "invalid_value"),
+        ({"name": "private-grocery\x00name"}, "name", "invalid_value"),
+        ({"name": "private-grocery\nname"}, "name", "invalid_value"),
         ({"name": 123}, "name", "invalid_value"),
         ({"name": None}, "name", "null_not_allowed"),
         ({"unit": "litres"}, "unit", "invalid_value"),
@@ -192,7 +192,7 @@ def test_invalid_edits_never_mutate_or_silently_remove_inventory(
     assert {"field": field, "code": code} in response.json()["errors"]
     assert document(transport) == before
     assert len(transport.item_calls("PATCH")) == count
-    assert "bad" not in response.text
+    assert "private-grocery" not in response.text
 
 
 @pytest.mark.parametrize("quantity", [0.001, 1_000_000])
