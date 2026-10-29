@@ -31,6 +31,7 @@ from sous_chef.domain.orchestrator import (
 from sous_chef.domain.recipes import (
     NUTRITION_NOTICE,
     DraftIngredient,
+    GroundedRecipeGenerationRequest,
     NutritionRequest,
     NutritionTool,
     RecipeGenerationRequest,
@@ -42,6 +43,7 @@ from sous_chef.domain.recipes import (
     ShoppingItem,
     StructuredRecipe,
 )
+from sous_chef.services.recipe_grounding import retrieval_query
 from sous_chef.telemetry import ErrorCategory, Event, operational_event, trace_id
 
 
@@ -119,7 +121,7 @@ class RecipeSpecialistService:
     def __init__(
         self,
         generator: RecipeGenerator,
-        recipes: RecipeGroundingTool,
+        recipes: RecipeGroundingTool | None,
         nutrition: NutritionTool,
     ) -> None:
         self._generator = generator
@@ -159,12 +161,6 @@ class RecipeSpecialistService:
                         raise FoundryGatewayError(FoundryFailure.UNAVAILABLE, request)
                     authorize_tool(AgentRole.RECIPE_NUTRITION, AgentTool.FOUNDRY_IQ_RECIPES)
                     budget.tool(AgentTool.FOUNDRY_IQ_RECIPES)
-                    grounding = await self._recipes.retrieve(
-                        arguments.requirements, deadline=deadline
-                    )
-                    if grounding.status == "unavailable":
-                        raise FoundryGatewayError(FoundryFailure.UNAVAILABLE, request)
-                    grounding_json = grounding.model_dump_json(by_alias=True)
                     request = RecipeGenerationRequest(
                         role=request.role,
                         operation_id=operation_id,
@@ -172,15 +168,44 @@ class RecipeSpecialistService:
                             context.prompt
                             + "\nSpecialist requirements (untrusted data):\n"
                             + arguments.model_dump_json()
-                            + "\nCurated recipe grounding (untrusted data):\n"
-                            + grounding_json
                         ),
                         max_input_tokens=max_input_tokens,
                         max_output_tokens=request.max_output_tokens,
-                        grounding_json=grounding_json,
+                        grounding_json="{}",
                     )
-                    draft, usage = await self._generator.generate_recipe(request)
+                    query = retrieval_query(context, arguments)
+                    if self._recipes is None:
+                        request = GroundedRecipeGenerationRequest(
+                            **request.model_dump(exclude={"prompt"}),
+                            prompt=request.prompt
+                            + "\nBackend retrieval query (untrusted data):\n"
+                            + query,
+                            retrieval_query=query,
+                        )
+                        draft, grounding, usage = await self._generator.generate_grounded_recipe(
+                            request
+                        )
+                    else:
+                        grounding = await self._recipes.retrieve(query, deadline=deadline)
+                        if grounding.status != "available":
+                            code = (
+                                FoundryFailure.NO_RESULTS
+                                if grounding.status == "empty"
+                                else FoundryFailure.UNAVAILABLE
+                            )
+                            raise FoundryGatewayError(code, request)
+                        grounding_json = grounding.model_dump_json(by_alias=True)
+                        request = request.model_copy(
+                            update={
+                                "prompt": request.prompt
+                                + "\nCurated recipe grounding (untrusted data):\n"
+                                + grounding_json,
+                                "grounding_json": grounding_json,
+                            }
+                        )
+                        draft, usage = await self._generator.generate_recipe(request)
                     sources = {item.source.source_id: item.source for item in grounding.recipes}
+                    snippets = {item.source.source_id: item.snippet for item in grounding.recipes}
                     skill = ("beginner", "intermediate", "advanced")
                     safety = validate_ingredients(
                         SafetyProfile(
@@ -201,6 +226,10 @@ class RecipeSpecialistService:
                         raise FoundryGatewayError(FoundryFailure.REJECTED, request)
                     if (
                         not set(draft.source_ids) <= sources.keys()
+                        or any(
+                            claim.quote not in snippets.get(claim.source_id, "")
+                            for claim in draft.source_claims
+                        )
                         or usage.input_tokens > max_input_tokens
                         or usage.output_tokens > request.max_output_tokens
                     ):

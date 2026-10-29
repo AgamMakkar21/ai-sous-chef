@@ -13,6 +13,7 @@ from sous_chef.domain.recipe_corpus import (
     CorpusRecipe,
     content_key,
 )
+from sous_chef.domain.recipes import CuratedRecipe, RecipeSource
 from sous_chef.services.recipe_ingestion import MAX_ROWS
 
 MAX_CORPUS_BYTES = 16 * 1024 * 1024
@@ -29,6 +30,7 @@ class RecipeSearchDocument(TypedDict):
     content: str
     source_url: str
     recipe_json: str
+    grounding: str
 
 
 def source_reference(recipe: CorpusRecipe) -> str:
@@ -45,6 +47,30 @@ def source_reference(recipe: CorpusRecipe) -> str:
             "Corpus provenance is invalid; regenerate it with ingest_recipes."
         )
     return f"https://huggingface.co/datasets/{DATASET_ID}/blob/{provenance.revision}/{SOURCE_FILE}"
+
+
+def curated_excerpt(recipe: CorpusRecipe) -> CuratedRecipe:
+    """Keep provenance outside the excerpt so truncation cannot change attribution."""
+    text = "\n".join(
+        [
+            recipe.name,
+            recipe.provenance.attribution,
+            f"Source license: {recipe.provenance.license}",
+            *(f"Ingredient: {item.quantity} {item.name}".strip() for item in recipe.ingredients),
+            *(f"Step: {step}" for step in recipe.instructions),
+        ]
+    )
+    if len(text) > 1500:
+        text = text[:1484] + "\n[excerpt ends]"
+    return CuratedRecipe(
+        source=RecipeSource(
+            source_id=recipe.source_id,
+            version=recipe.provenance.revision,
+            kind="curated_recipe",
+            reference=source_reference(recipe),
+        ),
+        snippet=text,
+    )
 
 
 def search_document(recipe: CorpusRecipe) -> RecipeSearchDocument:
@@ -73,6 +99,8 @@ def search_document(recipe: CorpusRecipe) -> RecipeSearchDocument:
                 *recipe.instructions,
             ]
         ),
+        # MCP exposes semantic content, not the REST sourceData/references envelope.
+        "grounding": curated_excerpt(recipe).model_dump_json(by_alias=True),
         "source_url": source_reference(recipe),
         "recipe_json": recipe.model_dump_json(),
     }

@@ -51,7 +51,7 @@ class CuratedRecipe(RecipeModel):
 
 
 class RecipeGrounding(RecipeModel):
-    status: Literal["available", "unavailable"]
+    status: Literal["available", "empty", "unavailable"]
     recipes: tuple[CuratedRecipe, ...] = Field(max_length=3, repr=False)
 
     @model_validator(mode="after")
@@ -81,10 +81,17 @@ class Substitution(RecipeModel):
     reason: Text = Field(repr=False)
 
 
+class RecipeSourceClaim(RecipeModel):
+    """Only an exact evidence excerpt is attributed; adaptations have no citations."""
+
+    source_id: ReferenceId
+    quote: Text = Field(repr=False)
+
+
 class RecipeDraft(RecipeModel):
     """Only adaptable cooking content is generated; factual enrichment is backend-owned."""
 
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     title: str = Field(min_length=1, max_length=160, pattern=r"\S", repr=False)
     servings: int = Field(ge=1, le=20)
     total_minutes: int = Field(ge=1, le=1440)
@@ -95,6 +102,7 @@ class RecipeDraft(RecipeModel):
     fit_reasons: tuple[Text, ...] = Field(min_length=1, max_length=10, repr=False)
     adaptations: tuple[Text, ...] = Field(max_length=10, repr=False)
     source_ids: tuple[ReferenceId, ...] = Field(min_length=1, max_length=3)
+    source_claims: tuple[RecipeSourceClaim, ...] = Field(max_length=10, repr=False)
 
     @model_validator(mode="after")
     def references(self) -> Self:
@@ -111,6 +119,7 @@ class RecipeDraft(RecipeModel):
             != list(range(1, len(self.instructions) + 1))
             or any(item.ingredient_line_id not in ids for item in self.substitutions)
             or len(self.source_ids) != len(set(self.source_ids))
+            or any(claim.source_id not in self.source_ids for claim in self.source_claims)
         ):
             raise ValueError("Recipe references must be unique, complete and ordered.")
         return self
@@ -238,10 +247,18 @@ class RecipeGenerationRequest(FoundryRequest):
     grounding_json: str = Field(min_length=1, max_length=16000, repr=False)
 
 
+class GroundedRecipeGenerationRequest(RecipeGenerationRequest):
+    retrieval_query: str = Field(min_length=1, max_length=2000, repr=False)
+
+
 class RecipeGenerator(Protocol):
     async def generate_recipe(
         self, request: RecipeGenerationRequest
     ) -> tuple[RecipeDraft, TokenUsage]: ...
+
+    async def generate_grounded_recipe(
+        self, request: GroundedRecipeGenerationRequest
+    ) -> tuple[RecipeDraft, RecipeGrounding, TokenUsage]: ...
 
 
 class RecipeGroundingTool(Protocol):

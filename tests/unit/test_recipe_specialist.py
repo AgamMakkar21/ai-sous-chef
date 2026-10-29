@@ -35,6 +35,7 @@ from sous_chef.publish_orchestrator import publish_agent
 from sous_chef.recipe_definition import RECIPE_INSTRUCTIONS, build_recipe_definition
 from sous_chef.services.context import _encoding
 from sous_chef.services.orchestrator import ExecutionBudget, OrchestratorService
+from sous_chef.services.recipe_grounding import retrieval_query
 from sous_chef.services.recipe_specialist import RecipeSpecialistService
 from sous_chef.settings import ConfigurationError
 from sous_chef.telemetry import configure_safe_telemetry, trace_id
@@ -202,7 +203,14 @@ def test_single_pinned_stateless_invocation_is_private_and_has_no_callable_tools
     assert request["input"].count(data.current_request) == 1
     assert '"learnedPreferences":[]' in request["input"]
     assert '"allergies":["peanut","milk"]' in request["input"]
-    assert tools.queries == ["A mild rice dinner."]
+    assert tools.queries == [
+        retrieval_query(
+            data,
+            SpecialistArguments(
+                requirements="A mild rice dinner.", time_budget_minutes=30, use_web=False
+            ),
+        )
+    ]
     assert data.current_request not in caplog.text
     assert "Simple carrot rice" not in caplog.text
     assert "fixture-usda" not in caplog.text
@@ -222,7 +230,7 @@ def test_single_pinned_stateless_invocation_is_private_and_has_no_callable_tools
         ("skill", "advanced", FoundryFailure.REJECTED),
         ("sourceIds", ["invented-citation"], FoundryFailure.INVALID_RESULT),
         ("servings", 0, FoundryFailure.INVALID_RESULT),
-        ("schemaVersion", 2, FoundryFailure.INVALID_RESULT),
+        ("schemaVersion", 3, FoundryFailure.INVALID_RESULT),
         ("nutrition", {"calories": 100}, FoundryFailure.INVALID_RESULT),
     ],
 )
@@ -278,6 +286,39 @@ def test_missing_curated_grounding_stops_before_generation() -> None:
         run(service)
     assert caught.value.code == FoundryFailure.UNAVAILABLE
     assert not transport.requests and not tools.nutrition_requests
+
+
+def test_empty_index_is_distinct_from_unavailable_grounding() -> None:
+    service, tools, transport = setup()
+    tools.grounding = RecipeGrounding(status="empty", recipes=())
+    with pytest.raises(FoundryGatewayError) as caught:
+        run(service)
+    assert caught.value.code == FoundryFailure.NO_RESULTS
+    assert not transport.requests and not tools.nutrition_requests
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        {"sourceId": "fixture-rice", "quote": "This adapted recipe is allergen-free."},
+        {"sourceId": "foreign", "quote": "Beginner preparation, 25 minutes."},
+        {
+            "sourceId": "fixture-rice",
+            "quote": "Beginner preparation, 25 minutes.",
+            "claim": "This adapted recipe is proven safe.",
+        },
+    ],
+)
+def test_citations_cannot_support_invented_quotes_or_adaptation_claims(
+    claim: dict[str, str],
+) -> None:
+    draft = copy.deepcopy(FIXTURE["draft"])
+    draft["sourceClaims"] = [claim]
+    service, tools, _ = setup(draft)
+    with pytest.raises(FoundryGatewayError) as caught:
+        run(service)
+    assert caught.value.code == FoundryFailure.INVALID_RESULT
+    assert not tools.nutrition_requests
 
 
 def test_web_grounding_is_not_silently_ignored_before_asc34() -> None:
@@ -547,15 +588,29 @@ def test_source_definition_uses_reviewed_safety_policy_and_strict_schema() -> No
 
 
 def test_recipe_publication_versions_the_existing_distinct_identity_without_activation() -> None:
-    config = coordination_settings().model_copy(
-        update={"foundry_recipe_nutrition_rai_policy_name": "approved-mvp-baseline"}
+    config = type(coordination_settings()).model_validate(
+        coordination_settings().model_dump()
+        | {
+            "foundry_recipe_nutrition_rai_policy_name": "approved-mvp-baseline",
+            "foundry_project_endpoint": "https://synthetic.services.ai.azure.com/api/projects/recipes",
+            "foundry_project_resource_id": (
+                "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/synthetic"
+                "/providers/Microsoft.CognitiveServices/accounts/synthetic/projects/recipes"
+            ),
+            "foundry_iq_search_endpoint": "https://synthetic.search.windows.net",
+            "foundry_iq_index_name": "fixture-recipes",
+            "foundry_iq_knowledge_source_name": "fixture-source",
+            "foundry_iq_knowledge_base_name": "fixture-knowledge",
+            "foundry_iq_connection_name": "fixture-mcp",
+        }
     )
     client = project()
     assert publish_agent(config, client, AgentRole.RECIPE_NUTRITION) == "7"
     invocation = client.agents.create_version.call_args.kwargs
     assert invocation["agent_name"] == "recipe-agent"
     assert invocation["metadata"]["asc_model"] == "gpt-5.4"
-    assert invocation["metadata"]["asc_policy_version"] == "1"
+    assert invocation["metadata"]["asc_policy_version"] == "2"
+    assert invocation["definition"].as_dict()["tools"][0]["project_connection_id"] == "fixture-mcp"
     assert len(invocation["metadata"]["asc_definition_sha256"]) == 64
     client.agents.create.assert_not_called()
     client.agents.create_version.reset_mock()

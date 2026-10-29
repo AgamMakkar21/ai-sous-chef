@@ -40,6 +40,8 @@ class RecipeKnowledgeConfig:
     knowledge_base_name: str
     connection_name: str
     project_resource_id: str
+    max_results: int = 3
+    max_context_tokens: int = 4000
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "RecipeKnowledgeConfig":
@@ -74,7 +76,16 @@ class RecipeKnowledgeConfig:
             raise ConfigurationError(
                 "ASC_FOUNDRY_PROJECT_RESOURCE_ID must identify ASC_FOUNDRY_PROJECT_ENDPOINT."
             )
-        return cls(str(endpoint).rstrip("/"), index, source, base, connection, resource_id)
+        return cls(
+            str(endpoint).rstrip("/"),
+            index,
+            source,
+            base,
+            connection,
+            resource_id,
+            settings.foundry_iq_max_results,
+            settings.foundry_iq_max_context_tokens,
+        )
 
     @property
     def mcp_endpoint(self) -> str:
@@ -207,6 +218,7 @@ class FoundryRecipeKnowledge:
             {"name": "source_id", "type": "Edm.String", "key": True, "filterable": True},
             {"name": "title", "type": "Edm.String", "searchable": True},
             {"name": "content", "type": "Edm.String", "searchable": True},
+            {"name": "grounding", "type": "Edm.String", "searchable": True},
             {"name": "source_url", "type": "Edm.String", "searchable": False},
             {"name": "recipe_json", "type": "Edm.String", "searchable": False},
         ]
@@ -224,7 +236,7 @@ class FoundryRecipeKnowledge:
                             "name": SEMANTIC_CONFIGURATION,
                             "prioritizedFields": {
                                 "titleField": {"fieldName": "title"},
-                                "prioritizedContentFields": [{"fieldName": "content"}],
+                                "prioritizedContentFields": [{"fieldName": "grounding"}],
                             },
                         }
                     ],
@@ -261,8 +273,8 @@ class FoundryRecipeKnowledge:
                 "outputMode": "extractiveData",
                 "retrieveDefaults": {
                     "maxRuntimeInSeconds": 10,
-                    "maxOutputDocuments": 5,
-                    "maxOutputSizeInTokens": 4096,
+                    "maxOutputDocuments": config.max_results,
+                    "maxOutputSizeInTokens": config.max_context_tokens,
                 },
             },
         )
@@ -328,8 +340,8 @@ class FoundryRecipeKnowledge:
                 "retrievalReasoningEffort": {"kind": "minimal"},
                 "outputMode": "extractiveData",
                 "maxRuntimeInSeconds": 10,
-                "maxOutputDocuments": 5,
-                "maxOutputSizeInTokens": 4096,
+                "maxOutputDocuments": self.config.max_results,
+                "maxOutputSizeInTokens": self.config.max_context_tokens,
                 "knowledgeSourceParams": [
                     {
                         "kind": "searchIndex",
@@ -364,7 +376,7 @@ class FoundryRecipeKnowledge:
                 "Foundry IQ retrieval omitted valid recipe content or citation metadata."
             ) from None
         if (
-            len(citations) > 5
+            len(citations) > self.config.max_results
             or len({item.reference_id for item in citations}) != len(citations)
             or len({item.recipe.source_id for item in citations}) != len(citations)
         ):

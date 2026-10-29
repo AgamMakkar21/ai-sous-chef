@@ -44,6 +44,7 @@ class ErrorCategory(StrEnum):
     FOUNDRY_TIMEOUT = "foundry_timeout"
     FOUNDRY_INVALID_RESULT = "foundry_invalid_result"
     FOUNDRY_UNAVAILABLE = "foundry_unavailable"
+    FOUNDRY_NO_RESULTS = "foundry_no_results"
     FOUNDRY_REJECTED = "foundry_rejected"
     COSMOS_AUTHENTICATION = "cosmos_authentication"
     COSMOS_FORBIDDEN = "cosmos_forbidden"

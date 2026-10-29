@@ -1,5 +1,6 @@
 import json
 from collections.abc import Iterator
+from dataclasses import replace
 from time import time
 from types import TracebackType
 from typing import Any
@@ -198,9 +199,9 @@ def test_refresh_twice_and_retrieve_a_relevant_recipe_with_stable_source_metadat
     assert citations[0].source_url == documents[0]["source_url"]
     assert knowledge.retrieve("rice") == citations
     query = request_body(transport.requests[-1])
-    assert query["maxOutputDocuments"] == 5
+    assert query["maxOutputDocuments"] == 3
     assert query["maxRuntimeInSeconds"] == 10
-    assert query["maxOutputSizeInTokens"] == 4096
+    assert query["maxOutputSizeInTokens"] == 4000
     assert query["knowledgeSourceParams"][0]["includeReferenceSourceData"] is True
 
 
@@ -237,6 +238,22 @@ def test_setup_uses_configured_names_and_agent_identity_without_api_keys(
     for request in requests:
         assert "api-key" not in {key.lower() for key in request.headers}
     assert SEARCH_API_VERSION in requests[0].url
+
+
+def test_configured_limits_bound_both_the_mcp_defaults_and_rest_queries(
+    knowledge: FoundryRecipeKnowledge, transport: SearchFixture
+) -> None:
+    knowledge.config = replace(knowledge.config, max_results=1, max_context_tokens=512)
+    knowledge.configure()
+    defaults = request_body(transport.requests[2])["retrieveDefaults"]
+    assert defaults["maxOutputDocuments"] == 1
+    assert defaults["maxOutputSizeInTokens"] == 512
+    knowledge.retrieve("rice")
+    request = request_body(transport.requests[-1])
+    assert request["maxOutputDocuments"] == 1
+    assert request["maxOutputSizeInTokens"] == 512
+    semantic = request_body(transport.requests[0])["semantic"]["configurations"][0]
+    assert semantic["prioritizedFields"]["prioritizedContentFields"] == [{"fieldName": "grounding"}]
 
 
 @pytest.mark.parametrize("status", [206, 301, 401, 403, 404, 429, 500])

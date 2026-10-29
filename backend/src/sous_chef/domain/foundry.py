@@ -32,6 +32,7 @@ class FoundryFailure(StrEnum):
     TIMEOUT = "foundry_timeout"
     INVALID_RESULT = "foundry_invalid_result"
     UNAVAILABLE = "foundry_unavailable"
+    NO_RESULTS = "foundry_no_results"
     REJECTED = "foundry_rejected"
 
 

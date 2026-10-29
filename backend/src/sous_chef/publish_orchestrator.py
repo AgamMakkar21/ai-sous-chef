@@ -10,10 +10,16 @@ from azure.core.exceptions import AzureError
 from azure.identity import AzureCliCredential
 
 from sous_chef.adapters.agent_identity import resolve_agent_identities
+from sous_chef.adapters.foundry_iq import RecipeKnowledgeConfig
 from sous_chef.domain.agent_identity import AgentRole, IdentityError
 from sous_chef.domain.orchestrator import POLICY
 from sous_chef.orchestrator_definition import ORCHESTRATOR_MODEL, build_orchestrator_definition
-from sous_chef.recipe_definition import RECIPE_MODEL, RECIPE_POLICY_VERSION, build_recipe_definition
+from sous_chef.recipe_definition import (
+    RECIPE_MODEL,
+    RECIPE_POLICY_VERSION,
+    build_recipe_definition,
+    recipe_knowledge_tool,
+)
 from sous_chef.settings import ConfigurationError, Settings, load_settings
 from sous_chef.telemetry import configure_safe_telemetry
 
@@ -54,8 +60,11 @@ def publish_agent(settings: Settings, project: AIProjectClient, role: AgentRole)
         definition = build_orchestrator_definition(deployment)
     else:
         assert settings.foundry_recipe_nutrition_rai_policy_name is not None
+        knowledge = RecipeKnowledgeConfig.from_settings(settings)
         definition = build_recipe_definition(
-            deployment, settings.foundry_recipe_nutrition_rai_policy_name
+            deployment,
+            settings.foundry_recipe_nutrition_rai_policy_name,
+            knowledge_tool=recipe_knowledge_tool(knowledge.mcp_endpoint, knowledge.connection_name),
         )
     fingerprint = hashlib.sha256(
         json.dumps(definition.as_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
