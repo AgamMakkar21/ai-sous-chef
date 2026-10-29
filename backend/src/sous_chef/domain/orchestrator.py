@@ -14,12 +14,13 @@ from sous_chef.domain.recipes import StructuredRecipe
 
 @dataclass(frozen=True)
 class OrchestratorPolicy:
-    version: int = 1
+    version: int = 2
     max_model_calls: int = 4
     max_specialist_calls: int = 2
     max_revisions: int = 1
     max_tool_calls: int = 8
     max_web_calls: int = 1
+    web_deadline_seconds: float = 10
     max_tool_result_tokens: int = 4_000
     deadline_seconds: int = 60
     max_input_tokens: int = 16_000
@@ -49,6 +50,18 @@ class SpecialistArguments(CoordinationModel):
     requirements: ShortText = Field(repr=False)
     time_budget_minutes: int = Field(ge=1, le=240)
     use_web: bool
+    web_query: (
+        Annotated[
+            str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=240)
+        ]
+        | None
+    ) = Field(default=None, repr=False)
+
+    @model_validator(mode="after")
+    def conditional_query(self) -> Self:
+        if self.use_web != (self.web_query is not None):
+            raise ValueError("Only a justified web request supplies a public search query.")
+        return self
 
 
 class OpaqueReasoning(CoordinationModel):
@@ -169,6 +182,18 @@ class Coordinator(Protocol):
 
 
 class SpecialistBudget(Protocol):
+    def model_allowance(self) -> tuple[int, int]:
+        """Check token headroom for a reserved call after any nested invocation."""
+        ...
+
+    def model(self) -> None:
+        """Reserve any additional model invocation before executing it."""
+        ...
+
+    def usage(self, usage: TokenUsage) -> None:
+        """Account for an additional invocation without double-counting returned usage."""
+        ...
+
     def tool(self, operation: str) -> None:
         """Reserve an allowlisted tool call before executing it, including retries."""
         ...

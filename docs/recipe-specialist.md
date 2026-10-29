@@ -1,9 +1,9 @@
-# Recipe + Nutrition structured output and retrieval (ASC-26 / ASC-30)
+# Recipe + Nutrition structured output and grounding (ASC-26 / ASC-30 / ASC-34)
 
-This slice implements the GPT-5.4 specialist's version-2 instructions, strict
+This slice implements the GPT-5.4 specialist's version-3 instructions, strict
 draft/full-recipe schemas, one-call New Foundry generation, backend enrichment,
-and identity-bound Foundry IQ recipe retrieval. It does not activate chat or an Azure
-release, save/cook a recipe, integrate live USDA nutrition, implement Web IQ (#34), or replace
+identity-bound Foundry IQ recipe retrieval and conditional Web IQ. It does not activate chat
+or an Azure release, save/cook a recipe, integrate live USDA nutrition, or replace
 the later final full-recipe safety gate. No model/tool availability research or
 alternative provider is required.
 
@@ -20,7 +20,7 @@ Fixtures and offline doubles live only in `tests/fixtures/recipe-specialist.json
 and `tests/unit/test_recipe_specialist.py`. All fixture recipes, nutrition amounts
 and food identifiers are synthetic, not real USDA facts.
 
-Execution is deterministic around one model invocation:
+The ordinary non-web path uses one specialist model invocation:
 
 1. Reserve an allowlisted `foundry_iq_recipes` call on the supplied request-local
    budget. Shape a bounded query from specialist requirements, groceries, explicit
@@ -77,8 +77,57 @@ against the remaining per-call input allowance; grounding also must fit the
 allowance in addition to the complete input. Output is capped at the existing 1,500-token reservation,
 including reasoning. Provider usage is mandatory and checked against both ceilings;
 the Orchestrator accounts it cumulatively. Nothing truncates hard constraints to
-fit a budget. A `use_web=true` request fails explicitly as unavailable until #34
-wires the approved conditional integration; it is not silently treated as grounded.
+fit a budget. Conditional web requests use the additional bounded stage below.
+
+## Conditional Web IQ
+
+Ordinary pantry recipes and USDA-backed nutrition amounts do not enable web tools.
+The Orchestrator's strict routing function supplies `web_query=null` with
+`use_web=false`. For explicitly current information, such as a recall, seasonal
+information or recent food news, it supplies `use_web=true` and one public query
+of at most 240 characters. This is not permission to search for ordinary nutrition
+facts already covered by USDA.
+
+Before any external call, the backend requires a current-information cue in the
+original request, rejects contact details, URLs, identifiers and personal phrasing,
+and limits query words to that request plus generic public food/search terms.
+Profile-only topics cannot be added to a query. This is query minimization, not
+a general-purpose personal-data detector; the model must still select only the
+necessary public topic. Unsupported or sensitive queries fail explicitly instead
+of silently deleting words or sending the full request.
+
+The specialist makes one isolated Responses invocation through its existing pinned
+Recipe + Nutrition identity. Only the minimized query enters that invocation:
+no profile, groceries, history, user key or complete cooking context. The gateway
+overrides the instructions, attaches only the pinned SDK's native `WebSearchTool`
+(`web_search`, external access, low context), requires one unchanged search and
+disables parallel calls and provider storage. No approximate location is inferred.
+The search stage has a 10-second ceiling inside the shared 60-second deadline.
+
+The backend accepts at most three short claims. Each requires an HTTPS URL present
+in both the native search sources and URL-citation annotations, valid annotation
+bounds and a bounded native source title. Missing citations, changed/multiple
+queries, extra searches, page-open/follow-up tools, unfinished responses and
+excessive evidence fail explicitly. Empty attributable evidence is
+`foundry_no_results`; failure/timeout retains its safe error category. The request
+does not retry, fabricate web facts or present a non-web result as web-grounded.
+Independent non-web requests continue through the unchanged ordinary path.
+
+The additional model invocation and `web_iq` tool attempt are reserved in the same
+request-local budget; actual usage is accounted immediately. The web invocation
+has at most 2,000 input tokens and the existing 1,500-token output reservation.
+Validated web evidence must fit the 4,000-token tool-result limit and the subsequent
+recipe input preflight. Token headroom is rechecked before recipe generation.
+The normal web path therefore uses four total model invocations, leaving no extra
+allowance for a revision. The global one-web-call limit still spans revisions.
+
+Validated evidence enters recipe generation as explicitly untrusted data.
+It cannot authorize tools, replace curated provenance, supply USDA nutrition
+or override deterministic allergy/restriction checks. The backend attaches
+the claims, native citation URLs/titles and UTC retrieval time as `webGrounding`,
+separate from curated `sourceClaims`, `sources` and USDA evidence. The recipe
+draft schema remains version 2. This slice does not add a citation UI or change
+the requirement for the later full-recipe safety gate before display/persistence.
 
 Operational events contain only allowlisted categories, opaque operation IDs,
 durations, and validated agent identity metadata for `recipe_invoked`. Profiles,
@@ -108,6 +157,7 @@ are explicit `null`, not omitted or guessed.
 | `shoppingItems` | Exactly the missing ingredient lines, with shortage amounts where determinable |
 | `nutrition` | `known/partial/unavailable`, serving basis/count, attributed nutrient amounts, exact ingredient mappings, USDA source/version/food IDs, informational-estimate/not-medical-advice notice |
 | `sources` | Up to 12 references, copied from the cited recipe and nutrition tool evidence, never generated by the model |
+| `webGrounding` | Null on the ordinary path; otherwise 1-3 bounded claims, native citation URLs/titles and UTC retrieval time, validated by the backend |
 
 Inventory comparison is conservative. It uses catalog-recognized ingredients
 and matching normalized display names in the same unit, without implicit
@@ -133,7 +183,9 @@ check the latest profile and ingredient-bearing prose before display/persistence
 
 `recipe_definition.py` versions the specialist policy and builds the pinned SDK's
 `PromptAgentDefinition` with GPT-5.4's configured deployment, strict draft schema,
-only the approved recipe MCP tool and an explicit `RaiConfig`. Supported baseline safety is
+the approved recipe MCP and native Web IQ tools, and an explicit `RaiConfig`.
+The source definition defaults to `tool_choice=none`; only the gateway's
+stage-specific override enables the appropriate tool. Supported baseline safety is
 required now; broad Responsible AI evaluation remains separate work.
 
 Use the existing dev-only publisher and existing identity-bound agents; do not
@@ -220,11 +272,14 @@ Offline fixtures do not prove Azure relevance, remote identity binding or live a
 With the locked Python 3.12 environment from the repository setup:
 
 ```powershell
-python -m pytest tests\unit\test_recipe_specialist.py tests\unit\test_recipe_indexing.py tests\integration\test_recipe_knowledge.py tests\integration\test_grounded_specialist.py
+python -m pytest tests\unit\test_recipe_specialist.py tests\unit\test_recipe_indexing.py tests\unit\test_orchestrator.py tests\unit\test_orchestrator_gateway.py tests\integration\test_recipe_knowledge.py tests\integration\test_grounded_specialist.py tests\integration\test_web_grounding.py
 ```
 
 These are schema/policy/transport contract checks using scripted model responses,
 not evidence of GPT-5.4 recipe quality, deployed content-filter configuration or
-live USDA/Foundry IQ access. They cover groceries, substitutions, time/skill,
+live USDA/Foundry IQ/Web IQ access. They cover groceries, substitutions, time/skill,
 missing/partial grounding, hard restrictions, exact nutrition mappings, strict
 SDK output, identity/version publication, budgets, cancellation and safe errors.
+Web fixtures also exercise zero-call pantry routing, minimized queries, native
+citations, tool/query allowlists, web failures/deadlines, nested usage and allergy
+precedence. No live search, agent publication or deployment is performed.

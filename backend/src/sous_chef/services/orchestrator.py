@@ -52,12 +52,8 @@ class ExecutionBudget:
         raise OrchestratorError(OrchestratorFailure.BUDGET_EXHAUSTED, self.operation_id)
 
     def model(self, *, specialist: bool = False) -> None:
-        self._check_deadline()
-        if (
-            self.model_calls >= POLICY.max_model_calls
-            or self.output_tokens + POLICY.output_tokens_per_call > POLICY.total_output_tokens
-            or self.input_tokens >= POLICY.total_input_tokens
-        ):
+        self.model_allowance()
+        if self.model_calls >= POLICY.max_model_calls:
             self.fail()
         if specialist:
             if self.specialist_calls >= POLICY.max_specialist_calls:
@@ -68,6 +64,18 @@ class ExecutionBudget:
             self.tool_calls += 1
             self.specialist_calls += 1
         self.model_calls += 1
+
+    def model_allowance(self) -> tuple[int, int]:
+        self._check_deadline()
+        if (
+            self.output_tokens + POLICY.output_tokens_per_call > POLICY.total_output_tokens
+            or self.input_tokens >= POLICY.total_input_tokens
+        ):
+            self.fail()
+        return (
+            min(POLICY.max_input_tokens, POLICY.total_input_tokens - self.input_tokens),
+            POLICY.output_tokens_per_call,
+        )
 
     def usage(self, usage: TokenUsage) -> None:
         self._check_deadline()

@@ -85,7 +85,10 @@ def call(
         call=SpecialistCall(
             call_id=call_id,
             arguments=SpecialistArguments(
-                requirements="A mild rice dinner.", time_budget_minutes=minutes, use_web=use_web
+                requirements="A mild rice dinner.",
+                time_budget_minutes=minutes,
+                use_web=use_web,
+                web_query="latest food recalls" if use_web else None,
             ),
         ),
     )

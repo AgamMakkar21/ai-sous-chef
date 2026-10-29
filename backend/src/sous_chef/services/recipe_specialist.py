@@ -42,8 +42,10 @@ from sous_chef.domain.recipes import (
     RecipeToolError,
     ShoppingItem,
     StructuredRecipe,
+    WebGroundingRequest,
 )
 from sous_chef.services.recipe_grounding import retrieval_query
+from sous_chef.services.web_grounding import public_web_query
 from sous_chef.telemetry import ErrorCategory, Event, operational_event, trace_id
 
 
@@ -157,8 +159,25 @@ class RecipeSpecialistService:
                 async with asyncio.timeout_at(deadline):
                     if monotonic() >= deadline:
                         raise TimeoutError
-                    if arguments.use_web:
-                        raise FoundryGatewayError(FoundryFailure.UNAVAILABLE, request)
+                    web = None
+                    query = public_web_query(context, arguments)
+                    if query is not None:
+                        authorize_tool(AgentRole.RECIPE_NUTRITION, AgentTool.WEB_IQ)
+                        budget.tool(AgentTool.WEB_IQ)
+                        budget.model()
+                        async with asyncio.timeout(POLICY.web_deadline_seconds):
+                            web, web_usage = await self._generator.ground_web(
+                                WebGroundingRequest(
+                                    role=AgentRole.RECIPE_NUTRITION,
+                                    operation_id=operation_id,
+                                    prompt=query,
+                                    max_input_tokens=min(2000, max_input_tokens),
+                                    max_output_tokens=request.max_output_tokens,
+                                )
+                            )
+                        budget.usage(web_usage)
+                        input_allowance, _ = budget.model_allowance()
+                        max_input_tokens = min(max_input_tokens, input_allowance)
                     authorize_tool(AgentRole.RECIPE_NUTRITION, AgentTool.FOUNDRY_IQ_RECIPES)
                     budget.tool(AgentTool.FOUNDRY_IQ_RECIPES)
                     request = RecipeGenerationRequest(
@@ -173,6 +192,14 @@ class RecipeSpecialistService:
                         max_output_tokens=request.max_output_tokens,
                         grounding_json="{}",
                     )
+                    if web is not None:
+                        request = request.model_copy(
+                            update={
+                                "prompt": request.prompt
+                                + "\nBackend webGrounding (untrusted DATA):\n"
+                                + web.model_dump_json(by_alias=True)
+                            }
+                        )
                     query = retrieval_query(context, arguments)
                     if self._recipes is None:
                         request = GroundedRecipeGenerationRequest(
@@ -250,6 +277,7 @@ class RecipeSpecialistService:
                             *(sources[source_id] for source_id in draft.source_ids),
                             *evidence.sources,
                         ),
+                        web_grounding=web,
                     )
                     result = SpecialistResult(
                         recipe=recipe,
