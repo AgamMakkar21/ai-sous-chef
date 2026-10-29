@@ -6,7 +6,7 @@ import {
   type Preferences,
   type Session,
   type Snapshot,
-} from "./profile";
+} from "./profile.ts";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -36,7 +36,7 @@ function fieldErrors(problem: unknown): FieldErrors {
   return errors;
 }
 
-async function request(
+export async function request(
   path: string,
   init: RequestInit = {},
 ): Promise<Response> {
@@ -75,7 +75,7 @@ async function request(
   return response;
 }
 
-async function json(response: Response): Promise<unknown> {
+export async function json(response: Response): Promise<unknown> {
   try {
     return await response.json();
   } catch {

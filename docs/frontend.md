@@ -1,10 +1,11 @@
-# Authenticated kitchen shell (ASC-19)
+# Authenticated kitchen UI (ASC-19 and ASC-39)
 
 Issue [#20](https://github.com/AgamMakkar21/ai-sous-chef/issues/20) adds the
 React/TypeScript/Vite browser shell, first-run onboarding and explicit-profile
 editing. The persistent tabs are **Groceries**, **Sous Chef**, and **Recipe History**.
-Their panels describe upcoming work: grocery CRUD controls, chat and recipe-history
-contents are not implemented by this slice. No sample groceries or recipes are
+ASC-39 / [#41](https://github.com/AgamMakkar21/ai-sous-chef/issues/41) adds conversation
+navigation to Sous Chef. Grocery CRUD controls, sending messages and recipe-history
+screens remain separate work. No sample groceries, conversations or recipes are
 presented as account data.
 
 ## Build and run
@@ -66,9 +67,52 @@ does the same. A malformed response or missing ETag fails visibly rather than
 inventing a profile or claiming a confirmed save.
 
 Profiles, drafts and CSRF tokens stay in memory, not local/session storage,
-analytics or URLs. Only fixed tab hashes persist navigation. User text is rendered
+analytics or URLs. Fixed tab hashes persist top-level navigation. User text is rendered
 through escaped React text/controls, never injected HTML. Sign-out and navigation
 warn before discarding an edited draft.
+
+## Conversation navigation (ASC-39)
+
+The Sous Chef tab uses the existing owned conversation APIs, not a second history
+store or a model call. New Chat creates an empty conversation only on explicit
+action. Each creation has a fresh idempotency key and uses a freshly verified
+session and CSRF token. An uncertain result or CSRF failure never automatically
+replays the write: **Check chat creation** explicitly repeats the same key/body.
+The backend receipt resolves a committed creation to the original opaque ID.
+
+Session storage retains only the selected opaque conversation UUID, any unresolved
+creation key and a SHA-256 owner scope. It contains no messages, titles, user IDs,
+profiles or tokens. Reloading or switching tabs restores selection, not cached
+content. A different signed-in user discards the old navigation record; every
+read rechecks the session and lets the backend enforce ownership. A 401 or changed
+identity clears the displayed conversation with the rest of the private UI.
+Unavailable/corrupt browser storage produces a visible notice rather than a false
+promise of reload persistence.
+
+Conversation lists and transcripts request 20 records per page. Earlier/next
+controls fetch only the requested page, preserve server ordering and discard the
+previous page's content; there is no lifetime-history prefetch. Refresh restarts
+the server snapshot. Expired history cursors can restart from page one. A selected
+conversation outside the current list page remains highlighted separately, without
+scanning every list page to locate it.
+
+Existing metadata titles are rendered as escaped text. A generic title can use
+the selected chat's first loaded user message, shortened to 80 Unicode code points
+with control/format characters removed. This display-only title never inherits
+another chat's transcript, changes stored metadata or invokes a model. Empty new
+chats use **New chat**. Transcript messages are plain React text, not injected
+HTML or executable Markdown. Pending, failed and unknown outcomes stay distinct
+from completed assistant replies.
+
+The sidebar collapses on phones and supports native keyboard buttons, selection
+highlighting and focus on the selected transcript. Loading, empty, unavailable
+and failed reads have separate visible states. No raw service error is displayed.
+Sending/retrying messages and structured recipe rendering belong to ASC-40 and
+later work; there is no active message composer in this slice.
+
+Hosted use still requires the live Cosmos/authentication setup and shared
+`ASC_PAGINATION_KEY` described in [conversation setup](conversations.md#setup).
+Local readiness doubles do not fabricate conversations or history.
 
 ## Checks and packaging
 
@@ -85,6 +129,9 @@ Playwright builds the actual production bundle and owns a temporary preview
 server. Desktop and phone contexts cover onboarding, returning-user edits,
 persistence across reload, validation, concurrency, uncertain writes, CSRF,
 identity/session expiry, keyboard tabs, escaping, themes and narrow layouts.
+Conversation cases also cover independent creation, reload/tab restoration,
+bounded pages, context-derived titles, malicious markup, interrupted creation,
+CSRF, cross-account isolation and late responses after switching chats.
 API responses use synthetic test-only route doubles. These checks do not claim
 live OAuth, live Cosmos or deployed-browser verification.
 
