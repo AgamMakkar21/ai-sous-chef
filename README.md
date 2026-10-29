@@ -12,8 +12,9 @@ feedback-based personalization.
 The scaffold runs a FastAPI backend with offline readiness doubles and fail-closed
 consumer authentication. Profile/onboarding, grocery inventory and conversation
 persistence APIs, shared Cosmos access and the managed-agent gateway are available.
-The React frontend adds the authenticated three-tab shell and onboarding/profile
-editing. Grocery, chat and recipe-history screen contents remain follow-on work.
+The React frontend adds the authenticated three-tab shell, onboarding/profile
+editing, and conversation creation, selection and paginated transcripts.
+Grocery controls, message sending and recipe-history screens remain follow-on work.
 Live chat execution and other product endpoints remain separate work.
 The [Recipe + Nutrition specialist](docs/recipe-specialist.md) supplies versioned
 instructions, strict recipe output and fixture-backed grounding/nutrition interfaces;
