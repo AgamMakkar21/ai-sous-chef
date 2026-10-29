@@ -30,6 +30,7 @@ from sous_chef.domain.orchestrator import (
     SpecialistCall,
     TokenUsage,
 )
+from sous_chef.domain.recipes import StructuredRecipe
 from sous_chef.telemetry import ErrorCategory, Event, operational_event, trace_id
 
 
@@ -170,6 +171,7 @@ class OrchestratorService:
         previous: SpecialistCall | None = None
         output: str | None = None
         candidate: RecipeCandidate | None = None
+        recipe: StructuredRecipe | None = None
         status = "not_requested"
         minutes: int | None = None
         while True:
@@ -199,7 +201,10 @@ class OrchestratorService:
                             OrchestratorFailure.INVALID_RESULT, budget.operation_id
                         )
                     return OrchestrationResult(
-                        status="candidate", explanation=answer.explanation, candidate=candidate
+                        status="candidate",
+                        explanation=answer.explanation,
+                        candidate=candidate,
+                        recipe=recipe,
                     )
                 return OrchestrationResult(status=answer.status, explanation=answer.explanation)
             assert step.call is not None
@@ -230,6 +235,7 @@ class OrchestratorService:
                 ) from None
             budget.usage(specialist.usage)
             candidate = specialist.candidate
+            recipe = specialist.recipe
             status = _candidate_status(candidate, context, minutes)
             if budget.specialist_calls == POLICY.max_specialist_calls:
                 if status != "candidate":
@@ -240,6 +246,7 @@ class OrchestratorService:
                     status="candidate",
                     explanation=" ".join(candidate.fit_reasons)[:1000],
                     candidate=candidate,
+                    recipe=recipe,
                 )
             previous = call
             output = json.dumps(

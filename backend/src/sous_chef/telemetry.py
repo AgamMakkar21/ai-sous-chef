@@ -83,6 +83,10 @@ class Event(StrEnum):
     ORCHESTRATOR_FAILED = "orchestrator_failed"
     ORCHESTRATOR_CANCELLED = "orchestrator_cancelled"
     ORCHESTRATOR_INVOKED = "orchestrator_invoked"
+    RECIPE_INVOKED = "recipe_invoked"
+    RECIPE_COMPLETED = "recipe_completed"
+    RECIPE_FAILED = "recipe_failed"
+    RECIPE_CANCELLED = "recipe_cancelled"
 
 
 @dataclass(frozen=True)
@@ -106,8 +110,10 @@ class _OperationalEvent:
             fields["status"] = self.status
         if self.duration_ms is not None:
             fields["duration_ms"] = round(self.duration_ms, 2)
-        if self.event == Event.ORCHESTRATOR_INVOKED:
-            fields["agent_role"] = "orchestrator"
+        if self.event in {Event.ORCHESTRATOR_INVOKED, Event.RECIPE_INVOKED}:
+            fields["agent_role"] = (
+                "orchestrator" if self.event == Event.ORCHESTRATOR_INVOKED else "recipe_nutrition"
+            )
             for name, value in (
                 ("agent_name", self.agent_name),
                 ("agent_version", self.agent_version),
@@ -132,7 +138,7 @@ def operational_event(
         raise ValueError("Operational status must be an HTTP status code.")
     if duration_ms is not None and (not isfinite(duration_ms) or duration_ms < 0):
         raise ValueError("Operational duration must be finite and nonnegative.")
-    if event == Event.ORCHESTRATOR_INVOKED:
+    if event in {Event.ORCHESTRATOR_INVOKED, Event.RECIPE_INVOKED}:
         if (
             agent_name is None
             or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", agent_name)
@@ -154,6 +160,7 @@ def operational_event(
             Event.FOUNDRY_FAILED,
             Event.COSMOS_FAILED,
             Event.ORCHESTRATOR_FAILED,
+            Event.RECIPE_FAILED,
         }
         else logging.INFO
     )
