@@ -169,9 +169,11 @@ test("first-run onboarding saves all nine fields and persists after reload", asy
     .getByLabel("I have reviewed my allergies", { exact: false })
     .check();
   await page.getByRole("button", { name: "Save and open my kitchen" }).click();
-  await expect(page.getByRole("status")).toHaveText(
-    "Your cooking profile is saved.",
-  );
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "Your cooking profile is saved." }),
+  ).toHaveText("Your cooking profile is saved.");
   expect(writes).toHaveLength(1);
   expect(writes[0]?.method).toBe("PUT");
   expect(writes[0]?.body).toEqual(preferences);
@@ -229,9 +231,11 @@ test("returning users edit only intended fields and persistence survives reload"
     .getByLabel("Flavors and foods you like", { exact: true })
     .fill("basil");
   await page.getByRole("button", { name: "Save profile", exact: true }).click();
-  await expect(page.getByRole("status")).toHaveText(
-    "Your cooking profile is saved.",
-  );
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "Your cooking profile is saved." }),
+  ).toHaveText("Your cooking profile is saved.");
   expect(writes[0]?.method).toBe("PATCH");
   expect(writes[0]?.headers["if-match"]).toBe('"revision-2"');
   expect(writes[0]?.body).toEqual({ likes: ["basil"] });
@@ -331,10 +335,34 @@ test("a stale revision requires comparison and explicit retry without overwritin
   await page
     .getByLabel("I reviewed the saved profile.", { exact: false })
     .check();
+  let releaseGroceries = () => {};
+  const groceries = new Promise<void>((resolve) => {
+    releaseGroceries = resolve;
+  });
+  await page.route("**/api/v1/groceries", async (route) => {
+    await groceries;
+    await route.fulfill({
+      headers: { ETag: '"revision-2"' },
+      json: { items: [], nextCursor: null },
+    });
+  });
   await page.getByRole("button", { name: "Save profile", exact: true }).click();
-  await expect(page.getByRole("status")).toHaveText(
-    "Your cooking profile is saved.",
-  );
+  try {
+    await expect(page.getByRole("status")).toHaveCount(2);
+    await expect(
+      page
+        .getByRole("status")
+        .filter({ hasText: "Your cooking profile is saved." }),
+    ).toHaveText("Your cooking profile is saved.");
+    await expect(
+      page.getByRole("status").filter({ hasText: "Loading your groceries..." }),
+    ).toBeVisible();
+  } finally {
+    releaseGroceries();
+  }
+  await expect(
+    page.getByText("Your grocery list is empty.", { exact: false }),
+  ).toBeVisible();
   expect(writes).toHaveLength(2);
   expect(writes[1]?.headers["if-match"]).toBe('"revision-2"');
   expect(writes[1]?.body).toEqual({ likes: ["basil"] });
@@ -402,9 +430,11 @@ test("CSRF renewal requires a new user-initiated save", async ({ page }) => {
   expect(state.sessions).toBe(sessions + 1);
   expect(writes).toHaveLength(1);
   await page.getByRole("button", { name: "Save profile", exact: true }).click();
-  await expect(page.getByRole("status")).toHaveText(
-    "Your cooking profile is saved.",
-  );
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "Your cooking profile is saved." }),
+  ).toHaveText("Your cooking profile is saved.");
   expect(writes[1]?.headers["x-csrf-token"]).toBe("r".repeat(43));
 });
 
