@@ -28,6 +28,12 @@ type Write = {
 };
 
 async function backend(page: Page, initial: Preferences | null = preferences) {
+  await page.route("**/api/v1/groceries", (route) =>
+    route.fulfill({
+      headers: { ETag: '"revision-1"' },
+      json: { items: [], nextCursor: null },
+    }),
+  );
   const writes: Write[] = [];
   const state: {
     profile: Preferences | null;

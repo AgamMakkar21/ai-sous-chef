@@ -64,6 +64,10 @@ If decrement would reach zero or below, ask the user to confirm removal.
 Confirmation sends DELETE with the current ETag; cancellation sends nothing.
 The backend rejects zero/negative quantities and never silently deletes a row.
 
+The [Groceries tab](frontend.md#grocery-inventory) implements these controls with
+confirmed server state, a single in-flight mutation and explicit reload/review
+recovery. No mutation is automatically replayed after a failure.
+
 The same trimmed, Unicode-casefolded name and exact selected unit (including
 null) is a duplicate, even if its quantity differs. Creation and edits reject
 duplicates with 409 `duplicate_grocery`. The error's safe `errors` entry includes

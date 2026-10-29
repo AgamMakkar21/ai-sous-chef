@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import { ApiError, getProfile, getSession } from "./api";
 import ProfileForm from "./ProfileForm";
+import Groceries from "./Groceries";
 import type { Session, Snapshot } from "./profile";
 
 type State =
@@ -15,7 +16,7 @@ const tabs = [
     id: "groceries",
     name: "Groceries",
     title: "Good cooking starts with what you have.",
-    text: "Your cooking profile is ready. Grocery lists and inventory controls are coming in the next update.",
+    text: "",
     symbol: "01",
   },
   {
@@ -70,10 +71,12 @@ export default function App() {
   }, [attempt]);
 
   useEffect(() => {
-    const update = () => setSelected(initialTab());
+    const update = () => {
+      if (!busy) setSelected(initialTab());
+    };
     window.addEventListener("hashchange", update);
     return () => window.removeEventListener("hashchange", update);
-  }, []);
+  }, [busy]);
 
   function expire() {
     setState({ kind: "signed-out" });
@@ -299,18 +302,34 @@ export default function App() {
                       <span className="art-label">MADE FOR YOUR EVERYDAY</span>
                     </div>
                   </section>
-                  <section className="card coming-next">
-                    <span className="step">{tab.symbol}</span>
-                    <div>
-                      <p className="eyebrow">COMING NEXT</p>
-                      <h2>{tab.name}</h2>
-                      <p>{tab.text}</p>
-                      <button className="text-button" onClick={openProfile}>
-                        Review your cooking profile{" "}
-                        <span aria-hidden="true">&rarr;</span>
-                      </button>
-                    </div>
-                  </section>
+                  {tab.id === "groceries" ? (
+                    <Groceries
+                      session={ready.session}
+                      onExpired={expire}
+                      onBusy={setBusy}
+                      onSession={(session) =>
+                        setState((current) =>
+                          current.kind === "ready" &&
+                          current.session.userId === session.userId
+                            ? { ...current, session }
+                            : current,
+                        )
+                      }
+                    />
+                  ) : (
+                    <section className="card coming-next">
+                      <span className="step">{tab.symbol}</span>
+                      <div>
+                        <p className="eyebrow">COMING NEXT</p>
+                        <h2>{tab.name}</h2>
+                        <p>{tab.text}</p>
+                        <button className="text-button" onClick={openProfile}>
+                          Review your cooking profile{" "}
+                          <span aria-hidden="true">&rarr;</span>
+                        </button>
+                      </div>
+                    </section>
+                  )}
                 </Tabs.Content>
               ))}
             </>
