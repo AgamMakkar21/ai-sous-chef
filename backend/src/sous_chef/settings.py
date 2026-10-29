@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     foundry_iq_connection_name: str | None = Field(
         default=None, min_length=3, max_length=33, pattern=_SEARCH_NAME, repr=False
     )
+    foundry_iq_max_results: int = Field(default=3, ge=1, le=3)
+    foundry_iq_max_context_tokens: int = Field(default=4000, ge=256, le=4000)
     foundry_orchestrator_deployment: str | None = Field(
         default=None, pattern=_DEPLOYMENT_NAME, repr=False
     )

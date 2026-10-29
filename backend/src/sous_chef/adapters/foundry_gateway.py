@@ -27,6 +27,7 @@ from openai.types.responses import Response
 from pydantic import ValidationError
 
 from sous_chef.adapters.credentials import build_async_credential
+from sous_chef.adapters.foundry_iq import RecipeKnowledgeConfig
 from sous_chef.domain.agent_identity import AgentRole
 from sous_chef.domain.foundry import (
     FoundryFailure,
@@ -44,7 +45,13 @@ from sous_chef.domain.orchestrator import (
     SpecialistCall,
     TokenUsage,
 )
-from sous_chef.domain.recipes import RecipeDraft, RecipeGenerationRequest
+from sous_chef.domain.recipes import (
+    GroundedRecipeGenerationRequest,
+    RecipeDraft,
+    RecipeGenerationRequest,
+    RecipeGrounding,
+    RecipeToolError,
+)
 from sous_chef.settings import ConfigurationError, Settings
 from sous_chef.telemetry import ErrorCategory, Event, operational_event, trace_id
 
@@ -147,6 +154,12 @@ class FoundryGateway:
         self._require_agent_pins()
         return await self._execute(request, self._recipe_result)
 
+    async def generate_grounded_recipe(
+        self, request: GroundedRecipeGenerationRequest
+    ) -> tuple[RecipeDraft, RecipeGrounding, TokenUsage]:
+        self._require_agent_pins()
+        return await self._execute(request, self._grounded_recipe_result)
+
     async def _execute(
         self,
         request: FoundryRequest,
@@ -176,7 +189,15 @@ class FoundryGateway:
                     if coordination is not None:
                         self._check_coordination_input(coordination)
                     elif isinstance(request, RecipeGenerationRequest):
-                        self._check_recipe_input(request)
+                        self._check_recipe_input(
+                            request,
+                            body=self._grounded_recipe_body()
+                            if isinstance(request, GroundedRecipeGenerationRequest)
+                            else None,
+                            reserved_tool_tokens=self._settings.foundry_iq_max_context_tokens
+                            if isinstance(request, GroundedRecipeGenerationRequest)
+                            else 0,
+                        )
                     async with self._factory(self._settings) as client:
                         body: dict[str, object] = {
                             "agent_reference": {
@@ -187,6 +208,8 @@ class FoundryGateway:
                         }
                         if coordination is not None:
                             body.update(self._coordination_body(coordination))
+                        elif isinstance(request, GroundedRecipeGenerationRequest):
+                            body.update(self._grounded_recipe_body())
                         elif isinstance(request, RecipeGenerationRequest):
                             body.update(self._recipe_body())
                         response = await client.responses.create(
@@ -207,6 +230,8 @@ class FoundryGateway:
                 raise FoundryGatewayError(FoundryFailure.UNAVAILABLE, request) from None
             except (APIResponseValidationError, JSONDecodeError, UnicodeDecodeError):
                 raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request) from None
+            except RecipeToolError as exc:
+                raise FoundryGatewayError(exc.code, request) from None
         except FoundryGatewayError as exc:
             operational_event(
                 Event.FOUNDRY_FAILED,
@@ -235,16 +260,35 @@ class FoundryGateway:
             "text": {"format": recipe_output_format().as_dict()},
         }
 
+    def _grounded_recipe_body(self) -> dict[str, object]:
+        from sous_chef.recipe_definition import recipe_knowledge_tool
+
+        config = RecipeKnowledgeConfig.from_settings(self._settings)
+        body = self._recipe_body()
+        body.update(
+            tools=[recipe_knowledge_tool(config.mcp_endpoint, config.connection_name).as_dict()],
+            tool_choice="required",
+            max_tool_calls=1,
+        )
+        return body
+
     @staticmethod
-    def _check_recipe_input(request: RecipeGenerationRequest) -> None:
+    def _check_recipe_input(
+        request: RecipeGenerationRequest,
+        *,
+        body: dict[str, object] | None = None,
+        reserved_tool_tokens: int = 0,
+    ) -> None:
         from sous_chef.recipe_definition import RECIPE_INSTRUCTIONS
         from sous_chef.services.context import _encoding
 
         encoding = _encoding()
         serialized = (
-            RECIPE_INSTRUCTIONS + request.prompt + json.dumps(FoundryGateway._recipe_body())
+            RECIPE_INSTRUCTIONS
+            + request.prompt
+            + json.dumps(FoundryGateway._recipe_body() if body is None else body)
         )
-        tokens = len(encoding.encode(serialized, disallowed_special=())) + 64
+        tokens = len(encoding.encode(serialized, disallowed_special=())) + 64 + reserved_tool_tokens
         tool_tokens = len(encoding.encode(request.grounding_json, disallowed_special=()))
         if tokens > request.max_input_tokens or tool_tokens > POLICY.max_tool_result_tokens:
             raise FoundryGatewayError(FoundryFailure.REJECTED, request)
@@ -274,6 +318,54 @@ class FoundryGateway:
             )
         except ValueError:
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request) from None
+
+    def _grounded_recipe_result(
+        self, request: FoundryRequest, response: Response
+    ) -> tuple[RecipeDraft, RecipeGrounding, TokenUsage]:
+        from sous_chef.recipe_definition import RECIPE_KNOWLEDGE_LABEL, RECIPE_KNOWLEDGE_TOOL
+        from sous_chef.services.recipe_grounding import parse_mcp_grounding
+
+        assert isinstance(request, GroundedRecipeGenerationRequest)
+        calls = [item for item in response.output if item.type == "mcp_call"]
+        allowed = {"reasoning", "message", "mcp_list_tools", "mcp_call"}
+        if (
+            len(calls) != 1
+            or any(item.type not in allowed for item in response.output)
+            or any(
+                item.server_label != RECIPE_KNOWLEDGE_LABEL or item.error is not None
+                for item in response.output
+                if item.type == "mcp_list_tools"
+            )
+        ):
+            raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
+        call = calls[0]
+        if call.server_label != RECIPE_KNOWLEDGE_LABEL or call.name != RECIPE_KNOWLEDGE_TOOL:
+            raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
+        if call.error is not None:
+            code = (
+                self._http_failure(call.error.code)
+                if call.error.type == "http_error"
+                else FoundryFailure.UNAVAILABLE
+            )
+            raise FoundryGatewayError(code, request)
+        if call.output is None or json.loads(call.arguments) != {"query": request.retrieval_query}:
+            raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
+        grounding = parse_mcp_grounding(
+            call.output,
+            max_results=self._settings.foundry_iq_max_results,
+            max_context_tokens=self._settings.foundry_iq_max_context_tokens,
+        )
+        if grounding.status == "empty":
+            raise FoundryGatewayError(FoundryFailure.NO_RESULTS, request)
+        recipe_response = response.model_copy(
+            update={
+                "output": [
+                    item for item in response.output if item.type in {"reasoning", "message"}
+                ]
+            }
+        )
+        draft, usage = self._recipe_result(request, recipe_response)
+        return draft, grounding, usage
 
     @staticmethod
     def _check_coordination_input(request: CoordinationRequest) -> None:

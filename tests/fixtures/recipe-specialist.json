@@ -14,7 +14,7 @@
     ]
   },
   "draft": {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "title": "Simple carrot rice",
     "servings": 2,
     "totalMinutes": 25,
@@ -41,7 +41,10 @@
     ],
     "fitReasons": ["Beginner techniques and a 25-minute cooking plan."],
     "adaptations": ["Olive oil replaces butter; seasonings can be adapted."],
-    "sourceIds": ["fixture-rice"]
+    "sourceIds": ["fixture-rice"],
+    "sourceClaims": [
+      {"sourceId": "fixture-rice", "quote": "Beginner preparation, 25 minutes."}
+    ]
   },
   "nutrition": {
     "status": "known",

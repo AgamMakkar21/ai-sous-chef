@@ -294,7 +294,8 @@ ASC-29 connects the normalized corpus to a dedicated Azure AI Search index,
 search-index knowledge source, knowledge base, and New Foundry `RemoteTool`
 connection. It preserves each stable `source_id`, the complete normalized recipe,
 the pinned dataset URL, attribution and license metadata. No raw recipes are
-committed. Specialist tool attachment and agent invocation belong to ASC-30.
+committed. ASC-30 connects the specialist through the identity-bound MCP tool;
+see [specialist retrieval and setup](docs/recipe-specialist.md).
 
 **Do not run setup or refresh against dev before the PR is reviewed and approved.**
 These commands change Azure resources and upload recipe content. Confirm corpus
@@ -321,6 +322,8 @@ environment; the scaffold does not require them at startup:
 | `ASC_FOUNDRY_IQ_KNOWLEDGE_SOURCE_NAME` | Search-index knowledge source |
 | `ASC_FOUNDRY_IQ_KNOWLEDGE_BASE_NAME` | Extractive recipe knowledge base |
 | `ASC_FOUNDRY_IQ_CONNECTION_NAME` | Agent-identity MCP connection; 3 to 33 characters |
+| `ASC_FOUNDRY_IQ_MAX_RESULTS` | Optional result bound, 1-3; default 3 |
+| `ASC_FOUNDRY_IQ_MAX_CONTEXT_TOKENS` | Optional context bound, 256-4,000; default 4,000 |
 
 Search resource names use lowercase letters, numbers and single interior hyphens,
 start with a letter and contain 3 to 63 characters. Examples are commented in
@@ -354,7 +357,7 @@ Partial indexing/query failures, invalid citations, authentication and service
 errors also exit nonzero; no model-generated or direct-index-search fallback runs.
 
 The knowledge base uses minimal, extractive retrieval without an additional LLM
-or embedding deployment. Retrieval is bounded to five documents, 4,096 output
+or embedding deployment. Retrieval is bounded to three documents, 4,000 output
 tokens and ten service seconds. Search/MCP REST is pinned to
 `2026-08-01-preview`; project connection ARM REST is `2025-10-01-preview`.
 These preview surfaces use the existing `azure-core` pipeline, without adding
@@ -365,7 +368,7 @@ Grant **Search Index Data Reader** only to the actual Recipe + Nutrition agent
 principal, preserving its distinct identity from the Orchestrator and workloads.
 Creating a connection does not create an agent or grant RBAC. The operator query
 does not prove the agent's identity can retrieve; verify the actual specialist
-caller and citations when ASC-30 attaches `knowledge_base_retrieve`. Do not treat
+caller and citations through ASC-30's `knowledge_base_retrieve` path. Do not treat
 unpublished agents' shared project-level agent identity as the final distinct
 principal. Browser/user profiles, conversations and learned preferences never
 enter this shared recipe index.

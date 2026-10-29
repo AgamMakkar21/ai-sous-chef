@@ -109,6 +109,7 @@ Do not serialize the raw SDK exception, service body or traceback to a user.
 | `foundry_timeout` | Total deadline, SDK timeout, or upstream 408/504 |
 | `foundry_invalid_result` | Invalid response schema, unfinished/refused/empty/oversized result |
 | `foundry_unavailable` | Connection/transport failure or other upstream 5xx |
+| `foundry_no_results` | Recipe knowledge retrieval succeeded but found no supporting sources |
 | `foundry_rejected` | Other service rejection, including incorrect agent/version configuration |
 
 The total async deadline covers credential/client setup, the network operation
