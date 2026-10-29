@@ -69,7 +69,13 @@ export async function request(
       throw new ApiError(response.status);
     }
     const code =
-      isRecord(problem) && problem.code === "csrf_failed" ? "csrf_failed" : "";
+      isRecord(problem) &&
+      typeof problem.code === "string" &&
+      ["csrf_failed", "duplicate_grocery", "grocery_limit_reached"].includes(
+        problem.code,
+      )
+        ? problem.code
+        : "";
     throw new ApiError(response.status, code, fieldErrors(problem));
   }
   return response;
@@ -156,4 +162,108 @@ export async function saveProfile(
   if (!saved.profile.onboardingCompleted)
     throw new ApiError(502, "invalid_response");
   return saved;
+}
+
+export const groceryUnits = [
+  "g",
+  "kg",
+  "ml",
+  "l",
+  "tsp",
+  "tbsp",
+  "cup",
+  "oz",
+  "lb",
+  "item",
+  "piece",
+  "bunch",
+  "can",
+  "package",
+] as const;
+export type GroceryUnit = (typeof groceryUnits)[number];
+function isGroceryUnit(value: unknown): value is GroceryUnit | null {
+  return value === null || groceryUnits.some((unit) => unit === value);
+}
+export type GroceryInput = {
+  name: string;
+  quantity: number | null;
+  unit: GroceryUnit | null;
+};
+export type Grocery = GroceryInput & { groceryId: string };
+export type Inventory = { items: Grocery[]; etag: string };
+export type GroceryChange =
+  | { method: "POST"; input: GroceryInput }
+  | { method: "PATCH"; id: string; input: { quantity: number | null } }
+  | { method: "DELETE"; id: string };
+
+export async function getGroceries(signal?: AbortSignal): Promise<Inventory> {
+  const response = await request("/api/v1/groceries", { signal });
+  const value = await json(response);
+  const etag = response.headers.get("ETag");
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.items) ||
+    value.items.length > 200 ||
+    value.nextCursor !== null ||
+    !etag ||
+    etag.length > 256 ||
+    !/^"[^"\r\n]+"$/.test(etag)
+  )
+    throw new ApiError(502, "invalid_response");
+  const items: Grocery[] = [];
+  for (const row of value.items) {
+    if (
+      !isRecord(row) ||
+      typeof row.groceryId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        row.groceryId,
+      ) ||
+      items.some((item) => item.groceryId === row.groceryId) ||
+      typeof row.name !== "string" ||
+      !row.name.trim() ||
+      [...row.name].length > 100 ||
+      /[\p{Cc}\p{Cs}]/u.test(row.name) ||
+      !(
+        row.quantity === null ||
+        (typeof row.quantity === "number" &&
+          Number.isFinite(row.quantity) &&
+          row.quantity > 0 &&
+          row.quantity <= 1_000_000 &&
+          Math.abs(row.quantity * 1000 - Math.round(row.quantity * 1000)) <
+            0.000001)
+      ) ||
+      !isGroceryUnit(row.unit)
+    )
+      throw new ApiError(502, "invalid_response");
+    items.push({
+      groceryId: row.groceryId,
+      name: row.name,
+      quantity: row.quantity,
+      unit: row.unit,
+    });
+  }
+  return { items, etag };
+}
+
+export async function changeGroceries(
+  session: Session,
+  inventory: Inventory,
+  change: GroceryChange,
+): Promise<void> {
+  await request(
+    `/api/v1/groceries${change.method === "POST" ? "" : `/${encodeURIComponent(change.id)}`}`,
+    {
+      method: change.method,
+      headers: {
+        "X-CSRF-Token": session.csrfToken,
+        "If-Match": inventory.etag,
+        ...(change.method !== "DELETE"
+          ? { "Content-Type": "application/json" }
+          : {}),
+      },
+      ...(change.method !== "DELETE"
+        ? { body: JSON.stringify(change.input) }
+        : {}),
+    },
+  );
 }

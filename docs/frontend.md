@@ -1,10 +1,12 @@
-# Authenticated kitchen UI (ASC-19 and ASC-39)
+# Authenticated kitchen UI (ASC-19, ASC-20 and ASC-39)
 
 Issue [#20](https://github.com/AgamMakkar21/ai-sous-chef/issues/20) adds the
 React/TypeScript/Vite browser shell, first-run onboarding and explicit-profile
 editing. The persistent tabs are **Groceries**, **Sous Chef**, and **Recipe History**.
+Issue [#19](https://github.com/AgamMakkar21/ai-sous-chef/issues/19) implements
+the grocery panel using the existing synchronous inventory APIs.
 ASC-39 / [#41](https://github.com/AgamMakkar21/ai-sous-chef/issues/41) adds conversation
-navigation to Sous Chef. Grocery CRUD controls, sending messages and recipe-history
+navigation to Sous Chef. Sending messages and recipe-history
 screens remain separate work. No sample groceries, conversations or recipes are
 presented as account data.
 
@@ -71,6 +73,37 @@ analytics or URLs. Fixed tab hashes persist top-level navigation. User text is r
 through escaped React text/controls, never injected HTML. Sign-out and navigation
 warn before discarding an edited draft.
 
+## Grocery inventory
+
+The Groceries tab reads the full bounded collection with its ETag. Quick entry
+accepts an ingredient name and optional quantity/unit. Each saved row offers
+keyboard-accessible quantity editing, +/- controls and confirmed deletion.
+Blank quantity means unknown, not zero or one; +/- is disabled until a quantity
+is explicitly supplied. Decrementing to zero or below asks for removal, and
+cancelling performs no write. Units are never converted or merged.
+
+Writes use `If-Match`, the in-memory CSRF token and the authenticated backend
+owner; the UI cannot select another user or access Cosmos directly. All controls
+and shell navigation are disabled during a write/reconciliation, with a
+synchronous single-flight guard against duplicate submissions. Quantities remain
+at their last confirmed values until the write and a fresh collection read
+succeed. This intentionally avoids optimistic rollback races.
+
+Loading, a confirmed empty list, pending updates and failures have separate
+accessible states. A failed write displays **Unable to update your groceries**,
+restores quantity inputs to confirmed values, retains quick-entry text and blocks
+mutations. **Retry** renews the session and reloads persisted inventory, never
+replays a write. The user reviews the refreshed quantities before explicitly
+submitting another change, including after a stale revision, CSRF failure or an
+ambiguous/committed-but-lost response. Last-confirmed values are labelled as
+potentially stale while recovery is required. Failed reads and malformed or
+revisionless responses never become an empty-list success. Session expiry or
+identity change clears the grocery view through the existing sign-in flow.
+
+No additional environment settings, services or AI dependencies are required;
+reuse [grocery API setup](groceries.md). Grocery data and drafts stay in memory.
+The layout wraps long names/labels and stacks quick entry on narrow screens.
+
 ## Conversation navigation (ASC-39)
 
 The Sous Chef tab uses the existing owned conversation APIs, not a second history
@@ -134,6 +167,14 @@ bounded pages, context-derived titles, malicious markup, interrupted creation,
 CSRF, cross-account isolation and late responses after switching chats.
 API responses use synthetic test-only route doubles. These checks do not claim
 live OAuth, live Cosmos or deployed-browser verification.
+
+`tests/groceries.spec.ts` additionally covers keyboard CRUD/reload persistence,
+zero-removal cancellation/confirmation, unknown and fractional quantities, limits,
+single-flight clicks, concurrent conflicts, failed writes, retry reconciliation,
+lost responses, expired sessions and 320-pixel layouts on desktop/phone Chromium.
+The dependency lock uses available PostCSS 8.5.31 (within Vite's declared range)
+and oxlint 1.89.0; the previous PostCSS 8.5.32/oxlint 1.90.0 entries returned
+package-not-found during clean installation.
 
 The installed-wheel build first compiles the frontend and includes the ignored
 bundle through Hatch build artifacts. The wheel smoke check rejects a missing

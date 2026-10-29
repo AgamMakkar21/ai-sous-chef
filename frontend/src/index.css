@@ -460,6 +460,50 @@ input[type="checkbox"] {
 .skip-link:focus {
   top: 8px;
 }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.grocery-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: end;
+}
+.grocery-list {
+  list-style: none;
+  padding: 0;
+  margin: 24px 0 0;
+}
+.grocery-row {
+  border-top: 1px solid var(--cp-border);
+  padding: 24px 0;
+}
+.grocery-row h3 {
+  margin: 0 0 8px;
+}
+.grocery-row h3,
+.grocery-row label {
+  overflow-wrap: anywhere;
+}
+.grocery-controls,
+.grocery-edit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 16px;
+}
+.grocery-edit .field {
+  flex: 1 1 180px;
+  max-width: 360px;
+}
+.grocery-empty {
+  margin: 24px 0 0;
+}
 .conversation-toolbar,
 .conversation-heading,
 .message-heading,
@@ -582,6 +626,9 @@ input[type="checkbox"] {
   padding: 24px 0;
 }
 @media (max-width: 720px) {
+  .grocery-entry {
+    grid-template-columns: 1fr;
+  }
   .app-shell {
     padding: 0 20px;
   }
