@@ -1,0 +1,63 @@
+{
+  "grounding": {
+    "status": "available",
+    "recipes": [
+      {
+        "source": {
+          "sourceId": "fixture-rice",
+          "version": "fixture-v1",
+          "kind": "curated_recipe",
+          "reference": "https://recipes.example.invalid/synthetic-rice"
+        },
+        "snippet": "Synthetic test recipe: cook rice and carrots with olive oil. Beginner preparation, 25 minutes. Adapt seasonings to taste."
+      }
+    ]
+  },
+  "draft": {
+    "schemaVersion": 1,
+    "title": "Simple carrot rice",
+    "servings": 2,
+    "totalMinutes": 25,
+    "skill": "beginner",
+    "ingredients": [
+      {"lineId": "rice", "name": "rice", "quantity": 100, "unit": "g"},
+      {"lineId": "carrot", "name": "carrot", "quantity": 150, "unit": "g"},
+      {"lineId": "oil", "name": "olive oil", "quantity": 10, "unit": "g"}
+    ],
+    "substitutions": [
+      {
+        "replaces": "butter",
+        "ingredientLineId": "oil",
+        "reason": "Use olive oil instead of butter to respect the dairy restriction."
+      }
+    ],
+    "instructions": [
+      {"step": 1, "text": "Cook the rice.", "ingredientLineIds": ["rice"]},
+      {
+        "step": 2,
+        "text": "Soften the carrot in olive oil, then mix with the rice.",
+        "ingredientLineIds": ["carrot", "oil", "rice"]
+      }
+    ],
+    "fitReasons": ["Beginner techniques and a 25-minute cooking plan."],
+    "adaptations": ["Olive oil replaces butter; seasonings can be adapted."],
+    "sourceIds": ["fixture-rice"]
+  },
+  "nutrition": {
+    "status": "known",
+    "servingBasis": "per_serving",
+    "servings": 2,
+    "nutrients": [
+      {"name": "energy", "amount": 250, "unit": "kcal"},
+      {"name": "protein", "amount": 5, "unit": "g"}
+    ],
+    "mappings": [
+      {"ingredientLineId": "rice", "quantity": 100, "unit": "g", "sourceId": "fixture-usda", "usdaFoodId": "synthetic-rice"},
+      {"ingredientLineId": "carrot", "quantity": 150, "unit": "g", "sourceId": "fixture-usda", "usdaFoodId": "synthetic-carrot"},
+      {"ingredientLineId": "oil", "quantity": 10, "unit": "g", "sourceId": "fixture-usda", "usdaFoodId": "synthetic-oil"}
+    ],
+    "sources": [
+      {"sourceId": "fixture-usda", "version": "fixture-v1", "kind": "usda", "reference": "https://nutrition.example.invalid/synthetic"}
+    ]
+  }
+}

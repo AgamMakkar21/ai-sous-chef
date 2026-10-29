@@ -1,9 +1,11 @@
 # Orchestrator routing and bounded revisions (ASC-25 / #23)
 
-This slice implements the coordinator policy with mocked specialist/tools. It
-does **not** activate live recipe chat, implement Recipe + Nutrition, attach its
-grounding/nutrition tools, persist a recipe, or approve a final recipe for display.
-Those are separate tickets; ASC-38 / #39 composes the live request.
+This slice implements the coordinator policy with mocked specialist/tools.
+[ASC-26's Recipe + Nutrition specialist](recipe-specialist.md) now implements its
+typed seam with a full structured recipe and explicitly injected tool interfaces.
+Neither slice activates live recipe chat, attaches live grounding/nutrition tools,
+persists a recipe, or approves a final recipe for display. ASC-38 / #39 composes
+the live request.
 
 ## Source and execution contract
 
@@ -63,7 +65,7 @@ The live specialist implementation must honor the supplied input/output ceilings
 total deadline and budget, return provider-counted usage including reasoning, and
 never hide nested model/tool calls. An autonomous managed specialist tool loop
 that cannot be intercepted/accounted is not a valid implementation of this seam.
-This ticket deliberately supplies no fake production specialist.
+Neither slice supplies a fake production specialist or silently selects fixture tools.
 
 Coordination input is preflighted with the existing `o200k_base` tokenizer,
 source instructions, function schema, current function result/opaque state,
@@ -79,7 +81,9 @@ truncated to fit; oversized requests fail explicitly.
 The specialist returns a strict, bounded **internal recipe projection**: title,
 total minutes, ingredient IDs/names, instructions referencing those IDs, and
 brief fit reasons. This is not the eventual full nutrition/provenance/persistence
-schema. Duplicate/undeclared ingredient references are rejected. The backend
+schema. ASC-26 additionally carries the full structured candidate separately;
+only the bounded projection is inserted into the coordinator's function result.
+Duplicate/undeclared ingredient references are rejected. The backend
 uses the existing deterministic ingredient validator against stored restrictions;
 blocked/unknown ingredients and over-budget times cannot be accepted by the LLM.
 Raw rejected candidates are not fed back; the Orchestrator gets a rejection
@@ -111,7 +115,9 @@ identities. No development credential fallback is added to runtime.
 
 No Azure changes occur merely by importing this module or merging this ticket.
 The existing `deploy/agents.dev.json` remains agent-disabled until both source
-agents and tools are ready.
+agents and tools are ready. The same publisher also supports
+`--agent recipe_nutrition`; see the specialist setup notes for its required baseline
+RAI policy and schema.
 
 An authorized owner can publish this source to an **existing**, enabled dev
 Orchestrator without recreating/rebinding its Entra identity:

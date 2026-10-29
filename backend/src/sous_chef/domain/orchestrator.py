@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 
 from sous_chef.domain.context import RequestContext
 from sous_chef.domain.foundry import FoundryRequest
+from sous_chef.domain.recipes import StructuredRecipe
 
 
 @dataclass(frozen=True)
@@ -130,17 +131,21 @@ class RecipeCandidate(CoordinationModel):
 class SpecialistResult(CoordinationModel):
     candidate: RecipeCandidate = Field(repr=False)
     usage: TokenUsage
+    recipe: StructuredRecipe | None = Field(default=None, repr=False)
 
 
 class OrchestrationResult(CoordinationModel):
     status: Literal["clarification", "unable", "candidate"]
     explanation: ShortText = Field(repr=False)
     candidate: RecipeCandidate | None = Field(default=None, repr=False)
+    recipe: StructuredRecipe | None = Field(default=None, repr=False)
 
     @model_validator(mode="after")
     def candidate_state(self) -> Self:
         if (self.status == "candidate") != (self.candidate is not None):
             raise ValueError("Only a candidate result contains a recipe projection.")
+        if self.recipe is not None and self.status != "candidate":
+            raise ValueError("Only a candidate result contains a structured recipe.")
         return self
 
 
@@ -185,6 +190,7 @@ class RecipeSpecialist(Protocol):
 
         Share the supplied budget with every tool adapter; return provider-counted usage
         including reasoning. Raise an explicit failure, never a successful substitute.
-        Live tool/specialist composition is ASC-38, not this mocked-policy ticket.
+        Live user-chat composition is ASC-38; this seam also supports ASC-26's
+        structured specialist with explicitly supplied grounding tool adapters.
         """
         ...

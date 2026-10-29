@@ -14,8 +14,10 @@ consumer authentication. Profile/onboarding, grocery inventory and conversation
 persistence APIs, shared Cosmos access and the managed-agent gateway are available.
 The React frontend adds the authenticated three-tab shell and onboarding/profile
 editing. Grocery, chat and recipe-history screen contents remain follow-on work.
-Live chat execution, other product endpoints and specialist instructions remain
-separate work.
+Live chat execution and other product endpoints remain separate work.
+The [Recipe + Nutrition specialist](docs/recipe-specialist.md) supplies versioned
+instructions, strict recipe output and fixture-backed grounding/nutrition interfaces;
+live tool wiring and final recipe approval remain separate work.
 See [frontend setup and scope](docs/frontend.md).
 See [profile API setup and usage](docs/profiles.md) and
 [conversation setup and HTTP contracts](docs/conversations.md) for the persistence APIs.
