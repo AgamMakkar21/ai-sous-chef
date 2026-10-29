@@ -44,6 +44,7 @@ from sous_chef.domain.orchestrator import (
     SpecialistCall,
     TokenUsage,
 )
+from sous_chef.domain.recipes import RecipeDraft, RecipeGenerationRequest
 from sous_chef.settings import ConfigurationError, Settings
 from sous_chef.telemetry import ErrorCategory, Event, operational_event, trace_id
 
@@ -126,6 +127,10 @@ class FoundryGateway:
     async def coordinate(self, request: CoordinationRequest) -> CoordinationStep:
         if request.request.role != AgentRole.ORCHESTRATOR:
             raise ConfigurationError("Only the Orchestrator can coordinate the specialist.")
+        self._require_agent_pins()
+        return await self._execute(request.request, self._coordination_result, request)
+
+    def _require_agent_pins(self) -> None:
         if any(
             principal is None
             for principal in (
@@ -134,8 +139,13 @@ class FoundryGateway:
                 self._settings.app_workload_principal_id,
             )
         ):
-            raise ConfigurationError("Coordination requires distinct agent and workload pins.")
-        return await self._execute(request.request, self._coordination_result, request)
+            raise ConfigurationError("Specialist coordination requires agent and workload pins.")
+
+    async def generate_recipe(
+        self, request: RecipeGenerationRequest
+    ) -> tuple[RecipeDraft, TokenUsage]:
+        self._require_agent_pins()
+        return await self._execute(request, self._recipe_result)
 
     async def _execute(
         self,
@@ -154,10 +164,19 @@ class FoundryGateway:
                     agent_version=target.version,
                     agent_principal_id=self._settings.foundry_orchestrator_agent_principal_id,
                 )
+            elif isinstance(request, RecipeGenerationRequest):
+                operational_event(
+                    Event.RECIPE_INVOKED,
+                    agent_name=target.name,
+                    agent_version=target.version,
+                    agent_principal_id=self._settings.foundry_recipe_nutrition_agent_principal_id,
+                )
             try:
                 async with asyncio.timeout(self._settings.foundry_invocation_timeout_seconds):
                     if coordination is not None:
                         self._check_coordination_input(coordination)
+                    elif isinstance(request, RecipeGenerationRequest):
+                        self._check_recipe_input(request)
                     async with self._factory(self._settings) as client:
                         body: dict[str, object] = {
                             "agent_reference": {
@@ -168,6 +187,8 @@ class FoundryGateway:
                         }
                         if coordination is not None:
                             body.update(self._coordination_body(coordination))
+                        elif isinstance(request, RecipeGenerationRequest):
+                            body.update(self._recipe_body())
                         response = await client.responses.create(
                             input=request.prompt,
                             max_output_tokens=request.max_output_tokens,
@@ -201,6 +222,58 @@ class FoundryGateway:
             return result
         finally:
             trace_id.reset(token)
+
+    @staticmethod
+    def _recipe_body() -> dict[str, object]:
+        from sous_chef.recipe_definition import recipe_output_format
+
+        return {
+            "tools": [],
+            "tool_choice": "none",
+            "parallel_tool_calls": False,
+            "store": False,
+            "text": {"format": recipe_output_format().as_dict()},
+        }
+
+    @staticmethod
+    def _check_recipe_input(request: RecipeGenerationRequest) -> None:
+        from sous_chef.recipe_definition import RECIPE_INSTRUCTIONS
+        from sous_chef.services.context import _encoding
+
+        encoding = _encoding()
+        serialized = (
+            RECIPE_INSTRUCTIONS + request.prompt + json.dumps(FoundryGateway._recipe_body())
+        )
+        tokens = len(encoding.encode(serialized, disallowed_special=())) + 64
+        tool_tokens = len(encoding.encode(request.grounding_json, disallowed_special=()))
+        if tokens > request.max_input_tokens or tool_tokens > POLICY.max_tool_result_tokens:
+            raise FoundryGatewayError(FoundryFailure.REJECTED, request)
+
+    @staticmethod
+    def _recipe_result(
+        request: FoundryRequest, response: Response
+    ) -> tuple[RecipeDraft, TokenUsage]:
+        assert isinstance(request, RecipeGenerationRequest)
+        try:
+            usage = response.usage
+            actions = [item for item in response.output if item.type != "reasoning"]
+            if (
+                usage is None
+                or usage.input_tokens > request.max_input_tokens
+                or usage.output_tokens > request.max_output_tokens
+                or len(actions) != 1
+                or actions[0].type != "message"
+                or actions[0].status != "completed"
+                or len(actions[0].content) != 1
+                or actions[0].content[0].type != "output_text"
+            ):
+                raise ValueError
+            return (
+                RecipeDraft.model_validate_json(response.output_text),
+                TokenUsage(input_tokens=usage.input_tokens, output_tokens=usage.output_tokens),
+            )
+        except ValueError:
+            raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request) from None
 
     @staticmethod
     def _check_coordination_input(request: CoordinationRequest) -> None:

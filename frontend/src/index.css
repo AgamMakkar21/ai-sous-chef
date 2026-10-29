@@ -504,6 +504,127 @@ input[type="checkbox"] {
 .grocery-empty {
   margin: 24px 0 0;
 }
+.conversation-toolbar,
+.conversation-heading,
+.message-heading,
+.conversation-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.conversation-toolbar {
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+.conversation-toolbar h1 {
+  font-size: clamp(1.75rem, 3vw, 2.5rem);
+  margin-bottom: 12px;
+}
+.conversation-toolbar .eyebrow {
+  margin-bottom: 8px;
+}
+.conversation-toolbar p:last-child {
+  margin-bottom: 0;
+}
+.sidebar-toggle {
+  margin-bottom: 16px;
+}
+.conversation-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  gap: 32px;
+  padding: 24px;
+}
+.conversation-layout[data-sidebar-open="false"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+.conversation-layout > * {
+  min-width: 0;
+}
+.conversation-layout aside {
+  border-right: 1px solid var(--cp-border);
+  padding-right: 24px;
+}
+.conversation-heading {
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.conversation-heading h2 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.conversation-list,
+.conversation-turns {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.conversation-choice {
+  width: 100%;
+  display: block;
+  text-align: left;
+  padding: 12px;
+  margin-bottom: 8px;
+  border: 1px solid var(--cp-border);
+  border-radius: 0.625rem;
+  background: var(--cp-surface);
+  color: var(--cp-text);
+  overflow-wrap: anywhere;
+}
+.conversation-choice[aria-current="true"] {
+  border-color: var(--cp-accent);
+  background: var(--cp-accent-soft);
+}
+.conversation-choice span,
+.conversation-choice time,
+.conversation-choice small {
+  display: block;
+}
+.conversation-choice span {
+  font-weight: 600;
+}
+.conversation-choice time,
+.conversation-choice small,
+.message-heading time,
+.conversation-pager span,
+.turn-status {
+  font-size: 0.75rem;
+  color: var(--cp-text-muted);
+}
+.conversation-pager {
+  flex-wrap: wrap;
+  margin: 24px 0;
+  gap: 8px;
+}
+.conversation-pager .button {
+  padding: 8px 12px;
+  font-size: 0.75rem;
+}
+.conversation-message {
+  border: 1px solid var(--cp-border);
+  border-radius: 0.625rem;
+  padding: 16px;
+  margin-bottom: 12px;
+  background: var(--cp-bg-elevated);
+}
+.conversation-message.assistant {
+  background: var(--cp-surface);
+}
+.message-heading {
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.conversation-message p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--cp-text);
+  margin: 0;
+}
+.conversation-empty {
+  padding: 24px 0;
+}
 @media (max-width: 720px) {
   .grocery-entry {
     grid-template-columns: 1fr;
@@ -566,5 +687,14 @@ input[type="checkbox"] {
   }
   .state-card h1 {
     font-size: 1.75rem;
+  }
+  .conversation-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+  .conversation-layout aside {
+    border-right: 0;
+    border-bottom: 1px solid var(--cp-border);
+    padding: 0 0 24px;
   }
 }

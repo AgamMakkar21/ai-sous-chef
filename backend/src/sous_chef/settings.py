@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     foundry_recipe_nutrition_deployment: str | None = Field(
         default=None, pattern=_DEPLOYMENT_NAME, repr=False
     )
+    foundry_recipe_nutrition_rai_policy_name: str | None = Field(
+        default=None, min_length=1, max_length=128, pattern=r"^\S+$", repr=False
+    )
     foundry_extraction_deployment: str | None = Field(
         default=None, pattern=_DEPLOYMENT_NAME, repr=False
     )

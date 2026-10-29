@@ -3,6 +3,7 @@ import * as Tabs from "@radix-ui/react-tabs";
 import { ApiError, getProfile, getSession } from "./api";
 import ProfileForm from "./ProfileForm";
 import Groceries from "./Groceries";
+import ConversationPanel from "./ConversationPanel";
 import type { Session, Snapshot } from "./profile";
 
 type State =
@@ -23,7 +24,7 @@ const tabs = [
     id: "sous-chef",
     name: "Sous Chef",
     title: "A little inspiration for your everyday.",
-    text: "This is where recipe conversations will live. Chat and recipe generation are not available in this release yet.",
+    text: "Create independent conversations and revisit their message history.",
     symbol: "02",
   },
   {
@@ -278,57 +279,72 @@ export default function App() {
                   value={tab.id}
                   key={tab.id}
                 >
-                  <section className="welcome-panel">
-                    <div>
-                      <p className="eyebrow">YOUR KITCHEN, YOUR WAY</p>
-                      <h1>{tab.title}</h1>
-                      <p className="welcome-copy">
-                        A little less wondering what to cook. A little more
-                        making it your own.
-                      </p>
-                    </div>
-                    <div className="kitchen-art" aria-hidden="true">
-                      <span className="art-ring">
-                        <svg viewBox="0 0 120 120" fill="none">
-                          <path
-                            d="M24 55h72v10a36 36 0 0 1-72 0V55ZM16 55h88M43 22v16m18-24v24m18-16v16"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      </span>
-                      <span className="art-label">MADE FOR YOUR EVERYDAY</span>
-                    </div>
-                  </section>
-                  {tab.id === "groceries" ? (
-                    <Groceries
+                  {tab.id === "sous-chef" ? (
+                    <ConversationPanel
+                      key={ready.session.userId}
                       session={ready.session}
                       onExpired={expire}
-                      onBusy={setBusy}
-                      onSession={(session) =>
-                        setState((current) =>
-                          current.kind === "ready" &&
-                          current.session.userId === session.userId
-                            ? { ...current, session }
-                            : current,
-                        )
-                      }
                     />
                   ) : (
-                    <section className="card coming-next">
-                      <span className="step">{tab.symbol}</span>
-                      <div>
-                        <p className="eyebrow">COMING NEXT</p>
-                        <h2>{tab.name}</h2>
-                        <p>{tab.text}</p>
-                        <button className="text-button" onClick={openProfile}>
-                          Review your cooking profile{" "}
-                          <span aria-hidden="true">&rarr;</span>
-                        </button>
-                      </div>
-                    </section>
+                    <>
+                      <section className="welcome-panel">
+                        <div>
+                          <p className="eyebrow">YOUR KITCHEN, YOUR WAY</p>
+                          <h1>{tab.title}</h1>
+                          <p className="welcome-copy">
+                            A little less wondering what to cook. A little more
+                            making it your own.
+                          </p>
+                        </div>
+                        <div className="kitchen-art" aria-hidden="true">
+                          <span className="art-ring">
+                            <svg viewBox="0 0 120 120" fill="none">
+                              <path
+                                d="M24 55h72v10a36 36 0 0 1-72 0V55ZM16 55h88M43 22v16m18-24v24m18-16v16"
+                                stroke="currentColor"
+                                strokeWidth="4"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          </span>
+                          <span className="art-label">
+                            MADE FOR YOUR EVERYDAY
+                          </span>
+                        </div>
+                      </section>
+                      {tab.id === "groceries" ? (
+                        <Groceries
+                          session={ready.session}
+                          onExpired={expire}
+                          onBusy={setBusy}
+                          onSession={(session) =>
+                            setState((current) =>
+                              current.kind === "ready" &&
+                              current.session.userId === session.userId
+                                ? { ...current, session }
+                                : current,
+                            )
+                          }
+                        />
+                      ) : (
+                        <section className="card coming-next">
+                          <span className="step">{tab.symbol}</span>
+                          <div>
+                            <p className="eyebrow">COMING NEXT</p>
+                            <h2>{tab.name}</h2>
+                            <p>{tab.text}</p>
+                            <button
+                              className="text-button"
+                              onClick={openProfile}
+                            >
+                              Review your cooking profile{" "}
+                              <span aria-hidden="true">&rarr;</span>
+                            </button>
+                          </div>
+                        </section>
+                      )}
+                    </>
                   )}
                 </Tabs.Content>
               ))}
