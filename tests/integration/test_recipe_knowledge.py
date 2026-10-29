@@ -253,9 +253,7 @@ def test_configured_limits_bound_both_the_mcp_defaults_and_rest_queries(
     assert request["maxOutputDocuments"] == 1
     assert request["maxOutputSizeInTokens"] == 512
     semantic = request_body(transport.requests[0])["semantic"]["configurations"][0]
-    assert semantic["prioritizedFields"]["prioritizedContentFields"] == [
-        {"fieldName": "grounding"}
-    ]
+    assert semantic["prioritizedFields"]["prioritizedContentFields"] == [{"fieldName": "grounding"}]
 
 
 @pytest.mark.parametrize("status", [206, 301, 401, 403, 404, 429, 500])
