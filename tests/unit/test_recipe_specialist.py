@@ -321,14 +321,17 @@ def test_citations_cannot_support_invented_quotes_or_adaptation_claims(
     assert not tools.nutrition_requests
 
 
-def test_web_grounding_is_not_silently_ignored_before_asc34() -> None:
+def test_ordinary_pantry_request_cannot_authorize_web_using_specialist_requirements() -> None:
     service, tools, transport = setup()
     with pytest.raises(FoundryGatewayError) as caught:
         asyncio.run(
             service.generate(
                 cooking_context(),
                 SpecialistArguments(
-                    requirements="Current food news", time_budget_minutes=30, use_web=True
+                    requirements="Current food news",
+                    time_budget_minutes=30,
+                    use_web=True,
+                    web_query="current food news",
                 ),
                 operation_id=uuid4(),
                 budget=ExecutionBudget(uuid4()),
@@ -337,7 +340,7 @@ def test_web_grounding_is_not_silently_ignored_before_asc34() -> None:
                 deadline=monotonic() + 60,
             )
         )
-    assert caught.value.code == FoundryFailure.UNAVAILABLE
+    assert caught.value.code == FoundryFailure.REJECTED
     assert not tools.queries and not transport.requests
 
 
@@ -609,8 +612,14 @@ def test_recipe_publication_versions_the_existing_distinct_identity_without_acti
     invocation = client.agents.create_version.call_args.kwargs
     assert invocation["agent_name"] == "recipe-agent"
     assert invocation["metadata"]["asc_model"] == "gpt-5.4"
-    assert invocation["metadata"]["asc_policy_version"] == "3"
+    assert invocation["metadata"]["asc_policy_version"] == "4"
     assert invocation["definition"].as_dict()["tools"][0]["project_connection_id"] == "fixture-mcp"
+    assert invocation["definition"].as_dict()["tools"][1] == {
+        "type": "web_search",
+        "external_web_access": True,
+        "search_context_size": "low",
+    }
+    assert invocation["definition"].as_dict()["tool_choice"] == "none"
     assert len(invocation["metadata"]["asc_definition_sha256"]) == 64
     client.agents.create.assert_not_called()
     client.agents.create_version.reset_mock()

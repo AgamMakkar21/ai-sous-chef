@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Final, Literal, Protocol, Self
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import ConfigDict, Field, StringConstraints, model_validator
@@ -194,6 +196,50 @@ class RecipeNutrition(NutritionEvidence):
     notice: Literal["Informational estimate, not medical advice."]
 
 
+class WebClaim(RecipeModel):
+    text: str = Field(min_length=1, max_length=500, pattern=r"\S", repr=False)
+    source_url: str = Field(min_length=1, max_length=500, repr=False)
+
+    @model_validator(mode="after")
+    def public_reference(self) -> Self:
+        url = urlsplit(self.source_url)
+        if (
+            url.scheme != "https"
+            or not url.hostname
+            or url.username is not None
+            or url.password is not None
+            or url.port not in (None, 443)
+        ):
+            raise ValueError("Web claims require HTTPS citations without credentials.")
+        return self
+
+
+class WebDraft(RecipeModel):
+    claims: tuple[WebClaim, ...] = Field(max_length=3, repr=False)
+
+
+class WebCitation(RecipeModel):
+    url: str = Field(min_length=1, max_length=500, repr=False)
+    title: Text = Field(repr=False)
+
+
+class WebGrounding(WebDraft):
+    claims: tuple[WebClaim, ...] = Field(min_length=1, max_length=3, repr=False)
+    citations: tuple[WebCitation, ...] = Field(min_length=1, max_length=3, repr=False)
+    retrieved_at: datetime
+
+    @model_validator(mode="after")
+    def attributed_claims(self) -> Self:
+        urls = [citation.url for citation in self.citations]
+        if (
+            set(urls) != {claim.source_url for claim in self.claims}
+            or len(urls) != len(set(urls))
+            or self.retrieved_at.tzinfo is None
+        ):
+            raise ValueError("Web claims require unique attributable citations and retrieval time.")
+        return self
+
+
 class StructuredRecipe(RecipeDraft):
     """An unsaved candidate, NOT a final safety approval or a cooked recipe."""
 
@@ -201,6 +247,7 @@ class StructuredRecipe(RecipeDraft):
     shopping_items: tuple[ShoppingItem, ...] = Field(max_length=30, repr=False)
     nutrition: RecipeNutrition = Field(repr=False)
     sources: tuple[RecipeSource, ...] = Field(min_length=1, max_length=12)
+    web_grounding: WebGrounding | None = Field(repr=False)
 
     @model_validator(mode="after")
     def enrichment_references(self) -> Self:
@@ -251,7 +298,15 @@ class GroundedRecipeGenerationRequest(RecipeGenerationRequest):
     retrieval_query: str = Field(min_length=1, max_length=2000, repr=False)
 
 
+class WebGroundingRequest(FoundryRequest):
+    role: Literal[AgentRole.RECIPE_NUTRITION]
+    prompt: str = Field(min_length=1, max_length=240, pattern=r"\S", repr=False)
+    max_input_tokens: int = Field(default=2000, ge=1, le=2000)
+
+
 class RecipeGenerator(Protocol):
+    async def ground_web(self, request: WebGroundingRequest) -> tuple[WebGrounding, TokenUsage]: ...
+
     async def generate_recipe(
         self, request: RecipeGenerationRequest
     ) -> tuple[RecipeDraft, TokenUsage]: ...

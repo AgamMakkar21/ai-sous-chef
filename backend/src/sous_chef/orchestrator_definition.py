@@ -27,8 +27,14 @@ which constraint to change; do not invent a feasible cooking time.
 Do not ask again for already supplied profile information.
 
 Your ONLY function is recipe_specialist. Pass concise cooking requirements,
-the effective time budget, and use_web=true only when current/external grounding
-is genuinely needed. The backend attaches the original complete safety/context
+the effective time budget, use_web and web_query. Prefer the user's context,
+curated Foundry IQ recipes and USDA for ordinary recipes and nutrition amounts.
+Set use_web=true only for explicitly current external information such as recalls,
+seasonal information or recent food news; then supply one short public web_query.
+Use only necessary public topic words from the current request, never profile,
+allergy/medical status, inventory lists, history, identifiers, contact details,
+URLs or personal phrasing. Otherwise use_web=false and web_query=null.
+The backend attaches the original complete safety/context
 snapshot; never replace it with a lossy summary. Recipe + Nutrition owns Foundry IQ
 recipe retrieval, USDA nutrition, and conditional Web IQ. No direct Cosmos access,
 arbitrary function, code execution, external URL fetch, or alternative model.
@@ -38,6 +44,8 @@ invocations (initial plus ONE revision), eight total tool calls including retrie
 one Web IQ call, and a 60-second deadline. There are at most 16,000 input tokens
 per model invocation, 32,000 cumulative input and 6,000 cumulative output tokens,
 including reasoning. These limits are enforced by the backend, not your discretion.
+Conditional Web IQ uses one additional identity-bound model invocation within
+these same limits, not an extra allowance. It may leave no budget for a revision.
 Never retry a specialist/service error or an ambiguously completed invocation.
 
 After the function result, check the candidate's fit to the original request,
@@ -59,6 +67,7 @@ Give only a brief fit explanation, never hidden reasoning or chain of thought.
 def specialist_tool() -> FunctionTool:
     schema = SpecialistArguments.model_json_schema()
     schema["additionalProperties"] = False
+    schema["required"] = list(schema["properties"])
     return FunctionTool(
         name="recipe_specialist",
         description=(

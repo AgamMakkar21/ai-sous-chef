@@ -62,6 +62,7 @@ def full_recipe(
         ],
         "shoppingItems": [],
         "sources": [FIXTURE["grounding"]["recipes"][0]["source"]],
+        "webGrounding": None,
         "nutrition": {
             "status": "unavailable",
             "servingBasis": "per_serving",

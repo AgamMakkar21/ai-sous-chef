@@ -5,6 +5,7 @@ import json
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from json import JSONDecodeError
 from time import monotonic
 from typing import TypeVar
@@ -51,6 +52,10 @@ from sous_chef.domain.recipes import (
     RecipeGenerationRequest,
     RecipeGrounding,
     RecipeToolError,
+    WebCitation,
+    WebDraft,
+    WebGrounding,
+    WebGroundingRequest,
 )
 from sous_chef.settings import ConfigurationError, Settings
 from sous_chef.telemetry import ErrorCategory, Event, operational_event, trace_id
@@ -160,6 +165,10 @@ class FoundryGateway:
         self._require_agent_pins()
         return await self._execute(request, self._grounded_recipe_result)
 
+    async def ground_web(self, request: WebGroundingRequest) -> tuple[WebGrounding, TokenUsage]:
+        self._require_agent_pins()
+        return await self._execute(request, self._web_result)
+
     async def _execute(
         self,
         request: FoundryRequest,
@@ -177,7 +186,7 @@ class FoundryGateway:
                     agent_version=target.version,
                     agent_principal_id=self._settings.foundry_orchestrator_agent_principal_id,
                 )
-            elif isinstance(request, RecipeGenerationRequest):
+            elif isinstance(request, (RecipeGenerationRequest, WebGroundingRequest)):
                 operational_event(
                     Event.RECIPE_INVOKED,
                     agent_name=target.name,
@@ -188,6 +197,8 @@ class FoundryGateway:
                 async with asyncio.timeout(self._settings.foundry_invocation_timeout_seconds):
                     if coordination is not None:
                         self._check_coordination_input(coordination)
+                    elif isinstance(request, WebGroundingRequest):
+                        self._check_web_input(request)
                     elif isinstance(request, RecipeGenerationRequest):
                         self._check_recipe_input(
                             request,
@@ -208,6 +219,8 @@ class FoundryGateway:
                         }
                         if coordination is not None:
                             body.update(self._coordination_body(coordination))
+                        elif isinstance(request, WebGroundingRequest):
+                            body.update(self._web_body())
                         elif isinstance(request, GroundedRecipeGenerationRequest):
                             body.update(self._grounded_recipe_body())
                         elif isinstance(request, RecipeGenerationRequest):
@@ -247,6 +260,114 @@ class FoundryGateway:
             return result
         finally:
             trace_id.reset(token)
+
+    @staticmethod
+    def _web_body() -> dict[str, object]:
+        from sous_chef.recipe_definition import (
+            WEB_GROUNDING_INSTRUCTIONS,
+            web_output_format,
+            web_search_tool,
+        )
+
+        return {
+            "instructions": WEB_GROUNDING_INSTRUCTIONS,
+            "tools": [web_search_tool().as_dict()],
+            "tool_choice": "required",
+            "max_tool_calls": 1,
+            "parallel_tool_calls": False,
+            "store": False,
+            "include": ["web_search_call.action.sources"],
+            "text": {"format": web_output_format().as_dict()},
+        }
+
+    @staticmethod
+    def _check_web_input(request: WebGroundingRequest) -> None:
+        from sous_chef.services.context import _encoding
+
+        serialized = request.prompt + json.dumps(FoundryGateway._web_body())
+        tokens = len(_encoding().encode(serialized, disallowed_special=())) + 64
+        if tokens > request.max_input_tokens:
+            raise FoundryGatewayError(FoundryFailure.REJECTED, request)
+
+    @staticmethod
+    def _web_result(request: FoundryRequest, response: Response) -> tuple[WebGrounding, TokenUsage]:
+        from sous_chef.services.context import _encoding
+
+        assert isinstance(request, WebGroundingRequest)
+        calls = [item for item in response.output if item.type == "web_search_call"]
+        messages = [item for item in response.output if item.type == "message"]
+        if (
+            len(calls) != 1
+            or len(messages) != 1
+            or any(
+                item.type not in {"reasoning", "message", "web_search_call"}
+                for item in response.output
+            )
+        ):
+            raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
+        call = calls[0]
+        if call.status == "failed":
+            raise FoundryGatewayError(FoundryFailure.UNAVAILABLE, request)
+        try:
+            usage = response.usage
+            action = call.action
+            message = messages[0]
+            if (
+                usage is None
+                or usage.input_tokens > request.max_input_tokens
+                or usage.output_tokens > request.max_output_tokens
+                or call.status != "completed"
+                or action.type != "search"
+                or (action.queries if action.queries is not None else [action.query])
+                != [request.prompt]
+                or action.query not in (None, request.prompt)
+                or message.status != "completed"
+                or len(message.content) != 1
+                or message.content[0].type != "output_text"
+                or len(message.content[0].annotations) > 10
+                or len(response.output_text) > 6000
+                or len(action.sources or []) > 20
+            ):
+                raise ValueError
+            raw_evidence = call.model_dump_json() + message.model_dump_json()
+            if (
+                len(_encoding().encode(raw_evidence, disallowed_special=()))
+                > POLICY.max_tool_result_tokens
+            ):
+                raise ValueError
+            draft = WebDraft.model_validate_json(response.output_text)
+            if not draft.claims:
+                raise FoundryGatewayError(FoundryFailure.NO_RESULTS, request)
+            searched = {source.url for source in action.sources or []}
+            native: dict[str, str] = {}
+            for annotation in message.content[0].annotations:
+                if (
+                    annotation.type != "url_citation"
+                    or not 0
+                    <= annotation.start_index
+                    < annotation.end_index
+                    <= len(response.output_text)
+                ):
+                    raise ValueError
+                native[annotation.url] = annotation.title
+            urls = tuple(dict.fromkeys(claim.source_url for claim in draft.claims))
+            if not set(urls) <= searched & native.keys():
+                raise ValueError
+            grounding = WebGrounding(
+                claims=draft.claims,
+                citations=tuple(WebCitation(url=url, title=native[url]) for url in urls),
+                retrieved_at=datetime.now(UTC),
+            )
+            if (
+                len(_encoding().encode(grounding.model_dump_json(), disallowed_special=()))
+                > POLICY.max_tool_result_tokens
+            ):
+                raise ValueError
+            return grounding, TokenUsage(
+                input_tokens=usage.input_tokens, output_tokens=usage.output_tokens
+            )
+        except ValueError:
+            raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request) from None
 
     @staticmethod
     def _recipe_body() -> dict[str, object]:

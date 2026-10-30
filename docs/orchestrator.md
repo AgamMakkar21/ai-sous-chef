@@ -45,14 +45,14 @@ on a revision. The Orchestrator owns fit review; it does not invent nutrition.
 
 ## Backend limits and candidate validation
 
-The frozen policy in `domain/orchestrator.py` is version 1:
+The frozen policy in `domain/orchestrator.py` is version 2:
 
 | Limit | Value |
 | --- | --- |
 | Total model invocations | 4 |
 | Specialist invocations | 2: initial plus one revision |
 | Total tool calls, including retries and specialist handoffs | 8 |
-| Web IQ | At most once, only when requested conditionally |
+| Web IQ | At most once for justified current information; 10-second search ceiling |
 | Whole-operation deadline | 60 seconds, or the earlier caller deadline |
 | Input tokens per invocation / cumulative | 16,000 / 32,000 |
 | Output tokens per invocation / cumulative, including reasoning | 1,500 / 6,000 |
@@ -90,6 +90,11 @@ Raw rejected candidates are not fed back; the Orchestrator gets a rejection
 category and may clarify, stop, or request its one revision.
 
 The normal path is route -> specialist -> fit review (three model calls).
+For [conditional Web IQ](recipe-specialist.md#conditional-web-iq), the strict
+routing function additionally supplies a minimized public `web_query`, or null
+when `use_web=false`. The specialist's isolated web invocation counts toward the
+same four-model limit; a successful web path leaves no additional revision call.
+Native sources and claims remain in the full recipe, not its fit-review projection.
 If a revision is requested, its specialist invocation is the fourth and last:
 the backend rechecks its projection and returns either a candidate with brief
 fit reasons or an explicit rejection, **not** another unbounded review loop.

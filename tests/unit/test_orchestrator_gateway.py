@@ -31,6 +31,7 @@ def function_output(
                 "requirements": "A mild rice dinner",
                 "time_budget_minutes": 30,
                 "use_web": False,
+                "web_query": None,
             }
         ),
         "status": "completed",
@@ -275,7 +276,7 @@ def test_publication_creates_reproducible_source_version_under_existing_identity
     definition = invocation.kwargs["definition"].as_dict()
     assert definition["model"] == config.foundry_orchestrator_deployment
     assert definition["tools"][0]["name"] == "recipe_specialist"
-    assert invocation.kwargs["metadata"]["asc_policy_version"] == "1"
+    assert invocation.kwargs["metadata"]["asc_policy_version"] == "2"
     client.agents.create.assert_not_called()
     assert config.agents_enabled  # No settings or release manifest mutation.
 
