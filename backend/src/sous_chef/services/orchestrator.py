@@ -30,6 +30,12 @@ from sous_chef.domain.orchestrator import (
     SpecialistCall,
     TokenUsage,
 )
+from sous_chef.domain.recipe_safety import (
+    UNABLE,
+    RecipeSafetyError,
+    RecipeSafetyFailure,
+    validate_final_recipe,
+)
 from sous_chef.domain.recipes import StructuredRecipe
 from sous_chef.telemetry import ErrorCategory, Event, operational_event, trace_id
 
@@ -174,6 +180,7 @@ class OrchestratorService:
         recipe: StructuredRecipe | None = None
         status = "not_requested"
         minutes: int | None = None
+        final_rejected = False
         while True:
             request = CoordinationPrompt(
                 role=AgentRole.ORCHESTRATOR,
@@ -181,7 +188,12 @@ class OrchestratorService:
                 operation_id=budget.operation_id,
                 max_output_tokens=POLICY.output_tokens_per_call,
             )
-            budget.model()
+            try:
+                budget.model()
+            except OrchestratorError as error:
+                if final_rejected and error.code == OrchestratorFailure.BUDGET_EXHAUSTED:
+                    return OrchestrationResult(status="unable", explanation=UNABLE)
+                raise
             step = await self._coordinator.coordinate(
                 CoordinationRequest(
                     request=request,
@@ -195,6 +207,8 @@ class OrchestratorService:
             budget.usage(step.usage)
             if step.answer is not None:
                 answer = step.answer
+                if final_rejected:
+                    return OrchestrationResult(status="unable", explanation=UNABLE)
                 if answer.status == "accept":
                     if candidate is None or status != "candidate":
                         raise OrchestratorError(
@@ -215,7 +229,12 @@ class OrchestratorService:
                 minutes = call.arguments.time_budget_minutes
             elif call.arguments.time_budget_minutes != minutes:
                 raise OrchestratorError(OrchestratorFailure.INVALID_RESULT, budget.operation_id)
-            budget.model(specialist=True)
+            try:
+                budget.model(specialist=True)
+            except OrchestratorError as error:
+                if final_rejected and error.code == OrchestratorFailure.BUDGET_EXHAUSTED:
+                    return OrchestrationResult(status="unable", explanation=UNABLE)
+                raise
             budget.web_allowed = call.arguments.use_web
             try:
                 specialist = await self._specialist.generate(
@@ -237,7 +256,32 @@ class OrchestratorService:
             candidate = specialist.candidate
             recipe = specialist.recipe
             status = _candidate_status(candidate, context, minutes)
+            final_rejected = False
+            if recipe is not None:
+                try:
+                    recipe = validate_final_recipe(
+                        recipe,
+                        SafetyProfile(
+                            allergies=context.explicit_preferences.allergies,
+                            dietary_restrictions=context.explicit_preferences.dietary_restrictions,
+                        ),
+                    )
+                    if (
+                        [(line.line_id, line.name) for line in recipe.ingredients]
+                        != [(line.line_id, line.name) for line in candidate.ingredients]
+                        or [step.text for step in recipe.instructions]
+                        != [step.text for step in candidate.instructions]
+                        or recipe.title != candidate.title
+                        or recipe.total_minutes != candidate.total_minutes
+                        or recipe.fit_reasons != candidate.fit_reasons
+                    ):
+                        raise RecipeSafetyError(RecipeSafetyFailure.STRUCTURE)
+                except RecipeSafetyError:
+                    status = "safety_rejected"
+                    final_rejected = True
             if budget.specialist_calls == POLICY.max_specialist_calls:
+                if final_rejected:
+                    return OrchestrationResult(status="unable", explanation=UNABLE)
                 if status != "candidate":
                     raise OrchestratorError(
                         OrchestratorFailure.CANDIDATE_REJECTED, budget.operation_id
