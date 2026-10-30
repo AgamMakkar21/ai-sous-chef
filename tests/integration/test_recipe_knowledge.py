@@ -4,7 +4,7 @@ from dataclasses import replace
 from time import time
 from types import TracebackType
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import Mock, create_autospec
 from urllib.parse import urlsplit
 
 import pytest
@@ -12,6 +12,7 @@ from azure.core.credentials import AccessToken
 from azure.core.exceptions import ClientAuthenticationError, ServiceRequestError
 from azure.core.pipeline.transport import HttpTransport, RequestsTransport
 from azure.core.rest import HttpRequest, HttpResponse
+from requests import Session
 from sous_chef.adapters.foundry_iq import (
     ARM_SCOPE,
     SEARCH_API_VERSION,
@@ -51,7 +52,7 @@ class SearchFixture(HttpTransport[HttpRequest, HttpResponse]):
         self.exception: Exception | None = None
         self.response_override: dict[str, Any] | None = None
         self.response_bytes: bytes | None = None
-        self._session = Mock()
+        self._session = create_autospec(Session, instance=True)
         self._transport = RequestsTransport(session=self._session, session_owner=False)
 
     def open(self) -> None:
@@ -71,7 +72,9 @@ class SearchFixture(HttpTransport[HttpRequest, HttpResponse]):
     ) -> None:
         self.close()
 
-    def _respond(self, request: HttpRequest, status: int, payload: object) -> HttpResponse:
+    def _respond(
+        self, request: HttpRequest, status: int, payload: object, **kwargs: Any
+    ) -> HttpResponse:
         response = Mock(
             status_code=status,
             headers={"content-type": "application/json"},
@@ -87,7 +90,7 @@ class SearchFixture(HttpTransport[HttpRequest, HttpResponse]):
         response._content_consumed = True
         response.iter_content.return_value = iter([response.content])
         self._session.request.return_value = response
-        result = self._transport.send(request)
+        result = self._transport.send(request, **kwargs)
         assert isinstance(result, HttpResponse)
         return result
 
@@ -97,11 +100,13 @@ class SearchFixture(HttpTransport[HttpRequest, HttpResponse]):
         if self.exception is not None:
             raise self.exception
         if self.fail_status is not None:
-            return self._respond(request, self.fail_status, {"error": "private-response-token"})
+            return self._respond(
+                request, self.fail_status, {"error": "private-response-token"}, **kwargs
+            )
         body = request_body(request)
         path = urlsplit(request.url).path
         if request.method == "PUT":
-            return self._respond(request, 201, body)
+            return self._respond(request, 201, body, **kwargs)
         if path.endswith("/docs/index"):
             results = []
             for document in body["value"]:
@@ -115,7 +120,9 @@ class SearchFixture(HttpTransport[HttpRequest, HttpResponse]):
                         "errorMessage": "private-document" if self.index_failure else None,
                     }
                 )
-            return self._respond(request, 207 if self.index_failure else 200, {"value": results})
+            return self._respond(
+                request, 207 if self.index_failure else 200, {"value": results}, **kwargs
+            )
         assert path.endswith("/retrieve"), "retrieval must use the knowledge base, not index search"
         query = body["intents"][0]["search"].casefold()
         references = [
@@ -130,7 +137,7 @@ class SearchFixture(HttpTransport[HttpRequest, HttpResponse]):
         ]
         if self.malformed_references and references:
             references[0]["docKey"] = "foreign-source"
-        return self._respond(request, 200, {"response": [], "references": references})
+        return self._respond(request, 200, {"response": [], "references": references}, **kwargs)
 
 
 @pytest.fixture

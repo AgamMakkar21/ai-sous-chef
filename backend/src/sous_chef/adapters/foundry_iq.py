@@ -182,9 +182,7 @@ class FoundryRecipeKnowledge:
             json=body,
         )
         try:
-            response = client.send_request(
-                request, connection_timeout=5, read_timeout=20, logging_enable=False
-            )
+            response = client.send_request(request, connection_timeout=5, read_timeout=20)
         except AzureError as error:
             raise RecipeIndexingError(
                 f"Foundry IQ {operation} failed: {type(error).__name__}; "
