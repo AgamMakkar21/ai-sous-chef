@@ -3,6 +3,7 @@
 import copy
 import json
 from typing import Any
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -296,6 +297,21 @@ def test_live_preflight_reserves_grounding_tokens_before_the_provider_call() -> 
         run(service, max_input_tokens=1)
     assert caught.value.code == FoundryFailure.REJECTED
     assert not harness.requests and not tools.nutrition_requests
+
+
+@pytest.mark.parametrize("context_tokens", [256, 512, 4000])
+def test_live_preflight_reserves_service_minimum_even_with_a_smaller_local_limit(
+    context_tokens: int,
+) -> None:
+    service, _, harness = live_setup(foundry_iq_max_context_tokens=context_tokens)
+    with patch.object(
+        FoundryGateway, "_check_recipe_input", wraps=FoundryGateway._check_recipe_input
+    ) as check:
+        with pytest.raises(FoundryGatewayError) as caught:
+            run(service, max_input_tokens=1)
+    assert caught.value.code == FoundryFailure.REJECTED
+    assert not harness.requests
+    assert check.call_args.kwargs["reserved_tool_tokens"] == 5000
 
 
 def test_live_deadline_cancels_the_http_request_without_a_replacement() -> None:

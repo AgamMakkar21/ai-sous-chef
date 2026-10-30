@@ -4,7 +4,7 @@ from dataclasses import replace
 from time import time
 from types import TracebackType
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import Mock, create_autospec
 from urllib.parse import urlsplit
 
 import pytest
@@ -12,6 +12,7 @@ from azure.core.credentials import AccessToken
 from azure.core.exceptions import ClientAuthenticationError, ServiceRequestError
 from azure.core.pipeline.transport import HttpTransport, RequestsTransport
 from azure.core.rest import HttpRequest, HttpResponse
+from requests import Session
 from sous_chef.adapters.foundry_iq import (
     ARM_SCOPE,
     SEARCH_API_VERSION,
@@ -51,7 +52,7 @@ class SearchFixture(HttpTransport[HttpRequest, HttpResponse]):
         self.exception: Exception | None = None
         self.response_override: dict[str, Any] | None = None
         self.response_bytes: bytes | None = None
-        self._session = Mock()
+        self._session = create_autospec(Session, instance=True)
         self._transport = RequestsTransport(session=self._session, session_owner=False)
 
     def open(self) -> None:
@@ -71,7 +72,9 @@ class SearchFixture(HttpTransport[HttpRequest, HttpResponse]):
     ) -> None:
         self.close()
 
-    def _respond(self, request: HttpRequest, status: int, payload: object) -> HttpResponse:
+    def _respond(
+        self, request: HttpRequest, status: int, payload: object, **kwargs: Any
+    ) -> HttpResponse:
         response = Mock(
             status_code=status,
             headers={"content-type": "application/json"},
@@ -87,7 +90,7 @@ class SearchFixture(HttpTransport[HttpRequest, HttpResponse]):
         response._content_consumed = True
         response.iter_content.return_value = iter([response.content])
         self._session.request.return_value = response
-        result = self._transport.send(request)
+        result = self._transport.send(request, **kwargs)
         assert isinstance(result, HttpResponse)
         return result
 
@@ -97,11 +100,27 @@ class SearchFixture(HttpTransport[HttpRequest, HttpResponse]):
         if self.exception is not None:
             raise self.exception
         if self.fail_status is not None:
-            return self._respond(request, self.fail_status, {"error": "private-response-token"})
+            return self._respond(
+                request, self.fail_status, {"error": "private-response-token"}, **kwargs
+            )
         body = request_body(request)
         path = urlsplit(request.url).path
+        if path.startswith("/knowledgebases/") and request.method == "PUT":
+            if body["retrieveDefaults"]["maxOutputSizeInTokens"] < 5000:
+                return self._respond(
+                    request,
+                    400,
+                    {
+                        "error": {
+                            "message": (
+                                "Knowledge Base MaxOutputSize configuration must be at least 5000"
+                            )
+                        }
+                    },
+                    **kwargs,
+                )
         if request.method == "PUT":
-            return self._respond(request, 201, body)
+            return self._respond(request, 201, body, **kwargs)
         if path.endswith("/docs/index"):
             results = []
             for document in body["value"]:
@@ -115,8 +134,17 @@ class SearchFixture(HttpTransport[HttpRequest, HttpResponse]):
                         "errorMessage": "private-document" if self.index_failure else None,
                     }
                 )
-            return self._respond(request, 207 if self.index_failure else 200, {"value": results})
+            return self._respond(
+                request, 207 if self.index_failure else 200, {"value": results}, **kwargs
+            )
         assert path.endswith("/retrieve"), "retrieval must use the knowledge base, not index search"
+        if "maxOutputSizeInTokens" in body:
+            return self._respond(
+                request,
+                400,
+                {"error": {"message": "maxOutputSizeInTokens is not valid for retrieve."}},
+                **kwargs,
+            )
         query = body["intents"][0]["search"].casefold()
         references = [
             {
@@ -130,7 +158,7 @@ class SearchFixture(HttpTransport[HttpRequest, HttpResponse]):
         ]
         if self.malformed_references and references:
             references[0]["docKey"] = "foreign-source"
-        return self._respond(request, 200, {"response": [], "references": references})
+        return self._respond(request, 200, {"response": [], "references": references}, **kwargs)
 
 
 @pytest.fixture
@@ -201,7 +229,8 @@ def test_refresh_twice_and_retrieve_a_relevant_recipe_with_stable_source_metadat
     query = request_body(transport.requests[-1])
     assert query["maxOutputDocuments"] == 3
     assert query["maxRuntimeInSeconds"] == 10
-    assert query["maxOutputSizeInTokens"] == 4000
+    assert query["maxOutputSize"] == 5000
+    assert "maxOutputSizeInTokens" not in query
     assert query["knowledgeSourceParams"][0]["includeReferenceSourceData"] is True
 
 
@@ -226,6 +255,7 @@ def test_setup_uses_configured_names_and_agent_identity_without_api_keys(
     base = request_body(requests[2])
     assert base["models"] == []
     assert base["retrievalReasoningEffort"] == {"kind": "minimal"}
+    assert base["retrieveDefaults"]["maxOutputSizeInTokens"] == 5000
     connection = request_body(requests[3])["properties"]
     assert connection["authType"] == "AgenticIdentityToken"
     assert connection["audience"] == "https://search.azure.com/"
@@ -240,18 +270,21 @@ def test_setup_uses_configured_names_and_agent_identity_without_api_keys(
     assert SEARCH_API_VERSION in requests[0].url
 
 
-def test_configured_limits_bound_both_the_mcp_defaults_and_rest_queries(
-    knowledge: FoundryRecipeKnowledge, transport: SearchFixture
+@pytest.mark.parametrize("context_tokens", [256, 512, 4000])
+def test_service_minimum_applies_to_mcp_defaults_and_rest_queries_without_raising_local_limit(
+    knowledge: FoundryRecipeKnowledge, transport: SearchFixture, context_tokens: int
 ) -> None:
-    knowledge.config = replace(knowledge.config, max_results=1, max_context_tokens=512)
+    knowledge.config = replace(knowledge.config, max_results=1, max_context_tokens=context_tokens)
     knowledge.configure()
     defaults = request_body(transport.requests[2])["retrieveDefaults"]
     assert defaults["maxOutputDocuments"] == 1
-    assert defaults["maxOutputSizeInTokens"] == 512
+    assert defaults["maxOutputSizeInTokens"] == 5000
     knowledge.retrieve("rice")
     request = request_body(transport.requests[-1])
     assert request["maxOutputDocuments"] == 1
-    assert request["maxOutputSizeInTokens"] == 512
+    assert request["maxOutputSize"] == 5000
+    assert "maxOutputSizeInTokens" not in request
+    assert knowledge.config.max_context_tokens == context_tokens
     semantic = request_body(transport.requests[0])["semantic"]["configurations"][0]
     assert semantic["prioritizedFields"]["prioritizedContentFields"] == [{"fieldName": "grounding"}]
 

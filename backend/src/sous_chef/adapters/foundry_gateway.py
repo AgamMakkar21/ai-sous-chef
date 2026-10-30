@@ -205,7 +205,9 @@ class FoundryGateway:
                             body=self._grounded_recipe_body()
                             if isinstance(request, GroundedRecipeGenerationRequest)
                             else None,
-                            reserved_tool_tokens=self._settings.foundry_iq_max_context_tokens
+                            reserved_tool_tokens=RecipeKnowledgeConfig.from_settings(
+                                self._settings
+                            ).service_output_tokens
                             if isinstance(request, GroundedRecipeGenerationRequest)
                             else 0,
                         )
