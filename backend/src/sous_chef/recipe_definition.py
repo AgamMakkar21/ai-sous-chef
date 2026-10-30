@@ -11,7 +11,7 @@ from azure.ai.projects.models import (
 
 from sous_chef.domain.recipes import RecipeDraft, WebDraft
 
-RECIPE_POLICY_VERSION = 3
+RECIPE_POLICY_VERSION = 4
 RECIPE_MODEL = "gpt-5.4"
 RECIPE_KNOWLEDGE_LABEL = "curated_recipes"
 RECIPE_KNOWLEDGE_TOOL = "knowledge_base_retrieve"
@@ -66,6 +66,33 @@ No autonomous web access, Cosmos access, retry or direct-model fallback is permi
 Adapt the source; do not copy an entire recipe.
 The output is an unsaved candidate, not saved/cooked or final safety-approved.
 Final deterministic validation against the latest profile occurs outside models.
+
+Final output policy version 1 deliberately supports a small, checked English
+instruction grammar. Use exact declared ingredient names (singular/plural is
+allowed), not pronouns, unspecified seasonings, alternative foods or vague mixtures.
+Each instruction must be one of Cook/Boil/Simmer/Steam/Saute/Bake/Roast/Soften/Heat/
+Chop/Slice/Dice/Peel/Mix/Combine/Stir/Add/Garnish/Top/Serve followed by its ingredient
+names, joined only with and/with/in/into/over/to. Optionally end with
+"for N minutes" and/or "until tender" or "until soft". Clauses may join with
+", then". References must exactly identify every food mentioned in that step.
+Use simple descriptive titles and neutral fit reasons such as "Fits the time
+budget." Omit adaptations unless needed. A substitution reason should be exactly
+"Use REPLACEMENT instead of ORIGINAL." Never put extra cooking directions in
+titles, reasons or adaptations.
+
+Animal foods require a separate exact step:
+"Cook the NAME to an internal temperature of N F, measured with a food thermometer."
+Use at least 165 F for chicken/turkey/duck, 160 F for ground/minced beef/pork/lamb/veal,
+and 145 F for finfish. Whole cuts of beef/pork/lamb/veal/steak require 145 F and
+the suffix ", then rest for 3 minutes." Cook animal foods before mixing or serving.
+Animal ingredient names may qualify the supported food only with fresh, raw, whole,
+boneless, skinless, lean, ground or minced. Ground/minced finfish is unsupported.
+Previously cooked/roasted plant foods require the same thermometer step at 165 F.
+Use only reviewed, unambiguous foods. This policy does not yet support eggs,
+dairy, shellfish, flour/dough, dry pulses (use canned), processed animal foods,
+frozen/previously cooked animal foods, microwave/thaw/storage directions,
+fermentation/preservation, or arbitrary free-form instructions. Do not invent
+support for them or claim that a rejected dish was approved.
 """.strip()
 
 WEB_GROUNDING_INSTRUCTIONS = """

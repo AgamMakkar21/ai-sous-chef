@@ -1,10 +1,12 @@
 # Recipe + Nutrition structured output and grounding (ASC-26 / ASC-30 / ASC-34)
 
-This slice implements the GPT-5.4 specialist's version-3 instructions, strict
+This slice implements the GPT-5.4 specialist's version-4 instructions, strict
 draft/full-recipe schemas, one-call New Foundry generation, backend enrichment,
 identity-bound Foundry IQ recipe retrieval and conditional Web IQ. It does not activate chat
 or an Azure release, save/cook a recipe, integrate live USDA nutrition, or replace
-the later final full-recipe safety gate. No model/tool availability research or
+the final full-recipe safety gate.
+[ASC-36's final gate](#final-recipe-gate-asc-36) now guards full candidates and the
+chat completion/save-preparation boundaries. No model/tool availability research or
 alternative provider is required.
 
 ## Execution and tool boundaries
@@ -120,14 +122,15 @@ Validated web evidence must fit the 4,000-token tool-result limit and the subseq
 recipe input preflight. Token headroom is rechecked before recipe generation.
 The normal web path therefore uses four total model invocations, leaving no extra
 allowance for a revision. The global one-web-call limit still spans revisions.
+Final-gate rejection cannot create an extra revision budget.
 
 Validated evidence enters recipe generation as explicitly untrusted data.
 It cannot authorize tools, replace curated provenance, supply USDA nutrition
 or override deterministic allergy/restriction checks. The backend attaches
 the claims, native citation URLs/titles and UTC retrieval time as `webGrounding`,
 separate from curated `sourceClaims`, `sources` and USDA evidence. The recipe
-draft schema remains version 2. This slice does not add a citation UI or change
-the requirement for the later full-recipe safety gate before display/persistence.
+draft schema remains version 2. Web-informed candidates pass the same final gate
+before display/persistence; this slice does not add a citation UI.
 
 Operational events contain only allowlisted categories, opaque operation IDs,
 durations, and validated agent identity metadata for `recipe_invoked`. Profiles,
@@ -145,7 +148,7 @@ are explicit `null`, not omitted or guessed.
 
 | Field | Contract |
 | --- | --- |
-| `schemaVersion` | Exactly `2`; publish and pin the version-2 source before consuming this draft schema |
+| `schemaVersion` | Exactly `2`; publish and pin source policy 4 for conditional Web IQ and the final gate's supported instruction grammar |
 | `title`, `servings`, `totalMinutes`, `skill` | 160 characters; 1-20 servings; 1-1,440 minutes; existing skill enum |
 | `ingredients` | 1-30 unique line IDs, display names, numeric quantity or null, supported unit or null |
 | `substitutions` | Up to 30 original names/reasons referencing replacement lines actually used in the recipe |
@@ -176,8 +179,117 @@ nutrition contains no amounts, mappings or fake citations. Nutrient units are
 fixed (`kcal` energy, `mg` sodium, `g` protein/carbohydrate/fat/fiber). The source
 dataset/version and serving basis are preserved. No assertion here guarantees
 medical suitability or that every consumed ingredient has been extracted from
-free-text instructions: the final deterministic full-recipe gate must still
-check the latest profile and ingredient-bearing prose before display/persistence.
+free-text instructions: the final deterministic full-recipe gate independently
+checks the latest profile and ingredient-bearing prose before display/persistence.
+
+## Final recipe gate (ASC-36)
+
+`domain/recipe_safety.py` policy **1** revalidates the actual serialized
+`StructuredRecipe`, not just its nominal Python type or fit projection. It uses
+the reviewed ingredient catalog and ASC-35's deterministic hard-constraint checks.
+Every food must resolve unambiguously even when the profile has no restrictions.
+Dislikes and learned preferences never weaken explicit allergies/restrictions.
+Catalog group IDs do not authorize a different ingredient in prose: carrot does
+not authorize onion, nor rice authorize quinoa.
+
+The gate intentionally supports **controlled English instructions**, not general
+natural-language safety classification. Unsupported text fails closed and can
+consume the existing single revision; no LLM safety decision or keyword blacklist
+approves unknown directions. This can reject otherwise reasonable recipes.
+
+- Instructions start with Cook, Boil, Simmer, Steam, Saute, Bake, Roast, Soften,
+  Heat, Chop, Slice, Dice, Peel, Mix, Combine, Stir, Add, Garnish, Top or Serve.
+  Follow with declared food names, optionally joined with and/with/in/into/over/to.
+  Singular/plural and catalog preparation descriptors are normalized, but food
+  identity is not inferred from a coarse catalog ID. References must exactly
+  match every food mentioned in each step.
+- Optional suffixes are `for N minutes`, `until tender`, or `until soft`;
+  clauses may join with `, then`. Unknown foods, pronouns, unspecified sauces,
+  extra sentences, negations, thawing, storage and unsupported techniques are
+  rejected. Titles, fit reasons, adaptations and substitution reasons also have
+  a restricted descriptive vocabulary; they cannot hide extra cooking directions.
+- A substitution references its actual replacement line, which must pass all
+  checks. The excluded original is not consumed. Supported descriptions include
+  `Use olive oil instead of butter.` or `Olive oil replaces butter`; they do not
+  exempt butter from restrictions if it appears elsewhere as a consumed food.
+- Supported animal foods require the exact thermometer form:
+  `Cook the chicken to an internal temperature of 165 F, measured with a food thermometer.`
+  Poultry needs at least 165 F, ground/minced beef/pork/lamb/veal 160 F, and finfish 145 F.
+  Whole beef/pork/lamb/veal/steak cuts need at least 145 F plus
+  `, then rest for 3 minutes`. Raw animal foods cannot be combined/served before
+  their temperature step. Cooked/roasted plant ingredients require a 165 F
+  thermometer step for reheating. Cooking temperatures use integer Fahrenheit.
+- Animal ingredient qualifiers are limited to fresh, raw, whole, boneless,
+  skinless, lean, ground and minced. Other catalog preparation descriptors cannot
+  silently inherit whole-cut cooking rules. Ground/minced finfish is unsupported.
+- Eggs, dairy, shellfish, flour/dough, uncanned pulses, processed animal products,
+  frozen/previously cooked animal foods, preservation, fermentation, microwave
+  and arbitrary free-form handling are not approved by this policy version.
+  ASCII food/metadata text is required; the degree sign is supported in the
+  thermometer template. Extending coverage requires reviewed rules and tests.
+
+Cooking rules and the backend-authored clean/separate/chill notice are grounded
+in the CDC's [Preventing Food Poisoning](https://www.cdc.gov/food-safety/prevention/index.html)
+(page dated November 24, 2025). Its temperature table specifies 145 F plus
+three-minute rest for whole cuts, 160 F for ground meats, 165 F for poultry and
+leftovers, and 145 F for finfish. It advises against washing raw chicken and
+countertop thawing; perishables must be refrigerated within two hours (one hour
+above 90 F), with a refrigerator at 40 F or below. No network lookup occurs at
+validation time. This is bounded application checking, not certification of
+real-world handling, ingredient labels, cross-contact, recalls or medical fitness.
+
+### Regeneration, delivery and save hooks
+
+`OrchestratorService` checks each full candidate **after all tool enrichment** and
+again on every specialist revision. A projection must match the full recipe.
+Rejected text never enters the coordinator function result: it receives only
+`safety_rejected` and the existing revision allowance. The request still has at
+most four model calls and two specialist invocations (one regeneration), shared
+with nested tool/model work. Exhausting the final-gate attempt/call budget returns
+a fixed honest `unable` result with no recipe or projection. A model cannot accept
+a rejected candidate. Transport/provider failures remain explicit; they are not
+replayed as regeneration.
+
+`ValidatedReply` requires a full candidate whenever it carries a
+`generatedRecipeId`. `ChatService` reads the current owned profile immediately
+before **each completion attempt**, runs the gate, and generates recipe text with
+the backend renderer instead of trusting executor-authored text. It atomically
+persists that text, the checked recipe, profile ETag and policy version in the
+completed turn. Rejected recipes create neither a successful assistant message
+nor a generated/cookable snapshot. There is no draft streaming.
+Source quotes and raw tool evidence are attribution, not recipe directions;
+the renderer does not display them or append unvalidated model commentary.
+Projection-only orchestration remains an internal test seam, not a public reply.
+Non-recipe replies select a typed `clarification` or `unable` control result,
+never public free-form text. Clarifications select one backend-authored request,
+ingredient, time-budget or constraint question; inability uses the fixed safe
+response. Executor `content` is retained as a private compatibility input but is
+never displayed or persisted, including on the text-only path. ASC-38 must select
+the corresponding control kind/code rather than render coordinator prose.
+
+`services/recipe_safety.py` supplies `check_current_recipe` for delivery, edits
+and reuse, and `prepare_recipe_save` for a future save endpoint. The latter loads
+an **owned completed turn** by turn/generated-recipe ID, never a client recipe
+body, and rechecks the full stored recipe against the latest profile. A previously
+approved recipe or old safety ETag cannot bypass a newly added allergy.
+Neither helper writes RecipeHistory or marks anything cooked; full save/history
+API composition is separate work. Every edit and later saved-recipe reuse must
+load owned data and call the current-policy hook again. A `CheckedRecipe` is
+read-bound evidence, not a cacheable authorization token.
+
+Users and ChatHistory/RecipeHistory are separate Cosmos containers. The profile
+ETag records the state checked, not a cross-container transaction or a lock.
+A profile change **after** the final read can race a completion/save; callers
+must recheck on subsequent saves, revisions and reuse. No atomic cross-container
+guarantee is claimed.
+
+No new environment settings, packages, feature flags or provider adapters are
+required. The gate cannot be disabled by a request. Generation source policy is
+now **4**, with unchanged draft schema **2**; publish/pin that reviewed source
+before live composition so the specialist knows the supported output grammar.
+No agents, runtime flags, deployment pins or Azure resources change automatically.
+The gate is adapter-independent and applies equally to Web IQ-informed and
+ordinary non-web recipes.
 
 ## Source publication and setup
 

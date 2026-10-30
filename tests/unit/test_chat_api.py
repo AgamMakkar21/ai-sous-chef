@@ -4,24 +4,35 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from threading import Barrier, Event
-from typing import Any
-from uuid import uuid4
+from typing import Any, Literal
+from uuid import UUID, uuid4
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
-from sous_chef.adapters.cosmos import CosmosRepository
+from sous_chef.adapters.cosmos import CosmosRepository, open_cosmos
 from sous_chef.app import create_app
-from sous_chef.domain.authorization import AuthenticatedUser
+from sous_chef.domain.authorization import AuthenticatedUser, OwnedResourceNotFound
 from sous_chef.domain.chat import ChatExecution, ExecutionFailed, ValidatedReply
-from sous_chef.domain.cosmos import NewRecord, RecordPatch, StoredRecord
+from sous_chef.domain.cosmos import (
+    CosmosError,
+    CosmosFailure,
+    NewRecord,
+    ProductContainer,
+    RecordPatch,
+    StoredRecord,
+)
+from sous_chef.domain.recipe_safety import RecipeSafetyError
+from sous_chef.domain.recipes import StructuredRecipe
 from sous_chef.services import chat
+from sous_chef.services.recipe_safety import prepare_recipe_save
 from sous_chef.settings import Settings
 from test_conversation_api import BASE, CHAT, OWNER, create
 from test_conversation_api import conversation_settings as conversation_settings
 from test_cosmos_repository import SyntheticCredential, Transport
 from test_cosmos_repository import harness as harness
 from test_profile_api import onboard, signed_token
+from test_recipe_safety import full_recipe
 
 
 class FakeExecutor:
@@ -34,6 +45,10 @@ class FakeExecutor:
         self.started = Event()
         self.release = Event()
         self.block = False
+        self.recipe: StructuredRecipe | None = None
+        self.recipe_id = uuid4()
+        self.control_kind: Literal["clarification", "unable"] = "clarification"
+        self.reply_content = "Synthetic validated answer"
 
     async def execute(self, request: ChatExecution) -> ValidatedReply:
         self.calls.append(request)
@@ -60,6 +75,10 @@ class FakeExecutor:
             raise RuntimeError("private executor crash")
         if self.mode == "invalid":
             return ValidatedReply(content=" " * 3, entity_id="synthetic-agent")
+        if self.mode == "reference_only":
+            return ValidatedReply(
+                content="Private unvalidated recipe draft", entity_id="synthetic-agent"
+            ).model_copy(update={"generated_recipe_id": self.recipe_id})
         if self.mode == "lost_completion":
             self.transport.write_then_disconnect = True
         if self.mode == "unavailable_completion":
@@ -67,10 +86,12 @@ class FakeExecutor:
         if self.mode == "transient_completion":
             self.transport.faults["POST"].append(503)
         return ValidatedReply(
-            content="Synthetic validated answer",
+            content=self.reply_content,
+            kind="recipe" if self.recipe is not None else self.control_kind,
             entity_id="synthetic-agent",
-            generated_recipe_id=None,
+            generated_recipe_id=self.recipe_id if self.recipe is not None else None,
             provider_response_id="private-provider-response",
+            recipe=self.recipe,
         )
 
 
@@ -168,8 +189,186 @@ def test_payload_conflict_and_key_scope(chat_api: TestClient, executor: FakeExec
     assert len(executor.calls) == 2
 
 
+@pytest.mark.parametrize("rejected", [False, True])
+def test_full_recipe_gate_controls_public_text_and_atomic_snapshot(
+    rejected: bool,
+    chat_api: TestClient,
+    executor: FakeExecutor,
+    harness: tuple[Transport, SyntheticCredential],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    executor.recipe = full_recipe(
+        instructions=("Cook the rice, then garnish with peanut.",)
+        if rejected
+        else ("Cook the rice.",)
+    )
+    conversation = create(chat_api)
+    response = send(chat_api, conversation)
+    assert response.status_code == (502 if rejected else 200), response.text
+    turn = documents(harness[0], "turn")[0]
+    assert turn["status"] == ("failed" if rejected else "completed")
+    assert "Synthetic validated answer" not in json.dumps(turn)
+    assert "garnish with peanut" not in json.dumps(turn)
+    assert "garnish with peanut" not in response.text + caplog.text
+    if rejected:
+        assert len(turn["messages"]) == 1
+        assert turn["generatedRecipeId"] is None
+        assert "recipe" not in turn
+    else:
+        assert "Cook the rice." in turn["messages"][1]["content"]
+        assert turn["recipe"]["ingredients"][0]["name"] == "rice"
+        assert turn["generatedRecipeId"] == str(executor.recipe_id)
+        assert turn["safetyProfileRevision"]
+    assert not documents(harness[0], "recipe")
+
+
+@pytest.mark.parametrize("kind", ["clarification", "unable"])
+def test_text_only_reply_cannot_smuggle_an_unvalidated_recipe(
+    kind: Literal["clarification", "unable"],
+    chat_api: TestClient,
+    executor: FakeExecutor,
+    harness: tuple[Transport, SyntheticCredential],
+) -> None:
+    executor.control_kind = kind
+    executor.reply_content = "Cook the rice, then garnish with peanut."
+    response = send(chat_api, create(chat_api))
+    assert response.status_code == 200
+    assert executor.reply_content not in response.text
+    turn = documents(harness[0], "turn")[0]
+    assert executor.reply_content not in json.dumps(turn)
+    assert "recipe" not in turn and turn["generatedRecipeId"] is None
+    public = response.json()["data"]["messages"][1]["content"]
+    assert public == (
+        "Which dish would you like to make?"
+        if kind == "clarification"
+        else "I couldn't complete a recipe that passes the current ingredient and cooking-safety "
+        "checks within the allowed attempts. No recipe was approved or saved."
+    )
+
+
+def test_profile_change_before_delivery_revalidates_the_actual_recipe(
+    chat_api: TestClient,
+    executor: FakeExecutor,
+    harness: tuple[Transport, SyntheticCredential],
+) -> None:
+    executor.recipe = full_recipe()
+    executor.block = True
+    conversation = create(chat_api)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(send, chat_api, conversation)
+        try:
+            assert executor.started.wait(10)
+            current = chat_api.get("/api/v1/me")
+            updated = chat_api.patch(
+                "/api/v1/me/preferences",
+                headers={"If-Match": current.headers["etag"]},
+                json={"allergies": ["rice"]},
+            )
+            assert updated.status_code == 200
+        finally:
+            executor.release.set()
+        response = future.result(timeout=10)
+    assert response.status_code == 502
+    assert response.json()["code"] == "invalid_assistant_response"
+    turn = documents(harness[0], "turn")[0]
+    assert len(turn["messages"]) == 1 and turn["generatedRecipeId"] is None
+    assert "recipe" not in turn and not documents(harness[0], "recipe")
+
+
+def test_save_preparation_loads_owned_generation_and_revalidates_latest_policy(
+    chat_api: TestClient,
+    executor: FakeExecutor,
+    conversation_settings: Settings,
+    harness: tuple[Transport, SyntheticCredential],
+) -> None:
+    executor.recipe = full_recipe()
+    conversation = create(chat_api)
+    sent = send(chat_api, conversation)
+    assert sent.status_code == 200
+    turn_id = UUID(sent.json()["data"]["turnId"])
+
+    async def prepare(user: AuthenticatedUser = OWNER) -> Any:
+        async with open_cosmos(conversation_settings) as repository:
+            return await prepare_recipe_save(
+                repository,
+                user,
+                turn_id=turn_id,
+                generated_recipe_id=executor.recipe_id,
+            )
+
+    checked = asyncio.run(prepare())
+    assert checked.recipe == executor.recipe
+    assert "Cook the rice." in checked.content
+    stranger = AuthenticatedUser.from_verified_identity("synthetic", "other-user")
+    with pytest.raises(OwnedResourceNotFound):
+        asyncio.run(prepare(stranger))
+    current = chat_api.get("/api/v1/me")
+    updated = chat_api.patch(
+        "/api/v1/me/preferences",
+        headers={"If-Match": current.headers["etag"]},
+        json={"allergies": ["rice"]},
+    )
+    assert updated.status_code == 200
+    with pytest.raises(RecipeSafetyError):
+        asyncio.run(prepare())
+    assert not documents(harness[0], "recipe")
+    assert documents(harness[0], "turn")[0]["recipe"]["ingredients"][0]["name"] == "rice"
+
+
+def test_completion_retry_rechecks_profile_without_another_generation(
+    chat_api: TestClient,
+    executor: FakeExecutor,
+    harness: tuple[Transport, SyntheticCredential],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor.recipe = full_recipe()
+    original = CosmosRepository.commit_chat
+    changed = False
+
+    async def change_before_retry(
+        repository: CosmosRepository,
+        user: AuthenticatedUser,
+        *,
+        creates: tuple[NewRecord, ...] = (),
+        patches: tuple[tuple[StoredRecord, RecordPatch], ...],
+        deadline: float | None = None,
+    ) -> tuple[StoredRecord, ...]:
+        nonlocal changed
+        if not changed and any(patch.fields.get("recipe") for _, patch in patches):
+            changed = True
+            profile = await repository.read(user, ProductContainer.USERS, user.user_id)
+            assert profile is not None
+            preferences = profile.body["explicitPreferences"]
+            assert isinstance(preferences, dict)
+            await repository.patch(
+                user,
+                ProductContainer.USERS,
+                user.user_id,
+                RecordPatch(
+                    etag=profile.etag,
+                    fields={"explicitPreferences": {**preferences, "allergies": ["rice"]}},
+                ),
+            )
+            raise CosmosError(CosmosFailure.UNAVAILABLE, uuid4())
+        return await original(repository, user, creates=creates, patches=patches, deadline=deadline)
+
+    monkeypatch.setattr(CosmosRepository, "commit_chat", change_before_retry)
+    response = send(chat_api, create(chat_api))
+    assert response.status_code == 502 and changed
+    assert len(executor.calls) == 1
+    turn = documents(harness[0], "turn")[0]
+    assert turn["status"] == "failed"
+    assert len(turn["messages"]) == 1 and turn["generatedRecipeId"] is None
+    assert "recipe" not in turn and not documents(harness[0], "recipe")
+
+
 @pytest.mark.parametrize(
-    "mode,code", [("fail", "execution_failed"), ("invalid", "invalid_assistant_response")]
+    "mode,code",
+    [
+        ("fail", "execution_failed"),
+        ("invalid", "invalid_assistant_response"),
+        ("reference_only", "invalid_assistant_response"),
+    ],
 )
 def test_known_failure_retries_existing_turn_explicitly(
     mode: str,

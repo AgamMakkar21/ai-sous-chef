@@ -20,6 +20,7 @@ from sous_chef.domain.orchestrator import (
     SpecialistArguments,
     SpecialistResult,
 )
+from sous_chef.domain.recipe_safety import UNABLE
 from sous_chef.domain.recipes import StructuredRecipe
 from sous_chef.orchestrator_definition import specialist_tool
 from sous_chef.services import orchestrator, recipe_specialist
@@ -314,6 +315,25 @@ def test_web_evidence_cannot_override_allergies_or_supply_nutrition() -> None:
         harness.generate()
     assert caught.value.code == FoundryFailure.REJECTED
     assert len(harness.requests) == 2 and not harness.tools.nutrition_requests
+
+
+@pytest.mark.parametrize(
+    "unsafe_clause", ["garnish with peanut", "leave the rice on the counter overnight"]
+)
+def test_web_final_gate_rejects_unsafe_prose_without_an_extra_revision(
+    unsafe_clause: str,
+) -> None:
+    harness = WebHarness()
+    harness.revision = True
+    content = harness.recipe["output"][1]["content"][0]
+    draft = json.loads(content["text"])
+    step = draft["instructions"][-1]
+    step["text"] = f"{step['text'].rstrip('.')}, then {unsafe_clause}."
+    content["text"] = json.dumps(draft)
+    result = asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
+    assert result.status == "unable" and result.explanation == UNABLE
+    assert result.recipe is None and result.candidate is None
+    assert len(harness.requests) == 4 and len(harness.tools.nutrition_requests) == 1
 
 
 @pytest.mark.parametrize("limit", ["model_calls", "tool_calls", "web_calls", "output_tokens"])

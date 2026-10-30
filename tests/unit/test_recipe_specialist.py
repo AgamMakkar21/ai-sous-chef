@@ -612,7 +612,7 @@ def test_recipe_publication_versions_the_existing_distinct_identity_without_acti
     invocation = client.agents.create_version.call_args.kwargs
     assert invocation["agent_name"] == "recipe-agent"
     assert invocation["metadata"]["asc_model"] == "gpt-5.4"
-    assert invocation["metadata"]["asc_policy_version"] == "3"
+    assert invocation["metadata"]["asc_policy_version"] == "4"
     assert invocation["definition"].as_dict()["tools"][0]["project_connection_id"] == "fixture-mcp"
     assert invocation["definition"].as_dict()["tools"][1] == {
         "type": "web_search",
