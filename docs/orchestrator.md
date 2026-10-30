@@ -93,10 +93,15 @@ The normal path is route -> specialist -> fit review (three model calls).
 If a revision is requested, its specialist invocation is the fourth and last:
 the backend rechecks its projection and returns either a candidate with brief
 fit reasons or an explicit rejection, **not** another unbounded review loop.
-`status=candidate` is intentionally not final recipe approval. ASC-38 must
-validate the complete final recipe, including ingredient-bearing instructions,
-nutrition/source contracts and the latest profile state, before display,
-streaming or persistence. It must not treat this projection as `ValidatedReply`.
+`status=candidate` is intentionally not a durable safety certificate.
+[ASC-36's final gate](recipe-specialist.md#final-recipe-gate-asc-36) now checks
+every full structured candidate after enrichment and every revision, including
+ingredient-bearing instructions and cooking policy. It rejects a projection
+that does not match the full recipe. One rejection can use the existing single
+revision, never a separate model budget; exhausted safety attempts return a fixed
+`unable` response without a recipe. ASC-38 must compose the full recipe into the
+chat completion hook, which rereads the current owned profile before rendering
+and persistence. It must not treat a projection-only result as `ValidatedReply`.
 
 Specialist failures are not retried. Deadline/cancellation cancels local awaiting
 work and starts no replacement run; it does not prove a remote operation stopped.

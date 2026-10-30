@@ -14,6 +14,7 @@ from pydantic import UUID4, AwareDatetime, ConfigDict, Field, JsonValue, Validat
 from sous_chef.adapters.cosmos import CosmosRepository, open_cosmos
 from sous_chef.domain.authorization import AuthenticatedUser, OwnedResourceNotFound
 from sous_chef.domain.chat import (
+    CLARIFICATIONS,
     ChatExecution,
     ChatExecutor,
     ExecutionFailed,
@@ -35,9 +36,11 @@ from sous_chef.domain.cosmos import (
     StoredRecord,
 )
 from sous_chef.domain.profiles import OnboardingRequired
+from sous_chef.domain.recipe_safety import UNABLE, RecipeSafetyError
 from sous_chef.services.context import ContextService
 from sous_chef.services.conversations import ConversationService, StoredConversation
 from sous_chef.services.profiles import _view as profile_view
+from sous_chef.services.recipe_safety import check_current_recipe
 from sous_chef.settings import ConfigurationError, Settings
 
 CHAT = ProductContainer.CHAT_HISTORY
@@ -142,6 +145,29 @@ class ChatService:
             raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4())
         public_turn = ConversationService._turn(turn, operation.conversation_id)
         messages = public_turn.messages
+        recipe_fields: dict[str, JsonValue] = {}
+        if reply is not None and reply.recipe is not None:
+            try:
+                checked = await check_current_recipe(repository, user, reply.recipe)
+                reply = reply.model_copy(
+                    update={"content": checked.content, "recipe": checked.recipe}
+                )
+                recipe_fields = {
+                    "recipe": checked.recipe.model_dump(mode="json", by_alias=True),
+                    "safetyProfileRevision": checked.profile_revision,
+                    "safetyPolicyVersion": checked.policy_version,
+                }
+            except (RecipeSafetyError, OnboardingRequired):
+                reply = None
+                status, failure = "failed", "invalid_assistant_response"
+        elif reply is not None:
+            reply = reply.model_copy(
+                update={
+                    "content": UNABLE
+                    if reply.kind == "unable"
+                    else CLARIFICATIONS[reply.clarification]
+                }
+            )
         if reply is not None:
             messages += (
                 TurnMessage(
@@ -153,6 +179,7 @@ class ChatService:
                 ),
             )
         turn_fields: dict[str, JsonValue] = {
+            **recipe_fields,
             "status": status,
             "messages": [message.model_dump(mode="json", by_alias=True) for message in messages],
             "generatedRecipeId": str(reply.generated_recipe_id)
@@ -393,7 +420,7 @@ class ChatService:
             status, failure = "outcomeUnknown", "execution_outcome_unknown"
 
         async with open_cosmos(self.settings, deadline=deadline) as repository:
-            if reply is not None:
+            if reply is not None and reply.recipe is None:
                 latest = await repository.read(user, ProductContainer.USERS, user.user_id)
                 latest_profile = profile_view(latest) if latest is not None else None
                 latest_preferences = (
