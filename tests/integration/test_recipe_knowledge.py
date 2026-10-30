@@ -105,6 +105,21 @@ class SearchFixture(HttpTransport[HttpRequest, HttpResponse]):
             )
         body = request_body(request)
         path = urlsplit(request.url).path
+        if path.startswith("/knowledgebases/"):
+            limits = body["retrieveDefaults"] if request.method == "PUT" else body
+            if limits["maxOutputSizeInTokens"] < 5000:
+                return self._respond(
+                    request,
+                    400,
+                    {
+                        "error": {
+                            "message": (
+                                "Knowledge Base MaxOutputSize configuration must be at least 5000"
+                            )
+                        }
+                    },
+                    **kwargs,
+                )
         if request.method == "PUT":
             return self._respond(request, 201, body, **kwargs)
         if path.endswith("/docs/index"):
@@ -208,7 +223,7 @@ def test_refresh_twice_and_retrieve_a_relevant_recipe_with_stable_source_metadat
     query = request_body(transport.requests[-1])
     assert query["maxOutputDocuments"] == 3
     assert query["maxRuntimeInSeconds"] == 10
-    assert query["maxOutputSizeInTokens"] == 4000
+    assert query["maxOutputSizeInTokens"] == 5000
     assert query["knowledgeSourceParams"][0]["includeReferenceSourceData"] is True
 
 
@@ -233,6 +248,7 @@ def test_setup_uses_configured_names_and_agent_identity_without_api_keys(
     base = request_body(requests[2])
     assert base["models"] == []
     assert base["retrievalReasoningEffort"] == {"kind": "minimal"}
+    assert base["retrieveDefaults"]["maxOutputSizeInTokens"] == 5000
     connection = request_body(requests[3])["properties"]
     assert connection["authType"] == "AgenticIdentityToken"
     assert connection["audience"] == "https://search.azure.com/"
@@ -247,18 +263,20 @@ def test_setup_uses_configured_names_and_agent_identity_without_api_keys(
     assert SEARCH_API_VERSION in requests[0].url
 
 
-def test_configured_limits_bound_both_the_mcp_defaults_and_rest_queries(
-    knowledge: FoundryRecipeKnowledge, transport: SearchFixture
+@pytest.mark.parametrize("context_tokens", [256, 512, 4000])
+def test_service_minimum_applies_to_mcp_defaults_and_rest_queries_without_raising_local_limit(
+    knowledge: FoundryRecipeKnowledge, transport: SearchFixture, context_tokens: int
 ) -> None:
-    knowledge.config = replace(knowledge.config, max_results=1, max_context_tokens=512)
+    knowledge.config = replace(knowledge.config, max_results=1, max_context_tokens=context_tokens)
     knowledge.configure()
     defaults = request_body(transport.requests[2])["retrieveDefaults"]
     assert defaults["maxOutputDocuments"] == 1
-    assert defaults["maxOutputSizeInTokens"] == 512
+    assert defaults["maxOutputSizeInTokens"] == 5000
     knowledge.retrieve("rice")
     request = request_body(transport.requests[-1])
     assert request["maxOutputDocuments"] == 1
-    assert request["maxOutputSizeInTokens"] == 512
+    assert request["maxOutputSizeInTokens"] == 5000
+    assert knowledge.config.max_context_tokens == context_tokens
     semantic = request_body(transport.requests[0])["semantic"]["configurations"][0]
     assert semantic["prioritizedFields"]["prioritizedContentFields"] == [{"fieldName": "grounding"}]
 

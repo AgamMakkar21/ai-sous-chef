@@ -74,8 +74,12 @@ The supplied finite deadline covers retrieval, generation and nutrition together
 with a 60-second ceiling. Cancellation starts no replacement invocation. The
 gateway preflights instructions, schema, full context, requirements and grounding
 against the remaining per-call input allowance; grounding also must fit the
-4,000-token tool allowance. Live preflight reserves the configured grounding
-allowance in addition to the complete input. Output is capped at the existing 1,500-token reservation,
+4,000-token tool acceptance allowance. Azure Search requires a minimum 5,000-token
+output limit, which is higher than that acceptance limit. Live preflight reserves
+the full 5,000-token service allowance in addition to the complete input; oversized
+MCP results fail post-validation rather than being silently truncated. This check
+occurs after the provider's retrieval/generation call, not before the model sees
+the tool result. Output is capped at the existing 1,500-token reservation,
 including reasoning. Provider usage is mandatory and checked against both ceilings;
 the Orchestrator accounts it cumulatively. Nothing truncates hard constraints to
 fit a budget. A `use_web=true` request fails explicitly as unavailable until #34
@@ -304,8 +308,11 @@ Optional nonsecret bounds, also used by the setup command:
 | `ASC_FOUNDRY_IQ_MAX_RESULTS` | 3 / 1-3 |
 | `ASC_FOUNDRY_IQ_MAX_CONTEXT_TOKENS` | 4,000 / 256-4,000 |
 
-Refresh `--configure` after changing these values so the knowledge base's MCP
-defaults match the runtime policy. The backend rejects results above either
+Refresh `--configure` after changing the result count so the knowledge base's MCP
+document limit matches the runtime policy. Its service output-token limit remains
+5,000, Azure Search's minimum, even when the local grounding acceptance limit is
+smaller. Keep `ASC_FOUNDRY_IQ_MAX_CONTEXT_TOKENS` at or below 4,000; setting it to
+5,000 is not supported. The backend rejects results above either local
 bound, oversized excerpts, duplicate references/sources, missing metadata and
 unexpected provenance. It never silently truncates returned citation metadata.
 The service remains minimal/extractive, with no additional retrieval LLM.

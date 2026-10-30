@@ -27,6 +27,7 @@ from sous_chef.settings import ConfigurationError, Settings
 SEARCH_API_VERSION = "2026-08-01-preview"
 CONNECTION_API_VERSION = "2025-10-01-preview"
 SEMANTIC_CONFIGURATION = "recipe-content"
+MIN_RETRIEVAL_OUTPUT_TOKENS = 5000
 SEARCH_SCOPE = "https://search.azure.com/.default"
 ARM_SCOPE = "https://management.azure.com/.default"
 BATCH_SIZE = 50
@@ -42,6 +43,11 @@ class RecipeKnowledgeConfig:
     project_resource_id: str
     max_results: int = 3
     max_context_tokens: int = 4000
+
+    @property
+    def service_output_tokens(self) -> int:
+        """Search's output minimum is separate from the local acceptance limit."""
+        return max(MIN_RETRIEVAL_OUTPUT_TOKENS, self.max_context_tokens)
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "RecipeKnowledgeConfig":
@@ -272,7 +278,7 @@ class FoundryRecipeKnowledge:
                 "retrieveDefaults": {
                     "maxRuntimeInSeconds": 10,
                     "maxOutputDocuments": config.max_results,
-                    "maxOutputSizeInTokens": config.max_context_tokens,
+                    "maxOutputSizeInTokens": config.service_output_tokens,
                 },
             },
         )
@@ -339,7 +345,7 @@ class FoundryRecipeKnowledge:
                 "outputMode": "extractiveData",
                 "maxRuntimeInSeconds": 10,
                 "maxOutputDocuments": self.config.max_results,
-                "maxOutputSizeInTokens": self.config.max_context_tokens,
+                "maxOutputSizeInTokens": self.config.service_output_tokens,
                 "knowledgeSourceParams": [
                     {
                         "kind": "searchIndex",

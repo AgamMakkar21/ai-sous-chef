@@ -357,8 +357,13 @@ Partial indexing/query failures, invalid citations, authentication and service
 errors also exit nonzero; no model-generated or direct-index-search fallback runs.
 
 The knowledge base uses minimal, extractive retrieval without an additional LLM
-or embedding deployment. Retrieval is bounded to three documents, 4,000 output
-tokens and ten service seconds. Search/MCP REST is pinned to
+or embedding deployment. Retrieval is bounded to three documents and ten service
+seconds. Azure Search requires an output-token limit of at least 5,000, so both
+knowledge-base defaults and diagnostic REST queries request 5,000. The separate
+`ASC_FOUNDRY_IQ_MAX_CONTEXT_TOKENS` setting remains the backend's grounding
+acceptance limit (at most 4,000): oversized MCP results are rejected, not truncated.
+Live model-call preflight reserves the full 5,000-token service allowance, not
+the smaller acceptance limit. Search/MCP REST is pinned to
 `2026-08-01-preview`; project connection ARM REST is `2025-10-01-preview`.
 These preview surfaces use the existing `azure-core` pipeline, without adding
 another agent framework, a classic SDK, or an unpinned Search SDK dependency.
