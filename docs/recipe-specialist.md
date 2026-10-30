@@ -312,7 +312,10 @@ Refresh `--configure` after changing the result count so the knowledge base's MC
 document limit matches the runtime policy. Its service output-token limit remains
 5,000, Azure Search's minimum, even when the local grounding acceptance limit is
 smaller. Keep `ASC_FOUNDRY_IQ_MAX_CONTEXT_TOKENS` at or below 4,000; setting it to
-5,000 is not supported. The backend rejects results above either local
+5,000 is not supported. Knowledge-base configuration sends that service limit
+as `retrieveDefaults.maxOutputSizeInTokens`, while diagnostic `/retrieve`
+requests use `maxOutputSize`; sending `maxOutputSizeInTokens` to `/retrieve`
+causes HTTP 400 on the deployed service. The backend rejects results above either local
 bound, oversized excerpts, duplicate references/sources, missing metadata and
 unexpected provenance. It never silently truncates returned citation metadata.
 The service remains minimal/extractive, with no additional retrieval LLM.

@@ -359,7 +359,10 @@ errors also exit nonzero; no model-generated or direct-index-search fallback run
 The knowledge base uses minimal, extractive retrieval without an additional LLM
 or embedding deployment. Retrieval is bounded to three documents and ten service
 seconds. Azure Search requires an output-token limit of at least 5,000, so both
-knowledge-base defaults and diagnostic REST queries request 5,000. The separate
+knowledge-base defaults and diagnostic REST queries request 5,000. Configuration
+uses `retrieveDefaults.maxOutputSizeInTokens`; the `/retrieve` request uses
+`maxOutputSize` instead, because the service rejects `maxOutputSizeInTokens`
+on that operation. The separate
 `ASC_FOUNDRY_IQ_MAX_CONTEXT_TOKENS` setting remains the backend's grounding
 acceptance limit (at most 4,000): oversized MCP results are rejected, not truncated.
 Live model-call preflight reserves the full 5,000-token service allowance, not

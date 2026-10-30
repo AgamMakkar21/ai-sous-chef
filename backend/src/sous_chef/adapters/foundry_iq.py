@@ -345,7 +345,7 @@ class FoundryRecipeKnowledge:
                 "outputMode": "extractiveData",
                 "maxRuntimeInSeconds": 10,
                 "maxOutputDocuments": self.config.max_results,
-                "maxOutputSizeInTokens": self.config.service_output_tokens,
+                "maxOutputSize": self.config.service_output_tokens,
                 "knowledgeSourceParams": [
                     {
                         "kind": "searchIndex",

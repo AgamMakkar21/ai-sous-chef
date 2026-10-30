@@ -105,9 +105,8 @@ class SearchFixture(HttpTransport[HttpRequest, HttpResponse]):
             )
         body = request_body(request)
         path = urlsplit(request.url).path
-        if path.startswith("/knowledgebases/"):
-            limits = body["retrieveDefaults"] if request.method == "PUT" else body
-            if limits["maxOutputSizeInTokens"] < 5000:
+        if path.startswith("/knowledgebases/") and request.method == "PUT":
+            if body["retrieveDefaults"]["maxOutputSizeInTokens"] < 5000:
                 return self._respond(
                     request,
                     400,
@@ -139,6 +138,13 @@ class SearchFixture(HttpTransport[HttpRequest, HttpResponse]):
                 request, 207 if self.index_failure else 200, {"value": results}, **kwargs
             )
         assert path.endswith("/retrieve"), "retrieval must use the knowledge base, not index search"
+        if "maxOutputSizeInTokens" in body:
+            return self._respond(
+                request,
+                400,
+                {"error": {"message": "maxOutputSizeInTokens is not valid for retrieve."}},
+                **kwargs,
+            )
         query = body["intents"][0]["search"].casefold()
         references = [
             {
@@ -223,7 +229,8 @@ def test_refresh_twice_and_retrieve_a_relevant_recipe_with_stable_source_metadat
     query = request_body(transport.requests[-1])
     assert query["maxOutputDocuments"] == 3
     assert query["maxRuntimeInSeconds"] == 10
-    assert query["maxOutputSizeInTokens"] == 5000
+    assert query["maxOutputSize"] == 5000
+    assert "maxOutputSizeInTokens" not in query
     assert query["knowledgeSourceParams"][0]["includeReferenceSourceData"] is True
 
 
@@ -275,7 +282,8 @@ def test_service_minimum_applies_to_mcp_defaults_and_rest_queries_without_raisin
     knowledge.retrieve("rice")
     request = request_body(transport.requests[-1])
     assert request["maxOutputDocuments"] == 1
-    assert request["maxOutputSizeInTokens"] == 5000
+    assert request["maxOutputSize"] == 5000
+    assert "maxOutputSizeInTokens" not in request
     assert knowledge.config.max_context_tokens == context_tokens
     semantic = request_body(transport.requests[0])["semantic"]["configurations"][0]
     assert semantic["prioritizedFields"]["prioritizedContentFields"] == [{"fieldName": "grounding"}]
