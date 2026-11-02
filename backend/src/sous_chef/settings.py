@@ -99,9 +99,21 @@ class Settings(BaseSettings):
         default=None, pattern=_GUID, repr=False
     )
     app_workload_principal_id: str | None = Field(default=None, pattern=_GUID, repr=False)
+    usda_enabled: bool = False
+    usda_mcp_python: Path | None = Field(default=None, repr=False)
+    usda_mcp_server: Path | None = Field(default=None, repr=False)
+    usda_mcp_env: dict[str, SecretStr] = Field(default_factory=dict, repr=False)
+    usda_mcp_timeout_seconds: float = Field(default=10, gt=0, le=10, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def validate_environment(self) -> Self:
+        for path in (self.usda_mcp_python, self.usda_mcp_server):
+            if path is not None and not path.is_absolute():
+                raise ConfigurationError("USDA interpreter and server paths must be absolute.")
+        if any(not key or "=" in key or "\x00" in key for key in self.usda_mcp_env):
+            raise ConfigurationError("USDA server environment variable names are invalid.")
+        if any("\x00" in value.get_secret_value() for value in self.usda_mcp_env.values()):
+            raise ConfigurationError("USDA server environment values cannot contain NUL.")
         if self.pagination_key is not None:
             try:
                 Fernet(self.pagination_key.get_secret_value().encode("ascii"))

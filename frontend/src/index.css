@@ -473,6 +473,26 @@ input[type="checkbox"] {
   gap: 16px;
   align-items: end;
 }
+.ingredient-lookup {
+  margin-top: 24px;
+}
+.ingredient-lookup-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 16px;
+}
+.ingredient-lookup-form .field {
+  flex: 1 1 240px;
+}
+.ingredient-nutrition-result {
+  margin-top: 24px;
+  overflow-wrap: anywhere;
+}
+.ingredient-calories strong {
+  color: var(--cp-text);
+  font-size: 1.75rem;
+}
 .grocery-list {
   list-style: none;
   padding: 0;

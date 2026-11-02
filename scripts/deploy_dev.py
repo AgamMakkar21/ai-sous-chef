@@ -352,9 +352,18 @@ def release_agents(
 
 
 def package(sha: str, output: Path) -> None:
+    from sous_chef.usda_dependency import UsdaSetupError, installed_source
+
     frontend = ROOT / "backend" / "src" / "sous_chef" / "static" / "index.html"
     if not frontend.is_file():
         raise DeliveryError("Build the frontend with npm ci and npm run build before packaging.")
+    try:
+        usda_source = installed_source().read_bytes()
+    except (UsdaSetupError, OSError):
+        raise DeliveryError(
+            "Install the reviewed USDA source with python -m sous_chef.usda_dependency "
+            "before packaging."
+        ) from None
     archive = subprocess.run(
         ["git", "archive", "--format=zip", sha, "backend", "requirements.txt"],
         check=True,
@@ -370,6 +379,7 @@ def package(sha: str, output: Path) -> None:
                 dest.writestr(entry, source.read(entry.filename))
         dest.writestr("backend/src/sous_chef/static/index.html", frontend.read_bytes())
         dest.writestr("backend/src/sous_chef/release.json", json.dumps({"commit": sha}))
+        dest.writestr("backend/src/sous_chef/_usda/main.py", usda_source)
 
 
 def deploy() -> None:

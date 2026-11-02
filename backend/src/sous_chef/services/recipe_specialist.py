@@ -46,6 +46,7 @@ from sous_chef.domain.recipes import (
 )
 from sous_chef.services.recipe_grounding import retrieval_query
 from sous_chef.services.web_grounding import public_web_query
+from sous_chef.settings import Settings
 from sous_chef.telemetry import ErrorCategory, Event, operational_event, trace_id
 
 
@@ -120,6 +121,13 @@ def _inventory(
 
 
 class RecipeSpecialistService:
+    @classmethod
+    def from_settings(cls, settings: Settings) -> "RecipeSpecialistService":
+        from sous_chef.adapters.foundry_gateway import FoundryGateway
+        from sous_chef.services.nutrition import UsdaNutritionTool
+
+        return cls(FoundryGateway(settings), None, UsdaNutritionTool.from_settings(settings))
+
     def __init__(
         self,
         generator: RecipeGenerator,

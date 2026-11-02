@@ -286,6 +286,12 @@ class NutritionRequest(RecipeModel):
     servings: int = Field(ge=1, le=20)
     ingredients: tuple[DraftIngredient, ...] = Field(min_length=1, max_length=30, repr=False)
 
+    @model_validator(mode="after")
+    def unique_lines(self) -> Self:
+        if len({line.line_id for line in self.ingredients}) != len(self.ingredients):
+            raise ValueError("Nutrition ingredient line IDs must be unique.")
+        return self
+
 
 class RecipeGenerationRequest(FoundryRequest):
     role: Literal[AgentRole.RECIPE_NUTRITION]

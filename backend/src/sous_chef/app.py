@@ -1,3 +1,6 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -10,12 +13,14 @@ from sous_chef.api.conversations import create_conversation_router
 from sous_chef.api.groceries import create_grocery_router
 from sous_chef.api.health import create_health_router
 from sous_chef.api.limits import ProductBodyLimitMiddleware
+from sous_chef.api.nutrition import create_nutrition_router
 from sous_chef.api.observability import RequestLoggingMiddleware
 from sous_chef.api.problems import problem_response, register_problem_handlers
 from sous_chef.api.profiles import create_profile_router
 from sous_chef.domain.chat import ChatExecutor
 from sous_chef.domain.context import LearnedPreferenceReader
 from sous_chef.domain.readiness import ReadinessProbe
+from sous_chef.services.nutrition import UsdaNutritionTool
 from sous_chef.services.readiness import ReadinessService
 from sous_chef.settings import ConfigurationError, Settings, load_settings
 from sous_chef.telemetry import configure_safe_telemetry
@@ -48,11 +53,20 @@ def create_app(
     ):
         raise ConfigurationError("Local readiness doubles cannot run outside explicit local mode.")
 
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        if config.usda_enabled:
+            nutrition = UsdaNutritionTool.from_settings(config)
+            await nutrition.check()
+            app.state.nutrition = nutrition
+        yield
+
     app = FastAPI(
         title="AI Sous Chef",
         docs_url="/docs" if config.environment == "local" else None,
         redoc_url=None,
         openapi_url="/openapi.json" if config.environment == "local" else None,
+        lifespan=lifespan,
     )
     register_problem_handlers(app)
     app.add_middleware(ProductBodyLimitMiddleware)
@@ -61,6 +75,7 @@ def create_app(
     app.include_router(create_auth_router(config))
     app.include_router(create_conversation_router(config, chat_executor, learned_preference_reader))
     app.include_router(create_grocery_router(config))
+    app.include_router(create_nutrition_router())
     app.include_router(create_profile_router(config))
     app.include_router(
         create_health_router(ReadinessService(probe, config.readiness_timeout_seconds))

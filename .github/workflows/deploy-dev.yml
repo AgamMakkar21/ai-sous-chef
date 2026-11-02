@@ -58,6 +58,8 @@ jobs:
           python-version: "3.12"
       - name: Install locked application dependencies
         run: python -m pip install -r requirements.txt
+      - name: Install checksum-pinned USDA MCP source for the deployment artifact
+        run: python -m sous_chef.usda_dependency
       - name: Set up Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:

@@ -88,6 +88,9 @@ class Event(StrEnum):
     RECIPE_COMPLETED = "recipe_completed"
     RECIPE_FAILED = "recipe_failed"
     RECIPE_CANCELLED = "recipe_cancelled"
+    USDA_COMPLETED = "usda_completed"
+    USDA_UNAVAILABLE = "usda_unavailable"
+    USDA_FAILED = "usda_failed"
 
 
 @dataclass(frozen=True)
@@ -162,6 +165,7 @@ def operational_event(
             Event.COSMOS_FAILED,
             Event.ORCHESTRATOR_FAILED,
             Event.RECIPE_FAILED,
+            Event.USDA_FAILED,
         }
         else logging.INFO
     )
