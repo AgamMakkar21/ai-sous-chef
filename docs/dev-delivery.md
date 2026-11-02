@@ -13,6 +13,16 @@ environment variable before merging that extension; missing setup fails delivery
 
 ## One-time owner setup
 
+The source ZIP now includes the checksum-pinned USDA MCP module, installed by CI
+before Azure login; the normal Python lock includes its runtime dependencies.
+After that reviewed artifact is deployed, follow
+[shared USDA setup](recipe-specialist.md#shared-developer-and-azure-setup) to set
+protected `ASC_USDA_MCP_ENV`, allow the app host through the database firewall,
+and enable `ASC_USDA_ENABLED=true`. Each restart then checks real USDA data over
+MCP before serving traffic. No laptop endpoint or manual sidecar process is used.
+The deployment preserves these owner-managed settings; it does not provision
+PostgreSQL, import USDA data, create database users or copy developer credentials.
+
 1. Retain the [required PR checks and peer-review rules](ci.md) on `dev`.
    Create a GitHub Actions environment named **dev**. Under deployment branches
    and tags, select **Selected branches and tags**, add the **branch** `dev`,

@@ -436,11 +436,12 @@ class DeliveryTests(unittest.TestCase):
             root = Path(directory) / "reviewed"
             backend = root / "backend" / "src" / "sous_chef"
             backend.mkdir(parents=True)
-            (backend / "app.py").write_text("# reviewed backend fixture\n")
+            (backend / "app.py").write_bytes(b"# reviewed backend fixture\n")
             (backend / "release.json").write_text('{"commit":"old"}')
             (root / "requirements.txt").write_text("# locked requirement fixture\n")
             (root / ".gitignore").write_text(".env*\nbackend/src/sous_chef/static/\n")
             subprocess.run(["git", "init", "--quiet", str(root)], check=True)
+            subprocess.run(["git", "config", "core.autocrlf", "false"], cwd=root, check=True)
             subprocess.run(["git", "add", "."], cwd=root, check=True)
             subprocess.run(
                 [
@@ -468,7 +469,12 @@ class DeliveryTests(unittest.TestCase):
             frontend = b"<html><body>compiled frontend fixture</body></html>"
             (backend / "static" / "index.html").write_bytes(frontend)
             archive = Path(directory) / "app.zip"
-            with patch.object(delivery, "ROOT", root):
+            usda_source = Path(directory) / "usda-main.py"
+            usda_source.write_bytes(b"# checksum-verified synthetic USDA source\n")
+            with (
+                patch.object(delivery, "ROOT", root),
+                patch("sous_chef.usda_dependency.installed_source", return_value=usda_source),
+            ):
                 delivery.package(sha, archive)
             with zipfile.ZipFile(archive) as package:
                 names = package.namelist()
@@ -478,6 +484,9 @@ class DeliveryTests(unittest.TestCase):
                     package.read("backend/src/sous_chef/app.py"), b"# reviewed backend fixture\n"
                 )
                 self.assertEqual(package.read("backend/src/sous_chef/static/index.html"), frontend)
+                self.assertEqual(
+                    package.read("backend/src/sous_chef/_usda/main.py"), usda_source.read_bytes()
+                )
                 self.assertEqual(
                     json.loads(package.read("backend/src/sous_chef/release.json")), {"commit": sha}
                 )

@@ -76,6 +76,13 @@ jobs:
         run: |
           npm ci
           npm run build
+      - name: Install checksum-pinned USDA MCP source for the wheel
+        if: matrix.check == 'build'
+        env:
+          PYTHONPATH: backend/src
+        run: |
+          python -m sous_chef.usda_dependency
+          python -m pytest tests/unit/test_usda_nutrition.py tests/integration/test_usda_startup.py -k actual_pinned_upstream
       - name: Run ${{ matrix.check }}
         run: ${{ matrix.command }}
 

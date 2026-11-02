@@ -1,0 +1,80 @@
+import json
+import sys
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+from fastapi.testclient import TestClient
+from sous_chef.adapters.usda_mcp import UsdaMcpConfig
+from sous_chef.app import create_app
+from sous_chef.services.nutrition import UsdaNutritionTool
+from sous_chef.settings import ConfigurationError, Settings
+from sous_chef.usda_dependency import SOURCE_PATH, installed_source
+from test_usda_nutrition import config
+
+
+def test_starting_app_runs_real_stdio_lookup_and_reaps_process(tmp_path: Path) -> None:
+    log = tmp_path / "mcp.jsonl"
+    tool = UsdaNutritionTool(config(log=log))
+    settings = Settings(
+        environment="local",
+        adapter_mode="local",
+        usda_enabled=True,
+        _env_file=None,
+    )
+    with patch.object(UsdaNutritionTool, "from_settings", return_value=tool):
+        app = create_app(settings)
+        with TestClient(app) as client:
+            assert client.get("/health").status_code == 200
+            assert app.state.nutrition is tool
+    requests = [json.loads(line) for line in log.read_text().splitlines()]
+    calls = [request["params"] for request in requests if request["method"] == "tools/call"]
+    assert [call["name"] for call in calls] == ["search_foods", "get_nutrition_profile"]
+    assert calls[0]["arguments"] == {"keyword": "Carrots, raw", "limit": 20}
+
+
+@pytest.mark.parametrize("mode", ["no_food", "error", "malformed", "timeout"])
+def test_enabled_app_does_not_start_with_broken_database_or_mcp(mode: str) -> None:
+    tool = UsdaNutritionTool(config(mode, timeout=1))
+    settings = Settings(
+        environment="local",
+        adapter_mode="local",
+        usda_enabled=True,
+        _env_file=None,
+    )
+    with patch.object(UsdaNutritionTool, "from_settings", return_value=tool):
+        with pytest.raises(ConfigurationError, match="USDA startup check") as caught:
+            with TestClient(create_app(settings)):
+                pytest.fail("Broken live startup must not succeed.")
+    assert "private" not in str(caught.value)
+
+
+def test_default_offline_app_never_starts_live_mcp() -> None:
+    settings = Settings(environment="local", adapter_mode="local", _env_file=None)
+    with patch.object(UsdaNutritionTool, "from_settings") as nutrition:
+        with TestClient(create_app(settings)) as client:
+            assert client.get("/health").status_code == 200
+        nutrition.assert_not_called()
+
+
+def test_actual_pinned_upstream_and_mcp_sdk_start_with_synthetic_database() -> None:
+    if not SOURCE_PATH.is_file():
+        pytest.skip("Install the pinned source during build to run the upstream contract check.")
+    source = installed_source()
+    fixture = Path(__file__).parents[1] / "fixtures" / "usda_upstream_database.py"
+    tool = UsdaNutritionTool(
+        UsdaMcpConfig(
+            Path(sys.executable),
+            fixture,
+            {"TEST_USDA_SOURCE": str(source)},
+        )
+    )
+    settings = Settings(
+        environment="local",
+        adapter_mode="local",
+        usda_enabled=True,
+        _env_file=None,
+    )
+    with patch.object(UsdaNutritionTool, "from_settings", return_value=tool):
+        with TestClient(create_app(settings)) as client:
+            assert client.get("/health").status_code == 200

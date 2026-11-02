@@ -3,6 +3,7 @@ import * as Tabs from "@radix-ui/react-tabs";
 import { ApiError, getProfile, getSession } from "./api";
 import ProfileForm from "./ProfileForm";
 import Groceries from "./Groceries";
+import IngredientLookup from "./IngredientLookup";
 import ConversationPanel from "./ConversationPanel";
 import type { Session, Snapshot } from "./profile";
 
@@ -314,19 +315,26 @@ export default function App() {
                         </div>
                       </section>
                       {tab.id === "groceries" ? (
-                        <Groceries
-                          session={ready.session}
-                          onExpired={expire}
-                          onBusy={setBusy}
-                          onSession={(session) =>
-                            setState((current) =>
-                              current.kind === "ready" &&
-                              current.session.userId === session.userId
-                                ? { ...current, session }
-                                : current,
-                            )
-                          }
-                        />
+                        <>
+                          <Groceries
+                            session={ready.session}
+                            onExpired={expire}
+                            onBusy={setBusy}
+                            onSession={(session) =>
+                              setState((current) =>
+                                current.kind === "ready" &&
+                                current.session.userId === session.userId
+                                  ? { ...current, session }
+                                  : current,
+                              )
+                            }
+                          />
+                          <IngredientLookup
+                            key={ready.session.userId}
+                            session={ready.session}
+                            onExpired={expire}
+                          />
+                        </>
                       ) : (
                         <section className="card coming-next">
                           <span className="step">{tab.symbol}</span>

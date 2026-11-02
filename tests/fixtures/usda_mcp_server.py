@@ -1,0 +1,159 @@
+"""Synthetic stdio contract fixture, NOT a USDA data source or runtime fallback."""
+
+import json
+import os
+import sys
+import time
+from pathlib import Path
+from typing import TypedDict
+
+
+class ToolSchema(TypedDict):
+    type: str
+    required: list[str]
+    properties: dict[str, dict[str, str | int]]
+
+
+class ToolDefinition(TypedDict):
+    name: str
+    inputSchema: ToolSchema
+
+
+MODE = os.environ.get("TEST_USDA_MODE", "")
+FOODS = [
+    {"ndb_no": "99901", "long_desc": "rice", "shrt_desc": "RICE", "food_group": "Fixture"},
+    {"ndb_no": "99902", "long_desc": "carrot", "shrt_desc": "CARROT", "food_group": "Fixture"},
+    {"ndb_no": "99903", "long_desc": "olive oil", "shrt_desc": "OIL", "food_group": "Fixture"},
+    {
+        "ndb_no": "99904",
+        "long_desc": "Carrots, raw",
+        "shrt_desc": "CARROTS,RAW",
+        "food_group": "Fixture",
+    },
+]
+if MODE == "leading_zero":
+    FOODS[0]["ndb_no"] = "00001"
+NUTRIENTS = [
+    ("Energy", "kcal", "200"),
+    ("Protein", "g", "4"),
+    ("Carbohydrate, by difference", "g", "30"),
+    ("Total lipid (fat)", "g", "2"),
+    ("Fiber, total dietary", "g", "1"),
+    ("Sodium, Na", "mg", "10"),
+]
+TOOLS: list[ToolDefinition] = [
+    {
+        "name": "search_foods",
+        "inputSchema": {
+            "type": "object",
+            "required": ["keyword"],
+            "properties": {
+                "keyword": {"type": "string"},
+                "limit": {"type": "integer", "default": 20},
+            },
+        },
+    },
+    {
+        "name": "get_nutrition_profile",
+        "inputSchema": {
+            "type": "object",
+            "required": ["ndb_no"],
+            "properties": {"ndb_no": {"type": "string"}},
+        },
+    },
+    {
+        "name": "execute_query",
+        "inputSchema": {"type": "object", "required": [], "properties": {}},
+    },
+]
+
+
+def tool_output(request: dict[str, object]) -> str:
+    params = request["params"]
+    assert isinstance(params, dict)
+    arguments = params["arguments"]
+    if MODE == "timeout":
+        time.sleep(60)
+    if MODE == "error":
+        return "Error: private database credential"
+    if MODE == "malformed":
+        return "private invalid JSON"
+    if MODE == "oversized":
+        return "x" * 140_000
+    if MODE == "no_food":
+        return json.dumps([])
+    if params["name"] == "search_foods":
+        assert set(arguments) == {"keyword", "limit"} and arguments["limit"] == 20
+        foods = [food for food in FOODS if food["long_desc"] == arguments["keyword"]]
+        if MODE == "ambiguous" and foods:
+            foods.append(dict(foods[0], ndb_no="99909"))
+        if MODE == "mismatch":
+            foods = [FOODS[0]]
+        if MODE == "saturated":
+            foods = [dict(FOODS[0], ndb_no=f"{index:05}") for index in range(20)]
+        return json.dumps(foods)
+    assert params["name"] == "get_nutrition_profile" and set(arguments) == {"ndb_no"}
+    food = next(food for food in FOODS if food["ndb_no"] == arguments["ndb_no"])
+    if MODE == "missing_profile":
+        return json.dumps({"error": "No food found with NDB number: " + food["ndb_no"]})
+    rows = [
+        {
+            **{key: value for key, value in food.items() if key != "ndb_no"},
+            "nutrdesc": name,
+            "units": unit,
+            "nutr_val": amount,
+            "sr_order": index,
+        }
+        for index, (name, unit, amount) in enumerate(NUTRIENTS)
+        if not (MODE == "missing_nutrient" and name == "Fiber, total dietary")
+    ]
+    if MODE == "wrong_food":
+        rows[0]["long_desc"] = "different food"
+    elif MODE == "wrong_unit":
+        rows[1]["units"] = "mg"
+    elif MODE == "nan":
+        rows[0]["nutr_val"] = "NaN"
+    elif MODE == "negative":
+        rows[0]["nutr_val"] = "-1"
+    elif MODE == "duplicate":
+        rows.append(rows[0])
+    elif MODE in {"rows_256", "rows_257"}:
+        count = int(MODE.removeprefix("rows_"))
+        rows.extend(
+            dict(rows[0], nutrdesc=f"Other fixture nutrient {index}", sr_order=index)
+            for index in range(len(rows), count)
+        )
+    return json.dumps(rows)
+
+
+for line in sys.stdin:
+    request = json.loads(line)
+    if log := os.environ.get("TEST_USDA_LOG"):
+        with Path(log).open("a", encoding="utf-8") as file:
+            file.write(json.dumps(request) + "\n")
+    if "id" not in request:
+        continue
+    method = request["method"]
+    if method == "initialize":
+        result = {
+            "protocolVersion": request["params"]["protocolVersion"],
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "synthetic-usda", "version": "1"},
+        }
+    elif method == "tools/list":
+        if MODE == "schema":
+            TOOLS[0]["inputSchema"]["properties"]["keyword"]["type"] = "integer"
+        result = {"tools": TOOLS}
+    else:
+        assert method == "tools/call"
+        result = {
+            "content": [{"type": "text", "text": tool_output(request)}],
+            "isError": MODE == "is_error",
+        }
+    response = {"jsonrpc": "2.0", "id": request["id"], "result": result}
+    if MODE in {"at_limit", "over_limit"}:
+        result["padding"] = ""
+        length = 131_072 if MODE == "at_limit" else 131_073
+        result["padding"] = "x" * (length - len(json.dumps(response).encode()) - 1)
+    sys.stdout.buffer.write(json.dumps(response).encode() + b"\n")
+    sys.stdout.buffer.flush()
