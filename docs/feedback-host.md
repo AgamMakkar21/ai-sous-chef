@@ -10,7 +10,10 @@ mutation. Host health must not be used as evidence that learning works.
 
 ## Hosting and versions
 
-`infra/functions.bicep` is an additive **dev-only**, resource-group deployment.
+`infra/functions.bicep` is an additive resource-group deployment, defaulting to
+**dev**. ASC-60 also permits explicit `environment=prod` using the separate
+`infra/environments/prod-functions.bicepparam`; production needs owner-approved
+resources, costs and identities and is not provisioned by Actions.
 It references the existing Cosmos account and foundation monitoring resources;
 it does not redeploy the web app, Foundry, database or containers. Deploy in
 incremental mode. Resource names and role-assignment GUIDs are deterministic for
@@ -124,6 +127,9 @@ delivery uses the existing Entra/OIDC token. Missing worker configuration, stale
 commits, shared identities, failed builds and failed startup checks fail the job.
 A web rollout can succeed before worker delivery fails; there is no claimed
 cross-app atomic deployment or automatic rollback.
+ASC-60 retains exact archives and adds an explicitly approved
+[production rollback and dev rehearsal](production-release.md), not automatic
+recovery or feedback-data migration.
 
 ## Health, failures and acceptance evidence
 

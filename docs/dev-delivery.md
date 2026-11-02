@@ -233,7 +233,9 @@ leave a server-side deployment marked "Building"; verify whether the builder is
 still running before starting another deployment. Command errors identify the
 failed operation but deliberately withhold credential-bearing CLI output.
 
-Dev has no deployment slots or automatic rollback. Updating release settings
+Dev has no deployment slots or automatic rollback. ASC-60 adds retained source
+archives and an explicitly dispatched [rollback rehearsal](production-release.md);
+it does not automatically recover a failed dev deployment. Updating release settings
 restarts the app, so a release can have downtime. A partial agent publication can
 leave unused versions; it does not delete the previous versions. Failures after
 updating settings can leave a mixed/failed dev release, never a claimed success.

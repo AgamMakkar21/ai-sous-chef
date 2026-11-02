@@ -803,10 +803,12 @@ class DeliveryTests(unittest.TestCase):
         )
         resources = template["resources"]
         federation = next(r for r in resources if "federatedIdentityCredentials" in r["type"])
-        self.assertEqual(
+        self.assertIn(
+            "repo:AgamMakkar21@72168349/ai-sous-chef@1409242851:environment:",
             federation["properties"]["subject"],
-            "repo:AgamMakkar21@72168349/ai-sous-chef@1409242851:environment:dev",
         )
+        self.assertIn("parameters('environment')", federation["properties"]["subject"])
+        self.assertEqual(template["parameters"]["environment"]["defaultValue"], "dev")
         self.assertEqual(federation["properties"]["audiences"], ["api://AzureADTokenExchange"])
         grants = [r for r in resources if r["type"] == "Microsoft.Authorization/roleAssignments"]
         self.assertEqual(len(grants), 3)
