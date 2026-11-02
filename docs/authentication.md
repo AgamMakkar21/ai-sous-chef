@@ -367,6 +367,14 @@ codes and must not be retained in telemetry or screenshots.
 
 ## Local and offline testing
 
+The kitchen document uses `Referrer-Policy: same-origin` in both its HTTP header
+and HTML metadata. This preserves same-origin Referer headers for Easy Auth's
+cookie-authenticated POST checks while sending no Referer to external sites.
+Using `no-referrer` on the kitchen can cause platform-level, empty-body 403
+responses before the backend handles grocery saves or nutrition lookups.
+Keep authentication, exact-Origin checks and CSRF tokens enabled; do not broaden
+CORS or allowed external redirect URLs to work around this document-policy issue.
+
 Health/readiness and local docs work without authentication. All other routes
 return 401 until a valid signed token is supplied. Configure the four commented
 `ASC_AUTH_*` runtime settings in `.env.local.example` using approved dev metadata.

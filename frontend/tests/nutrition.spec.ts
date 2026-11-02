@@ -200,3 +200,33 @@ test("lookup disables duplicate submission and rejects wildcard names before a r
   );
   expect(calls).toBe(1);
 });
+
+test("same-origin lookup sends Referer for Easy Auth but external links do not", async ({
+  page,
+}) => {
+  await backend(page);
+  let internalReferer: string | undefined;
+  await page.route("**/api/v1/nutrition/lookup", async (route) => {
+    internalReferer = route.request().headers()["referer"];
+    await route.fulfill({ json: { data: evidence() } });
+  });
+  let externalReferer: string | undefined;
+  await page.route("https://www.ars.usda.gov/**", async (route) => {
+    externalReferer = route.request().headers()["referer"];
+    await route.fulfill({
+      contentType: "text/html",
+      body: "<h1>External source fixture</h1>",
+    });
+  });
+  await page.goto("/");
+  await lookup(page);
+  await expect(page.locator(".ingredient-nutrition-result")).toContainText(
+    "41 kcal",
+  );
+  expect(internalReferer).toBe(new URL(page.url()).origin + "/");
+  await page.getByRole("link", { name: "USDA Standard Reference" }).click();
+  await expect(
+    page.getByRole("heading", { name: "External source fixture" }),
+  ).toBeVisible();
+  expect(externalReferer).toBeUndefined();
+});
