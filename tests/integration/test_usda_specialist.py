@@ -16,6 +16,30 @@ from test_recipe_specialist import FIXTURE, run, setup
 from test_usda_nutrition import config
 
 
+def test_specialist_accepts_verified_resolver_choices_without_an_extra_model_call() -> None:
+    _, grounding, model = setup()
+    gateway = FoundryGateway(coordination_settings(), client_factory=model.factory)
+    service = RecipeSpecialistService(gateway, grounding, UsdaNutritionTool(config("ambiguous")))
+    result = run(
+        service,
+        selected_food_ids={
+            "rice": "99901",
+            "carrot": "99902",
+            "oil": "99903",
+        },
+    )
+    assert result.recipe is not None
+    assert result.recipe.nutrition.status == "known"
+    assert [mapping.usda_food_id for mapping in result.recipe.nutrition.mappings] == [
+        "99901",
+        "99902",
+        "99903",
+    ]
+    assert result.recipe.nutrition.nutrients[0].amount == 260
+    assert result.recipe.nutrition.coverage[0].whole_recipe_amount == 520
+    assert len(model.requests) == 1
+
+
 @pytest.mark.parametrize(("servings", "energy"), [(1, 520), (2, 260), (4, 130)])
 def test_recipe_uses_only_readonly_source_nutrition_with_exact_mappings(
     tmp_path: Path,

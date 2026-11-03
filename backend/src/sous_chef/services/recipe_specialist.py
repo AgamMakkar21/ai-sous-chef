@@ -147,6 +147,7 @@ class RecipeSpecialistService:
         max_input_tokens: int,
         max_output_tokens: int,
         deadline: float,
+        selected_food_ids: dict[str, str] | None = None,
     ) -> SpecialistResult:
         if not isfinite(deadline):
             raise ValueError("The specialist deadline must be finite.")
@@ -271,7 +272,11 @@ class RecipeSpecialistService:
                     authorize_tool(AgentRole.RECIPE_NUTRITION, AgentTool.USDA_NUTRITION)
                     budget.tool(AgentTool.USDA_NUTRITION)
                     evidence = await self._nutrition.lookup(
-                        NutritionRequest(servings=draft.servings, ingredients=draft.ingredients),
+                        NutritionRequest(
+                            servings=draft.servings,
+                            ingredients=draft.ingredients,
+                            selected_food_ids=selected_food_ids or {},
+                        ),
                         deadline=deadline,
                     )
                     ingredients, shopping = _inventory(draft.ingredients, context)

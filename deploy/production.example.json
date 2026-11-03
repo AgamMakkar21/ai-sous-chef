@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "environment": "prod",
+  "subscription_id": "<owner-approved-production-subscription>",
+  "resource_group": "<separate-production-resource-group>",
+  "app_name": "<production-web-app>",
+  "function_app_name": "<production-function-app>",
+  "foundry_account_name": "<production-foundry-account>",
+  "foundry_project_name": "<production-foundry-project>",
+  "agents": {}
+}

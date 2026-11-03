@@ -1,0 +1,109 @@
+name: Promote production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Promote the reviewed main release or restore a previous production release
+        type: choice
+        options: [promote, rollback]
+        default: promote
+        required: true
+      rollback_run_id:
+        description: For rollback only, the successful production run whose version must be restored
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  ASC_RELEASE_OPERATION: ${{ inputs.operation || 'promote' }}
+  ASC_ROLLBACK_RUN_ID: ${{ inputs.rollback_run_id }}
+  ASC_OWNER_APPROVAL_COMMENT_ID: ${{ vars.ASC_OWNER_APPROVAL_COMMENT_ID }}
+
+jobs:
+  verify:
+    name: Verify reviewed promotion and owner gates
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      configured: ${{ steps.config.outputs.configured }}
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Keep a config-free plumbing bootstrap non-deploying
+        id: config
+        run: |
+          if test -f deploy/production.json; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Production is not configured. No deployment or environment approval is requested."
+          fi
+      - name: Verify source, artifacts, CI, rehearsal, production protection and owner approval
+        if: steps.config.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -m scripts.release verify
+
+  deploy:
+    name: Deploy approved production release
+    needs: verify
+    if: github.ref == 'refs/heads/main' && needs.verify.outputs.configured == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    environment:
+      name: prod
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PYTHONPATH: backend/src
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Install reviewed deployment SDK dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Sign in with the separate approved production publisher
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          enable-AzPSSession: false
+      - name: Reverify gates, deploy exact archives and pins, and smoke both hosts
+        run: python -m scripts.release deploy
+      - name: Retain successful production source, config and rollback record
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asc-production-release-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/asc-release-candidate/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Clear Azure login
+        if: always()
+        run: az logout

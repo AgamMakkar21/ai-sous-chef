@@ -58,6 +58,12 @@ own modules and consume the nonsecret resource-ID outputs.
 | Dev | `environments/dev.bicepparam` | Approved existing `test-2` resource group, East US 2, owner `AgamMakkar21` |
 | Prod | `environments/prod.bicepparam` | Not approved or deployed; requires explicit region, owner, subscription, and target group |
 
+[ASC-60 production delivery](../docs/production-release.md) reuses the foundation,
+`environments/prod-functions.bicepparam`, and `dev-delivery.bicep` with explicit
+`environment=prod` for a separate publisher/OIDC subject. Dev remains the default.
+No workflow provisions production. Real resources, costs, configuration and
+GitHub enforcement require owner approval; the example config cannot deploy.
+
 Names include `ai-sous-chef-dev` or `ai-sous-chef-prod`. Reusing a parameter file
 updates the same named resources; changing the environment addresses different
 resources even within a shared group. Incremental deployments do not delete

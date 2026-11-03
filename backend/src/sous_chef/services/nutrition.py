@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from sous_chef.adapters.usda_mcp import UsdaMcpConfig, open_usda
 from sous_chef.domain.foundry import FoundryFailure
-from sous_chef.domain.nutrition import UsdaFoodProfile
+from sous_chef.domain.nutrition import UsdaFoodProfile, UsdaFoodSearch
 from sous_chef.domain.recipes import (
     Nutrient,
     NutrientCoverage,
@@ -51,6 +51,15 @@ class UsdaNutritionTool:
     @classmethod
     def from_settings(cls, settings: Settings) -> "UsdaNutritionTool":
         return cls(UsdaMcpConfig.from_settings(settings))
+
+    async def search(self, name: str, *, deadline: float) -> UsdaFoodSearch:
+        """Public source candidates for user/agent resolution; never fabricated mappings."""
+        try:
+            async with open_usda(self.config, deadline=deadline) as session:
+                return await session.search(name)
+        except RecipeToolError as error:
+            operational_event(Event.USDA_FAILED, category=ErrorCategory(error.code.value))
+            raise
 
     async def check(self) -> None:
         """Check public food data, not just MCP initialization."""
@@ -126,7 +135,8 @@ class UsdaNutritionTool:
                         )
                     )
                     continue
-                key = " ".join(line.name.casefold().split())
+                selected = request.selected_food_ids.get(line.line_id)
+                key = " ".join(line.name.casefold().split()) + ":" + (selected or "")
                 if key not in profiles:
                     if len(profiles) >= MAX_FOODS:
                         unknown.append(
@@ -136,7 +146,7 @@ class UsdaNutritionTool:
                         )
                         continue
                     try:
-                        profiles[key] = await session.food(line.name)
+                        profiles[key] = await session.food(line.name, food_id=selected)
                     except RecipeToolError as error:
                         if error.code != FoundryFailure.NO_RESULTS:
                             raise

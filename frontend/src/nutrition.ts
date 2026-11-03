@@ -7,6 +7,66 @@ export type IngredientNutrition = {
   status: "known" | "partial" | "unavailable";
 };
 
+export type FoodCandidate = {
+  ndb_no: string;
+  long_desc: string;
+  shrt_desc: string;
+  food_group: string;
+};
+export type FoodSearch = { foods: FoodCandidate[]; truncated: boolean };
+
+export async function searchNutrition(
+  name: string,
+  session: Session,
+  signal: AbortSignal,
+): Promise<FoodSearch> {
+  const value = await json(
+    await request("/api/v1/nutrition/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": session.csrfToken,
+      },
+      body: JSON.stringify({ name }),
+      signal,
+    }),
+  );
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.foods) ||
+    value.foods.length > 20 ||
+    typeof value.truncated !== "boolean" ||
+    value.truncated !== (value.foods.length === 20)
+  )
+    throw new ApiError(502, "invalid_response");
+  const foods: FoodCandidate[] = [];
+  for (const food of value.foods) {
+    if (
+      !isRecord(food) ||
+      typeof food.ndb_no !== "string" ||
+      !/^[0-9]{5}$/.test(food.ndb_no) ||
+      foods.some((row) => row.ndb_no === food.ndb_no) ||
+      typeof food.long_desc !== "string" ||
+      !food.long_desc.trim() ||
+      food.long_desc.length > 500 ||
+      typeof food.shrt_desc !== "string" ||
+      !food.shrt_desc.trim() ||
+      food.shrt_desc.length > 500 ||
+      typeof food.food_group !== "string" ||
+      !food.food_group.trim() ||
+      food.food_group.length > 500
+    )
+      throw new ApiError(502, "invalid_response");
+    foods.push({
+      ndb_no: food.ndb_no,
+      long_desc: food.long_desc,
+      shrt_desc: food.shrt_desc,
+      food_group: food.food_group,
+    });
+  }
+  return { foods, truncated: value.truncated };
+}
+
 const units: Record<string, string> = {
   energy: "kcal",
   protein: "g",
@@ -20,6 +80,7 @@ export async function lookupNutrition(
   name: string,
   session: Session,
   signal: AbortSignal,
+  foodId?: string,
 ): Promise<IngredientNutrition> {
   const value = await json(
     await request("/api/v1/nutrition/lookup", {
@@ -28,7 +89,7 @@ export async function lookupNutrition(
         "Content-Type": "application/json",
         "X-CSRF-Token": session.csrfToken,
       },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, ...(foodId ? { foodId } : {}) }),
       signal,
     }),
   );
@@ -80,6 +141,7 @@ export async function lookupNutrition(
     mapping.unit !== "g" ||
     typeof mapping.usdaFoodId !== "string" ||
     !/^[0-9]{5}$/.test(mapping.usdaFoodId) ||
+    (foodId !== undefined && mapping.usdaFoodId !== foodId) ||
     !isRecord(source) ||
     source.kind !== "usda" ||
     source.sourceId !== `usda:sr:${mapping.usdaFoodId}` ||

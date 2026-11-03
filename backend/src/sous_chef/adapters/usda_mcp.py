@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -14,7 +15,7 @@ from time import monotonic
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from sous_chef.domain.foundry import FoundryFailure
-from sous_chef.domain.nutrition import UsdaFood, UsdaFoodProfile, UsdaNutrientRow
+from sous_chef.domain.nutrition import UsdaFood, UsdaFoodProfile, UsdaFoodSearch, UsdaNutrientRow
 from sous_chef.domain.recipes import RecipeToolError
 from sous_chef.settings import ConfigurationError, Settings
 from sous_chef.usda_dependency import UsdaSetupError, installed_source
@@ -179,24 +180,45 @@ class UsdaMcpSession:
             raise RecipeToolError(FoundryFailure.UNAVAILABLE)
         return value
 
-    async def food(self, name: str) -> UsdaFoodProfile:
+    async def search(self, name: str) -> UsdaFoodSearch:
         if not name.strip() or len(name) > 100 or any(c in name for c in "%_\x00\r\n"):
             raise RecipeToolError(FoundryFailure.REJECTED)
         foods = _FOODS.validate_json(
             await self._call("search_foods", {"keyword": name, "limit": SEARCH_LIMIT})
         )
+        words = re.findall(r"[^\W_]+", name, flags=re.UNICODE)
+        if not foods and len(words) > 1:
+            foods = _FOODS.validate_json(
+                await self._call("search_foods", {"keyword": words[0], "limit": SEARCH_LIMIT})
+            )
         if len(foods) > SEARCH_LIMIT or len({food.ndb_no for food in foods}) != len(foods):
             raise _invalid()
-        if len(foods) == SEARCH_LIMIT:
-            raise RecipeToolError(FoundryFailure.NO_RESULTS)
-        matches = [
-            food
-            for food in foods
-            if _normalize(name) in {_normalize(food.long_desc), _normalize(food.shrt_desc)}
-        ]
+        return UsdaFoodSearch(foods=tuple(foods), truncated=len(foods) == SEARCH_LIMIT)
+
+    async def food(self, name: str, *, food_id: str | None = None) -> UsdaFoodProfile:
+        search = await self.search(name)
+        if food_id is not None:
+            if not re.fullmatch(r"[0-9]{5}", food_id):
+                raise RecipeToolError(FoundryFailure.REJECTED)
+            matches = [food for food in search.foods if food.ndb_no == food_id]
+        else:
+            if search.truncated:
+                raise RecipeToolError(FoundryFailure.NO_RESULTS)
+            words = set(re.findall(r"[^\W_]+", name.casefold()))
+            matches = [
+                food
+                for food in search.foods
+                if _normalize(name) in {_normalize(food.long_desc), _normalize(food.shrt_desc)}
+                or words == set(re.findall(r"[^\W_]+", food.long_desc.casefold()))
+                or words == set(re.findall(r"[^\W_]+", food.shrt_desc.casefold()))
+            ]
         if len(matches) != 1:
             raise RecipeToolError(FoundryFailure.NO_RESULTS)
         food = matches[0]
+        return await self.profile(food)
+
+    async def profile(self, food: UsdaFood) -> UsdaFoodProfile:
+        """Fetch only an identified search candidate, validating source descriptions."""
         raw = await self._call("get_nutrition_profile", {"ndb_no": food.ndb_no})
         data = _JSON.validate_json(raw)
         if data == {"error": f"No food found with NDB number: {food.ndb_no}"}:

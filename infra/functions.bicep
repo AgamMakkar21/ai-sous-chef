@@ -1,6 +1,6 @@
 targetScope = 'resourceGroup'
 
-@allowed(['dev'])
+@allowed(['dev', 'prod'])
 param environment string
 
 @minLength(1)
@@ -45,6 +45,7 @@ module worker 'modules/functions.bicep' = {
     location: location
     namePrefix: namePrefix
     tags: tags
+    environment: environment
     cosmosEndpoint: cosmos.properties.documentEndpoint
     applicationInsightsName: insights.name
     logAnalyticsResourceId: workspace.id

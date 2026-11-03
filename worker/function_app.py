@@ -28,8 +28,9 @@ def validate_configuration() -> None:
         r"https://[a-z0-9-]+\.documents\.azure\.com(?::443)?/?", endpoint
     ) or endpoint != os.environ.get("FeedbackLeases__accountEndpoint"):
         raise RuntimeError("Host requires matching, valid Cosmos and lease endpoints.")
+    if os.environ.get("ASC_ENVIRONMENT") not in {"dev", "prod"}:
+        raise RuntimeError("Host requires an explicit dev or prod environment.")
     expected = {
-        "ASC_ENVIRONMENT": "dev",
         "ASC_COSMOS_DATABASE": "sous-chef",
         "ASC_FEEDBACK_CONTAINER": "RecipeHistory",
         "ASC_LEASE_CONTAINER": "leases",

@@ -12,6 +12,7 @@ from pydantic import ConfigDict, Field, StringConstraints, model_validator
 from sous_chef.domain.agent_identity import AgentRole
 from sous_chef.domain.foundry import FoundryFailure, FoundryRequest
 from sous_chef.domain.groceries import GroceryModel, GroceryUnit, Quantity
+from sous_chef.domain.nutrition import NdbNumber
 from sous_chef.domain.profiles import Skill
 
 if TYPE_CHECKING:
@@ -397,11 +398,14 @@ class StructuredRecipe(RecipeDraft):
 class NutritionRequest(RecipeModel):
     servings: int = Field(ge=1, le=20)
     ingredients: tuple[DraftIngredient, ...] = Field(min_length=1, max_length=30, repr=False)
+    selected_food_ids: dict[LineId, NdbNumber] = Field(default_factory=dict, max_length=9)
 
     @model_validator(mode="after")
     def unique_lines(self) -> Self:
         if len({line.line_id for line in self.ingredients}) != len(self.ingredients):
             raise ValueError("Nutrition ingredient line IDs must be unique.")
+        if not self.selected_food_ids.keys() <= {line.line_id for line in self.ingredients}:
+            raise ValueError("Selected USDA foods must reference requested ingredient lines.")
         return self
 
 

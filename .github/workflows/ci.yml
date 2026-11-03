@@ -63,6 +63,9 @@ jobs:
           python -m pip install -r worker/requirements.txt
           python -m pip install --no-build-isolation --no-deps -e .
           python -m pip check
+      - name: Reject feature-to-main bypass and stale promotion evidence
+        if: matrix.check == 'build'
+        run: python -m scripts.release check-pr
       - name: Set up Node for package build
         if: matrix.check == 'build'
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
