@@ -126,6 +126,17 @@ def tool_output(request: dict[str, object]) -> str:
         food = dict(food, long_desc="Rice, raw", shrt_desc="RICE,RAW")
     if MODE == "missing_profile":
         return json.dumps({"error": "No food found with NDB number: " + food["ndb_no"]})
+    nutrients = NUTRIENTS
+    if MODE in {"varied", "mixed_nutrients"}:
+        amounts = {
+            "99902": ("40", "1", "9", "0.2", "3", "60"),
+            "99903": ("900", "0", "0", "100", "0", "0"),
+        }.get(food["ndb_no"])
+        if amounts is not None:
+            nutrients = [
+                (name, unit, amount)
+                for (name, unit, _), amount in zip(NUTRIENTS, amounts, strict=True)
+            ]
     rows = [
         {
             **{key: value for key, value in food.items() if key != "ndb_no"},
@@ -134,8 +145,12 @@ def tool_output(request: dict[str, object]) -> str:
             "nutr_val": amount,
             "sr_order": index,
         }
-        for index, (name, unit, amount) in enumerate(NUTRIENTS)
+        for index, (name, unit, amount) in enumerate(nutrients)
         if not (MODE == "missing_nutrient" and name == "Fiber, total dietary")
+        and not (
+            MODE == "mixed_nutrients"
+            and (food["ndb_no"], name) in {("99901", "Protein"), ("99902", "Fiber, total dietary")}
+        )
     ]
     if MODE == "wrong_food":
         rows[0]["long_desc"] = "different food"
@@ -147,6 +162,10 @@ def tool_output(request: dict[str, object]) -> str:
         rows[0]["nutr_val"] = "-1"
     elif MODE == "duplicate":
         rows.append(rows[0])
+    elif MODE == "zero_nutrient":
+        rows[4]["nutr_val"] = "0"
+    elif MODE == "kj_only":
+        rows[0]["units"] = "kJ"
     elif MODE in {"rows_256", "rows_257"}:
         count = int(MODE.removeprefix("rows_"))
         rows.extend(

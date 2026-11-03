@@ -1,7 +1,8 @@
 """Deterministic recipe estimates from attributed USDA SR per-100-g evidence."""
 
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from time import monotonic
+from typing import Literal
 
 from pydantic import ValidationError
 
@@ -10,9 +11,12 @@ from sous_chef.domain.foundry import FoundryFailure
 from sous_chef.domain.nutrition import UsdaFoodProfile, UsdaFoodSearch
 from sous_chef.domain.recipes import (
     Nutrient,
+    NutrientCoverage,
+    NutrientName,
     NutritionEvidence,
     NutritionMapping,
     NutritionRequest,
+    NutritionUnknownComponent,
     RecipeSource,
     RecipeToolError,
 )
@@ -25,7 +29,7 @@ _MASS = {
     "oz": Decimal("28.349523125"),
     "lb": Decimal("453.59237"),
 }
-_NUTRIENTS = (
+_NUTRIENTS: tuple[tuple[str, NutrientName, Literal["kcal", "g", "mg"]], ...] = (
     ("Energy", "energy", "kcal"),
     ("Protein", "protein", "g"),
     ("Carbohydrate, by difference", "carbohydrate", "g"),
@@ -34,6 +38,10 @@ _NUTRIENTS = (
     ("Sodium, Na", "sodium", "mg"),
 )
 MAX_FOODS = 9
+
+
+def _rounded(value: Decimal) -> float:
+    return float(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 class UsdaNutritionTool:
@@ -107,15 +115,35 @@ class UsdaNutritionTool:
         profiles: dict[str, UsdaFoodProfile | None] = {}
         sources: dict[str, RecipeSource] = {}
         mappings: list[NutritionMapping] = []
-        totals: dict[str, Decimal] | None = None
+        unknown: list[NutritionUnknownComponent] = []
+        totals = {name: Decimal(0) for _, name, _ in _NUTRIENTS}
+        covered: dict[NutrientName, list[str]] = {name: [] for _, name, _ in _NUTRIENTS}
         async with open_usda(self.config, deadline=deadline) as session:
             for line in request.ingredients:
-                if line.quantity is None or line.unit not in _MASS:
+                if line.quantity is None:
+                    unknown.append(
+                        NutritionUnknownComponent(
+                            ingredient_line_id=line.line_id, reason="missing_quantity"
+                        )
+                    )
+                    continue
+                if line.unit not in _MASS:
+                    unknown.append(
+                        NutritionUnknownComponent(
+                            ingredient_line_id=line.line_id,
+                            reason="missing_unit" if line.unit is None else "unsupported_unit",
+                        )
+                    )
                     continue
                 selected = request.selected_food_ids.get(line.line_id)
                 key = " ".join(line.name.casefold().split()) + ":" + (selected or "")
                 if key not in profiles:
                     if len(profiles) >= MAX_FOODS:
+                        unknown.append(
+                            NutritionUnknownComponent(
+                                ingredient_line_id=line.line_id, reason="lookup_limit"
+                            )
+                        )
                         continue
                     try:
                         profiles[key] = await session.food(line.name, food_id=selected)
@@ -125,6 +153,11 @@ class UsdaNutritionTool:
                         profiles[key] = None
                 profile = profiles[key]
                 if profile is None:
+                    unknown.append(
+                        NutritionUnknownComponent(
+                            ingredient_line_id=line.line_id, reason="food_unavailable"
+                        )
+                    )
                     continue
                 expected_units = {label: unit for label, _, unit in _NUTRIENTS}
                 if any(
@@ -141,19 +174,23 @@ class UsdaNutritionTool:
                         row.nutrdesc == name and row.units == unit for name, _, unit in _NUTRIENTS
                     )
                 }
+                missing = tuple(name for label, name, _ in _NUTRIENTS if label not in values)
+                if missing:
+                    unknown.append(
+                        NutritionUnknownComponent(
+                            ingredient_line_id=line.line_id,
+                            reason="missing_nutrients",
+                            unknown_nutrients=missing,
+                        )
+                    )
                 if not values:
                     continue
-                factor = line.quantity * _MASS[line.unit] / Decimal(100) / request.servings
-                amounts = {name: amount * factor for name, amount in values.items()}
-                totals = (
-                    amounts
-                    if totals is None
-                    else {
-                        name: amount + amounts[name]
-                        for name, amount in totals.items()
-                        if name in amounts
-                    }
-                )
+                assert line.unit is not None
+                grams = line.quantity * _MASS[line.unit]
+                for label, name, _ in _NUTRIENTS:
+                    if label in values:
+                        totals[name] += values[label] * grams / Decimal(100)
+                        covered[name].append(line.line_id)
                 food_id = profile.food.ndb_no
                 source_id = f"usda:sr:{food_id}"
                 sources[source_id] = RecipeSource(
@@ -169,29 +206,43 @@ class UsdaNutritionTool:
                         unit=line.unit,
                         source_id=source_id,
                         usda_food_id=food_id,
+                        weight_grams=float(grams),
                     )
                 )
         nutrients = tuple(
-            Nutrient.model_validate({"name": name, "amount": float(totals[label]), "unit": unit})
-            for label, name, unit in _NUTRIENTS
-            if totals and label in totals
+            Nutrient(name=name, amount=_rounded(totals[name] / request.servings), unit=unit)
+            for _, name, unit in _NUTRIENTS
+            if covered[name]
         )
-        if not nutrients:
-            return NutritionEvidence(
-                status="unavailable",
-                serving_basis="per_serving",
-                servings=request.servings,
-                nutrients=(),
-                mappings=(),
-                sources=(),
+        coverage = tuple(
+            NutrientCoverage(
+                name=name,
+                status="known"
+                if len(covered[name]) == len(request.ingredients)
+                else "partial"
+                if covered[name]
+                else "unavailable",
+                whole_recipe_amount=_rounded(totals[name]) if covered[name] else None,
+                covered_ingredient_line_ids=tuple(covered[name]),
+                unknown_ingredient_line_ids=tuple(
+                    line.line_id
+                    for line in request.ingredients
+                    if line.line_id not in covered[name]
+                ),
             )
+            for _, name, _ in _NUTRIENTS
+        )
         return NutritionEvidence(
             status="known"
-            if len(mappings) == len(request.ingredients) and len(nutrients) == len(_NUTRIENTS)
-            else "partial",
+            if all(item.status == "known" for item in coverage)
+            else "partial"
+            if nutrients
+            else "unavailable",
             serving_basis="per_serving",
             servings=request.servings,
             nutrients=nutrients,
             mappings=tuple(mappings),
             sources=tuple(sources.values()),
+            coverage=coverage,
+            unknown_components=tuple(unknown),
         )

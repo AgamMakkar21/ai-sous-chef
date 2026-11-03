@@ -29,7 +29,6 @@ from sous_chef.domain.orchestrator import (
     SpecialistResult,
 )
 from sous_chef.domain.recipes import (
-    NUTRITION_NOTICE,
     DraftIngredient,
     GroundedRecipeGenerationRequest,
     NutritionRequest,
@@ -285,7 +284,7 @@ class RecipeSpecialistService:
                         **draft.model_dump(exclude={"ingredients"}),
                         ingredients=ingredients,
                         shopping_items=shopping,
-                        nutrition=RecipeNutrition(**evidence.model_dump(), notice=NUTRITION_NOTICE),
+                        nutrition=RecipeNutrition(**evidence.model_dump()),
                         sources=(
                             *(sources[source_id] for source_id in draft.source_ids),
                             *evidence.sources,

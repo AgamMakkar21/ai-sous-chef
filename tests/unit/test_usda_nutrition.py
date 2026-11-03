@@ -9,7 +9,13 @@ import pytest
 from pydantic import SecretStr, ValidationError
 from sous_chef.adapters.usda_mcp import UsdaMcpConfig, open_usda
 from sous_chef.domain.foundry import FoundryFailure
-from sous_chef.domain.recipes import DraftIngredient, NutritionRequest, RecipeToolError
+from sous_chef.domain.recipes import (
+    NUTRITION_NOTICE,
+    DraftIngredient,
+    NutritionEvidence,
+    NutritionRequest,
+    RecipeToolError,
+)
 from sous_chef.services.nutrition import UsdaNutritionTool
 from sous_chef.services.recipe_specialist import RecipeSpecialistService
 from sous_chef.settings import ConfigurationError, Settings
@@ -101,8 +107,8 @@ def test_known_food_has_typed_source_values_and_original_ndb_number() -> None:
     [
         ("g", 100, 100),
         ("kg", 1, 1000),
-        ("oz", 1, 28.349523125),
-        ("lb", 1, 453.59237),
+        ("oz", 1, 28.35),
+        ("lb", 1, 453.59),
     ],
 )
 def test_mass_conversion_and_servings_are_deterministic(
@@ -118,12 +124,82 @@ def test_mass_conversion_and_servings_are_deterministic(
     )
     assert evidence.status == "known"
     assert evidence.serving_basis == "per_serving" and evidence.servings == 2
-    assert evidence.nutrients[0].amount == pytest.approx(energy)
+    assert evidence.nutrients[0].amount == energy
     assert evidence.mappings[0].usda_food_id == "99901"
     assert evidence.mappings[0].quantity == quantity
     assert evidence.mappings[0].unit == unit
     assert evidence.sources[0].kind == "usda"
     assert evidence.mappings[0].source_id == evidence.sources[0].source_id
+    assert evidence.mappings[0].weight_grams == pytest.approx(
+        {"g": 1, "kg": 1000, "oz": 28.349523125, "lb": 453.59237}[unit] * quantity
+    )
+
+
+@pytest.mark.parametrize(
+    ("servings", "expected"),
+    [
+        (1, (350, 5.5, 43.5, 12.3, 5.5, 100)),
+        (2, (175, 2.75, 21.75, 6.15, 2.75, 50)),
+        (3, (116.67, 1.83, 14.5, 4.1, 1.83, 33.33)),
+    ],
+)
+def test_distinct_source_values_produce_exact_whole_recipe_and_serving_estimates(
+    servings: int, expected: tuple[float, ...]
+) -> None:
+    evidence = asyncio.run(
+        UsdaNutritionTool(config("varied")).lookup(
+            request(
+                ingredient(),
+                ingredient("carrot", 150, line_id="carrot"),
+                ingredient("olive oil", 10, line_id="oil"),
+                servings=servings,
+            ),
+            deadline=monotonic() + 10,
+        )
+    )
+    assert evidence.status == "known"
+    assert tuple(item.amount for item in evidence.nutrients) == expected
+    assert tuple(item.whole_recipe_amount for item in evidence.coverage) == (
+        350,
+        5.5,
+        43.5,
+        12.3,
+        5.5,
+        100,
+    )
+    assert all(
+        item.status == "known"
+        and item.covered_ingredient_line_ids == ("rice", "carrot", "oil")
+        and not item.unknown_ingredient_line_ids
+        for item in evidence.coverage
+    )
+    assert not evidence.unknown_components
+    assert evidence.is_estimate and evidence.notice == NUTRITION_NOTICE
+    assert [item.usda_food_id for item in evidence.mappings] == ["99901", "99902", "99903"]
+    assert [item.weight_grams for item in evidence.mappings] == [100, 150, 10]
+
+
+@pytest.mark.parametrize(
+    ("quantities", "whole", "per_serving"),
+    [
+        ((0.001, 0.001, 0.001), 0.01, 0),
+        ((0.005,), 0.01, 0.01),
+    ],
+)
+def test_round_half_up_only_after_aggregation_and_unrounded_serving_division(
+    quantities: tuple[float, ...], whole: float, per_serving: float
+) -> None:
+    lines = tuple(
+        DraftIngredient.model_validate(
+            {"line_id": f"rice{index}", "name": "rice", "quantity": quantity, "unit": "g"}
+        )
+        for index, quantity in enumerate(quantities)
+    )
+    evidence = asyncio.run(
+        UsdaNutritionTool(config()).lookup(request(*lines), deadline=monotonic() + 10)
+    )
+    assert evidence.coverage[0].whole_recipe_amount == whole
+    assert evidence.nutrients[0].amount == per_serving
 
 
 @pytest.mark.parametrize("mode", ["no_food", "ambiguous", "missing_profile", "saturated"])
@@ -139,18 +215,20 @@ def test_unknown_or_ambiguous_foods_are_unavailable_not_zero(mode: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "line",
+    ("line", "reason"),
     [
-        ingredient(quantity=None),
-        ingredient(unit=None),
-        ingredient(unit="cup"),
-        ingredient(unit="ml"),
-        ingredient(unit="item"),
-        ingredient("unknown food"),
+        (ingredient(quantity=None), "missing_quantity"),
+        (ingredient(unit=None), "missing_unit"),
+        (ingredient(unit="cup"), "unsupported_unit"),
+        (ingredient(unit="ml"), "unsupported_unit"),
+        (ingredient(unit="item"), "unsupported_unit"),
+        (ingredient(unit="piece"), "unsupported_unit"),
+        (ingredient("unknown food"), "food_unavailable"),
     ],
 )
 def test_unknown_quantities_density_or_portion_weights_are_not_invented(
     line: DraftIngredient,
+    reason: str,
 ) -> None:
     evidence = asyncio.run(
         UsdaNutritionTool(config()).lookup(
@@ -159,6 +237,14 @@ def test_unknown_quantities_density_or_portion_weights_are_not_invented(
         )
     )
     assert evidence.status == "unavailable" and not evidence.nutrients
+    assert len(evidence.unknown_components) == 1
+    assert evidence.unknown_components[0].reason == reason
+    assert all(
+        item.whole_recipe_amount is None
+        and not item.covered_ingredient_line_ids
+        and item.unknown_ingredient_line_ids == (line.line_id,)
+        for item in evidence.coverage
+    )
 
 
 def test_partial_results_never_claim_complete_recipe_or_assume_missing_nutrients_are_zero() -> None:
@@ -171,6 +257,85 @@ def test_partial_results_never_claim_complete_recipe_or_assume_missing_nutrients
     assert evidence.status == "partial"
     assert len(evidence.mappings) == 1
     assert "fiber" not in {nutrient.name for nutrient in evidence.nutrients}
+    assert evidence.coverage[0].status == "partial"
+    assert evidence.coverage[0].unknown_ingredient_line_ids == ("unknown",)
+    assert evidence.coverage[4].status == "unavailable"
+    assert evidence.coverage[4].whole_recipe_amount is None
+
+
+def test_missing_nutrients_retain_only_labeled_subtotals_and_exact_unknown_components() -> None:
+    evidence = asyncio.run(
+        UsdaNutritionTool(config("mixed_nutrients")).lookup(
+            request(ingredient(), ingredient("carrot", line_id="carrot")),
+            deadline=monotonic() + 10,
+        )
+    )
+    nutrients = {item.name: item.amount for item in evidence.nutrients}
+    coverage = {item.name: item for item in evidence.coverage}
+    assert evidence.status == "partial"
+    assert nutrients["energy"] == 120 and coverage["energy"].status == "known"
+    assert nutrients["protein"] == 0.5
+    assert coverage["protein"].whole_recipe_amount == 1
+    assert coverage["protein"].status == "partial"
+    assert coverage["protein"].covered_ingredient_line_ids == ("carrot",)
+    assert coverage["protein"].unknown_ingredient_line_ids == ("rice",)
+    assert nutrients["fiber"] == 0.5
+    assert coverage["fiber"].covered_ingredient_line_ids == ("rice",)
+    assert coverage["fiber"].unknown_ingredient_line_ids == ("carrot",)
+    assert [
+        (item.ingredient_line_id, item.reason, item.unknown_nutrients)
+        for item in evidence.unknown_components
+    ] == [
+        ("rice", "missing_nutrients", ("protein",)),
+        ("carrot", "missing_nutrients", ("fiber",)),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("mode", "amount", "status"),
+    [("zero_nutrient", 0, "known"), ("missing_nutrient", None, "unavailable")],
+)
+def test_explicit_source_zero_is_distinct_from_missing_data(
+    mode: str, amount: float | None, status: str
+) -> None:
+    evidence = asyncio.run(
+        UsdaNutritionTool(config(mode)).lookup(request(), deadline=monotonic() + 10)
+    )
+    fiber = evidence.coverage[4]
+    assert fiber.status == status
+    assert fiber.whole_recipe_amount == amount
+    assert (
+        next((item.amount for item in evidence.nutrients if item.name == "fiber"), None) == amount
+    )
+
+
+def test_kilojoules_are_not_silently_reported_as_calories() -> None:
+    evidence = asyncio.run(
+        UsdaNutritionTool(config("kj_only")).lookup(request(), deadline=monotonic() + 10)
+    )
+    assert evidence.status == "partial"
+    assert "energy" not in {item.name for item in evidence.nutrients}
+    assert evidence.coverage[0].whole_recipe_amount is None
+    assert evidence.unknown_components[0].unknown_nutrients == ("energy",)
+
+
+@pytest.mark.parametrize("change", ["coverage", "unknown", "estimate", "notice"])
+def test_estimate_contract_rejects_false_completeness_or_medical_certainty(change: str) -> None:
+    evidence = asyncio.run(
+        UsdaNutritionTool(config("missing_nutrient")).lookup(request(), deadline=monotonic() + 10)
+    )
+    data = json.loads(evidence.model_dump_json(by_alias=True))
+    if change == "coverage":
+        data["coverage"][0]["unknownIngredientLineIds"] = ["foreign"]
+        data["coverage"][0]["status"] = "partial"
+    elif change == "unknown":
+        data["unknownComponents"] = []
+    elif change == "estimate":
+        data["isEstimate"] = False
+    else:
+        data["notice"] = "Medically verified exact nutrition."
+    with pytest.raises(ValidationError):
+        NutritionEvidence.model_validate_json(json.dumps(data))
 
 
 def test_duplicate_ingredients_share_food_lookup_but_not_quantity_mappings(tmp_path: Path) -> None:
@@ -353,6 +518,9 @@ def test_only_nine_food_searches_are_attempted_per_request(tmp_path: Path) -> No
     assert result.status == "unavailable"
     messages = [json.loads(line) for line in log.read_text().splitlines()]
     assert sum(message["method"] == "tools/call" for message in messages) == 9
+    assert [item.reason for item in result.unknown_components] == (
+        ["food_unavailable"] * 9 + ["lookup_limit"] * 21
+    )
 
 
 def test_live_specialist_factory_selects_real_nutrition_not_fixtures() -> None:
