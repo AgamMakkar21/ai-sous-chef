@@ -1,18 +1,22 @@
 targetScope = 'resourceGroup'
 
-@description('Existing dev App Service; never a production app.')
+@description('Legacy filename retained for dev setup. Production requires separate owner-approved resources.')
+@allowed(['dev', 'prod'])
+param environment string = 'dev'
+
+@description('Existing App Service in the explicitly selected environment.')
 param appName string
 
-@description('Existing dev Foundry account.')
+@description('Existing environment-specific Foundry account.')
 param foundryAccountName string
 
-@description('Existing dev Foundry project.')
+@description('Existing environment-specific Foundry project.')
 param foundryProjectName string
 
 @description('Location of the deployment identity only.')
 param location string
 
-@description('Existing dev feedback Function App; empty preserves the web-only bootstrap.')
+@description('Existing environment-specific feedback Function App; required for a complete release.')
 param functionAppName string = ''
 
 resource app 'Microsoft.Web/sites@2024-04-01' existing = {
@@ -29,28 +33,28 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' exis
 }
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'ai-sous-chef-dev-github-delivery'
+  name: 'ai-sous-chef-${environment}-github-delivery'
   location: location
   tags: {
     project: 'ai-sous-chef'
-    environment: 'dev'
+    environment: environment
     managedBy: 'bicep'
   }
 }
 
-// The dev environment's deployment branch policy must allow only refs/heads/dev.
+// The environment must allow only its release branch: dev for dev, main for prod.
 resource federation 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2023-01-31' = {
   parent: identity
-  name: 'github-dev'
+  name: 'github-${environment}'
   properties: {
     issuer: 'https://token.actions.githubusercontent.com'
-    subject: 'repo:AgamMakkar21@72168349/ai-sous-chef@1409242851:environment:dev'
+    subject: 'repo:AgamMakkar21@72168349/ai-sous-chef@1409242851:environment:${environment}'
     audiences: ['api://AzureADTokenExchange']
   }
 }
 
 resource appPublisher 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(app.id, identity.id, 'dev-app-publisher')
+  name: guid(app.id, identity.id, '${environment}-app-publisher')
   scope: app
   properties: {
     principalId: identity.properties.principalId
@@ -64,7 +68,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' existing = {
 }
 
 resource functionPublisher 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(functionAppName)) {
-  name: guid(functionApp.id, identity.id, 'dev-function-publisher')
+  name: guid(functionApp.id, identity.id, '${environment}-function-publisher')
   scope: functionApp
   properties: {
     principalId: identity.properties.principalId
@@ -74,7 +78,7 @@ resource functionPublisher 'Microsoft.Authorization/roleAssignments@2022-04-01' 
 }
 
 resource agentPublisher 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(project.id, identity.id, 'dev-agent-publisher')
+  name: guid(project.id, identity.id, '${environment}-agent-publisher')
   scope: project
   properties: {
     principalId: identity.properties.principalId

@@ -1,9 +1,10 @@
-"""Dev delivery orchestration. No passwords, resource provisioning or production mode."""
+"""Dev publishing and shared delivery guards. No passwords or resource provisioning."""
 
 import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -80,6 +81,46 @@ def dev_event() -> None:
         raise DeliveryError("Deployment is allowed only for a push to refs/heads/dev.")
 
 
+def release_event(environment: str, allow_dispatch: bool) -> None:
+    if environment not in {"dev", "prod"}:
+        raise DeliveryError("Select dev or prod explicitly.")
+    branch = "dev" if environment == "dev" else "main"
+    events = {"push", "workflow_dispatch"} if allow_dispatch else {"push"}
+    if (
+        os.environ.get("GITHUB_EVENT_NAME") not in events
+        or os.environ.get("GITHUB_REF") != f"refs/heads/{branch}"
+    ):
+        raise DeliveryError(f"{environment} delivery requires the {branch} branch.")
+
+
+def retain_artifact(archive: Path, name: str) -> None:
+    directory = os.environ.get("ASC_RELEASE_DIRECTORY")
+    if directory:
+        destination = Path(directory)
+        destination.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(archive, destination / name)
+
+
+def peer_approved(pr: dict[str, Any]) -> bool:
+    repo = os.environ["GITHUB_REPOSITORY"]
+    reviews = json.loads(
+        command("gh", "api", "--paginate", "--slurp", f"repos/{repo}/pulls/{pr['number']}/reviews")
+    )
+    latest: dict[str, dict[str, Any]] = {}
+    for page in reviews:
+        for review in page:
+            if review["state"] in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}:
+                latest[review["user"]["login"]] = review
+    return any(
+        login != pr["user"]["login"]
+        and review["state"] == "APPROVED"
+        and review["commit_id"] == pr["head"]["sha"]
+        and review.get("author_association") in {"OWNER", "MEMBER", "COLLABORATOR"}
+        and review["user"].get("type") == "User"
+        for login, review in latest.items()
+    )
+
+
 def reviewed() -> None:
     dev_event()
     repo = os.environ.get("GITHUB_REPOSITORY", "")
@@ -88,29 +129,11 @@ def reviewed() -> None:
     pulls = json.loads(command("gh", "api", f"repos/{repo}/commits/{commit()}/pulls"))
     for pr in pulls:
         if (
-            pr["base"]["ref"] != "dev"
-            or pr["base"]["repo"]["full_name"] != repo
-            or not pr["merged_at"]
-            or pr["merge_commit_sha"] != commit()
-        ):
-            continue
-        reviews = json.loads(
-            command(
-                "gh", "api", "--paginate", "--slurp", f"repos/{repo}/pulls/{pr['number']}/reviews"
-            )
-        )
-        latest: dict[str, dict[str, Any]] = {}
-        for page in reviews:
-            for review in page:
-                if review["state"] in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}:
-                    latest[review["user"]["login"]] = review
-        if any(
-            login != pr["user"]["login"]
-            and review["state"] == "APPROVED"
-            and review["commit_id"] == pr["head"]["sha"]
-            and review.get("author_association") in {"OWNER", "MEMBER", "COLLABORATOR"}
-            and review["user"].get("type") == "User"
-            for login, review in latest.items()
+            pr["base"]["ref"] == "dev"
+            and pr["base"]["repo"]["full_name"] == repo
+            and pr["merged_at"]
+            and pr["merge_commit_sha"] == commit()
+            and peer_approved(pr)
         ):
             print("Reviewed dev merge verified.")
             return
@@ -154,8 +177,10 @@ def manifest() -> dict[str, dict[str, str]]:
     return validated
 
 
-def target() -> tuple[dict[str, Any], dict[str, str]]:
-    dev_event()
+def target(
+    environment: str = "dev", *, allow_dispatch: bool = False
+) -> tuple[dict[str, Any], dict[str, str]]:
+    release_event(environment, allow_dispatch)
     group, app_name = required("ASC_RESOURCE_GROUP"), required("ASC_APP_NAME")
     app = az("webapp", "show", "-g", group, "-n", app_name)
     project_id = (
@@ -173,11 +198,11 @@ def target() -> tuple[dict[str, Any], dict[str, str]]:
     )
     for resource in (app, project):
         if (
-            resource.get("tags", {}).get("environment") != "dev"
+            resource.get("tags", {}).get("environment") != environment
             or resource.get("tags", {}).get("project") != "ai-sous-chef"
         ):
             raise DeliveryError(
-                "The target must carry ai-sous-chef project and dev environment tags."
+                f"The target must carry ai-sous-chef project and {environment} environment tags."
             )
     settings = {
         item["name"]: item["value"]
@@ -188,13 +213,13 @@ def target() -> tuple[dict[str, Any], dict[str, str]]:
         f"/api/projects/{required('ASC_FOUNDRY_PROJECT_NAME')}"
     )
     if (
-        settings.get("ASC_ENVIRONMENT") != "dev"
+        settings.get("ASC_ENVIRONMENT") != environment
         or settings.get("ASC_ADAPTER_MODE") != "live"
         or settings.get("ASC_FOUNDRY_PROJECT_ENDPOINT", "").rstrip("/") != endpoint
         or not settings.get("AZURE_CLIENT_ID")
         or not app.get("identity", {}).get("userAssignedIdentities")
     ):
-        raise DeliveryError("Dev app settings, Foundry target or managed identity do not match.")
+        raise DeliveryError("App environment, Foundry target or managed identity do not match.")
     authentication = az(
         "rest",
         "--method",
@@ -456,6 +481,7 @@ def deploy() -> None:
             raise DeliveryError(
                 "App Service ZIP build did not report success; runtime settings were not changed."
             )
+        retain_artifact(archive, "app.zip")
     finally:
         archive.unlink(missing_ok=True)
     # Settings updates restart the app; never apply them while Oryx is building.
@@ -481,6 +507,8 @@ def deploy() -> None:
         required("ASC_APP_NAME"),
         expect_json=False,
     )
+    if directory := os.environ.get("ASC_RELEASE_DIRECTORY"):
+        (Path(directory) / "runtime.json").write_text(json.dumps(pins), encoding="utf-8")
     url = f"https://{app['defaultHostName']}"
     with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
         output.write(f"url={url}\n")
@@ -496,7 +524,13 @@ def deploy() -> None:
                 summary.write(f"- `{name}`: `{value}`\n")
 
 
-def smoke() -> None:
+def smoke(
+    environment: str = "dev",
+    *,
+    expected_commit: str | None = None,
+    agents_enabled: bool | None = None,
+    allow_dispatch: bool = False,
+) -> None:
     from urllib.error import HTTPError, URLError
     from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -504,9 +538,10 @@ def smoke() -> None:
         def redirect_request(self, *args: Any, **kwargs: Any) -> None:
             return None
 
-    agents = manifest()
-    app, settings = target()
-    if settings.get("ASC_AGENTS_ENABLED") != ("true" if agents else "false"):
+    enabled = bool(manifest()) if agents_enabled is None else agents_enabled
+    expected_commit = commit() if expected_commit is None else expected_commit
+    app, settings = target(environment, allow_dispatch=allow_dispatch)
+    if settings.get("ASC_AGENTS_ENABLED") != ("true" if enabled else "false"):
         raise DeliveryError("The deployed agent feature flag does not match the reviewed manifest.")
     origin = f"https://{app['defaultHostName']}"
     opener = build_opener(NoRedirect())
@@ -522,7 +557,7 @@ def smoke() -> None:
                 with opener.open(origin + path, timeout=15) as response:
                     if (
                         json.load(response) != expected
-                        or response.headers.get("X-ASC-Commit") != commit()
+                        or response.headers.get("X-ASC-Commit") != expected_commit
                     ):
                         raise DeliveryError(f"{path} did not report the expected deployed commit.")
             for path in ("/auth/session", "/api/v1/deployment-smoke"):
@@ -540,15 +575,15 @@ def smoke() -> None:
                 summary.write(
                     "Health, commit, anonymous-auth rejection and dependency checks passed.\n"
                 )
-            print("Dev deployment smoke checks passed.")
+            print(f"{environment} deployment smoke checks passed.")
             return
         except (HTTPError, URLError, TimeoutError, DeliveryError):
             time.sleep(10)
-    raise DeliveryError(f"Dev smoke failed at {last_failure} after five minutes; inspect dev logs.")
+    raise DeliveryError(f"{environment} smoke failed at {last_failure} after five minutes.")
 
 
-def worker_target() -> dict[str, Any]:
-    dev_event()
+def worker_target(environment: str = "dev", *, allow_dispatch: bool = False) -> dict[str, Any]:
+    release_event(environment, allow_dispatch)
     group = required("ASC_RESOURCE_GROUP")
     worker: dict[str, Any] = az(
         "webapp", "show", "-g", group, "-n", required("ASC_FUNCTION_APP_NAME")
@@ -556,10 +591,12 @@ def worker_target() -> dict[str, Any]:
     web = az("webapp", "show", "-g", group, "-n", required("ASC_APP_NAME"))
     for resource in (worker, web):
         if (
-            resource.get("tags", {}).get("environment") != "dev"
+            resource.get("tags", {}).get("environment") != environment
             or resource.get("tags", {}).get("project") != "ai-sous-chef"
         ):
-            raise DeliveryError("Worker and web targets must be tagged ai-sous-chef/dev.")
+            raise DeliveryError(
+                f"Worker and web targets must be tagged ai-sous-chef/{environment}."
+            )
     if (
         worker["id"].lower() == web["id"].lower()
         or "functionapp" not in worker.get("kind", "").lower().split(",")
@@ -607,7 +644,7 @@ def worker_target() -> dict[str, Any]:
         )
     }
     expected = {
-        "ASC_ENVIRONMENT": "dev",
+        "ASC_ENVIRONMENT": environment,
         "FUNCTIONS_EXTENSION_VERSION": "~4",
         "FUNCTIONS_WORKER_RUNTIME": "python",
         "AZURE_CLIENT_ID": identity["clientId"],
@@ -696,6 +733,7 @@ def worker_deploy() -> None:
         )
         if not isinstance(deployment, dict) or deployment.get("status") != 4:
             raise DeliveryError("Worker ZIP build did not report success; inspect dev host logs.")
+        retain_artifact(archive, "worker.zip")
     finally:
         archive.unlink(missing_ok=True)
     az(
@@ -709,7 +747,9 @@ def worker_deploy() -> None:
     )
 
 
-def worker_smoke() -> None:
+def worker_smoke(
+    environment: str = "dev", *, expected_commit: str | None = None, allow_dispatch: bool = False
+) -> None:
     from urllib.error import HTTPError, URLError
     from urllib.request import HTTPRedirectHandler, build_opener
 
@@ -717,7 +757,8 @@ def worker_smoke() -> None:
         def redirect_request(self, *args: Any, **kwargs: Any) -> None:
             return None
 
-    worker = worker_target()
+    expected_commit = commit() if expected_commit is None else expected_commit
+    worker = worker_target(environment, allow_dispatch=allow_dispatch)
     opener = build_opener(NoRedirect())
     deadline = time.monotonic() + 300
     while time.monotonic() < deadline:
@@ -728,12 +769,12 @@ def worker_smoke() -> None:
                 if (
                     response.status != 200
                     or json.load(response) != {"status": "ok", "scope": "host-only"}
-                    or response.headers.get("X-ASC-Commit") != commit()
+                    or response.headers.get("X-ASC-Commit") != expected_commit
                 ):
                     raise DeliveryError("Worker health did not report the reviewed commit.")
             with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
                 summary.write(
-                    f"Worker `{commit()}` host health passed. "
+                    f"Worker `{expected_commit}` host health passed. "
                     "No feedback event processing or learning is implemented in this slice.\n"
                 )
             print("Worker host-only smoke passed.")

@@ -27,6 +27,20 @@ runs `npm ci` and `npm run build` in `frontend/` before packaging, so its instal
 wheel contains the browser application. See [frontend setup](frontend.md) for
 browser installation and local commands.
 
+`CI / build` also runs the unprivileged ASC-60 promotion check. PRs into `main`
+must originate from this repository's `dev` branch and contain exact-source,
+artifact/config and evaluation/rehearsal evidence from the
+[promotion template](../.github/PULL_REQUEST_TEMPLATE/promotion.md).
+Making `CI / build` a required check is still an owner settings action;
+an existing workflow file does not enforce merges. Production independently
+rejects an unreviewed or feature-to-main merge.
+
+The explicit, non-deploying first bootstrap is the only evidence exception:
+without `deploy/production.json`, a same-repo dev -> main PR may acknowledge
+`<!-- asc60-bootstrap -->` to install release workflows on the default branch.
+Production stays disabled and the deploy job is skipped; the comment never
+authorizes a configured production release.
+
 Run the package smoke check in a disposable virtual environment: it replaces the
 editable installation with the wheel. In WSL/Linux:
 
@@ -97,6 +111,11 @@ criteria are met. Board transitions are Backlog -> Ready after prerequisites,
 then In progress -> In review; a green run alone is not completion.
 
 ## Recorded workflow acceptance
+
+The ruleset evidence below is historical. On 2026-11-02, the effective-rules API
+returned no `main` rules and the branch was unprotected. An owner must restore
+and reverify enforcement, including `CI / frontend`, before release. ASC-60 fails
+production preflight when those actual rules are absent.
 
 The [initial clean PR run](https://github.com/AgamMakkar21/ai-sous-chef/actions/runs/38296256982)
 passed all five checks. A

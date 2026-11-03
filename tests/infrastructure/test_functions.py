@@ -172,7 +172,7 @@ class FunctionsHostTests(unittest.TestCase):
             },
             {"FeedbackLeases__accountEndpoint": "https://other.documents.azure.com/"},
             {"AzureWebJobsStorage__accountName": ""},
-            {"ASC_ENVIRONMENT": "prod"},
+            {"ASC_ENVIRONMENT": "local"},
             {"ASC_LEASE_CONTAINER": ""},
             {"FUNCTIONS_WORKER_RUNTIME": "node"},
         ):

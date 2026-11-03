@@ -1,6 +1,8 @@
 param location string
 param namePrefix string
 param tags object
+@allowed(['dev', 'prod'])
+param environment string = 'dev'
 param cosmosEndpoint string
 param applicationInsightsName string
 param logAnalyticsResourceId string
@@ -105,7 +107,7 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'ASC_COSMOS_DATABASE', value: 'sous-chef' }
         { name: 'ASC_FEEDBACK_CONTAINER', value: 'RecipeHistory' }
         { name: 'ASC_LEASE_CONTAINER', value: 'leases' }
-        { name: 'ASC_ENVIRONMENT', value: 'dev' }
+        { name: 'ASC_ENVIRONMENT', value: environment }
         { name: 'AZURE_CLIENT_ID', value: identity.properties.clientId }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
         { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'ClientId=${identity.properties.clientId};Authorization=AAD' }
