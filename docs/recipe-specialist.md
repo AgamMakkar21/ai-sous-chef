@@ -204,17 +204,64 @@ profiles only within that request; this bounds execution to 18 read-only MCP
 calls and nine sources. Additional/unmatched ingredients remain explicitly
 unmapped and the result cannot be `known`.
 
-The backend scales mass units `g`, `kg`, `oz` and `lb` deterministically by
-ingredient mass / 100 / servings. Volume, pieces, packages, unknown quantities,
-food density, cooking yield and edible-portion weights are never guessed.
+The backend converts only these mass units:
+
+| Input unit | Grams per unit |
+| --- | ---: |
+| `g` | 1 |
+| `kg` | 1000 |
+| `oz` | 28.349523125 |
+| `lb` | 453.59237 |
+
+For each supported nutrient, whole-recipe amount is the sum of
+`source amount per 100 g * ingredient grams / 100`. Per-serving amount divides
+that **unrounded** sum by the recipe's current serving count. Decimal arithmetic
+is used throughout; whole-recipe and per-serving amounts are independently
+rounded to two decimal places using round-half-up, only after aggregation.
+Changing servings without changing ingredient quantities leaves whole-recipe
+amounts unchanged. Changing quantities requires a new calculation.
+
+Volume, pieces, packages, unknown quantities, food density, cooking yield and
+edible-portion weights are never guessed.
 Amounts describe the selected food form/ingredient inputs, not an asserted
 laboratory measurement after cooking. Nutrients are energy (kcal), protein,
-carbohydrate, fat, fiber (g) and sodium (mg). A source unit mismatch fails.
-Totals include only nutrients present for every mapped ingredient. The upstream
-query omits zero-valued nutrients, so an absent nutrient is **unknown, not zero**.
-`known` requires every ingredient and all six nutrients; `partial` explicitly
-means incomplete ingredient/nutrient coverage, and `unavailable` carries no
-amounts, mappings or citations.
+carbohydrate, fat, fiber (g) and sodium (mg). An unexpected source unit fails;
+an additional energy-in-kJ row is ignored, never relabeled as kcal. A missing
+kcal row therefore leaves energy unknown.
+
+Every newly calculated response includes:
+
+- `isEstimate: true` and `notice: "Informational estimate, not medical advice."`,
+  including partial/unavailable ingredient lookups.
+- `nutrients`: per-serving amounts for supported nutrients with any source
+  coverage. In a partial result these may be **known-component subtotals**, not
+  complete recipe totals.
+- `coverage`: all six nutrient names, each with its own status, rounded
+  `wholeRecipeAmount` (or `null` when no component is known),
+  `coveredIngredientLineIds` and `unknownIngredientLineIds`. Coverage counts
+  ingredient lines, not a percentage of recipe mass or nutritional completeness.
+- `unknownComponents`: ingredient line ID, affected `unknownNutrients` and one
+  reason: `missing_quantity`, `missing_unit`, `unsupported_unit`,
+  `food_unavailable`, `lookup_limit` or `missing_nutrients`.
+- `mappings`: the requested quantity/unit, converted `weightGrams`, unchanged
+  USDA food ID and source reference for every contributing ingredient.
+
+A nutrient is `known` only if every ingredient contributes that nutrient;
+`partial` retains attributed subtotals and lists every unknown component;
+`unavailable` has no nutrient amount, not zero. Other nutrients remain usable
+when one nutrient is missing. The overall status is `known` only when all six
+nutrients cover every ingredient. An entirely `unavailable` result has no
+amounts, mappings or citations, but still includes unknown-component coverage.
+The upstream query omits zero-valued nutrients, so an absent nutrient is
+**unknown, not zero**. An explicitly returned zero is retained as source data.
+Consumers must label partial amounts as subtotals and display the notice; none
+of these states certifies a precise cooked-food measurement, diagnosis or
+treatment.
+
+These are additive response fields. Older stored recipe snapshots may lack
+detailed coverage/weights; defaults preserve read compatibility without
+inventing coverage for them. No new configuration is required beyond the
+existing enabled USDA integration.
 
 Provenance includes the unchanged NDB number, a unique `usda:sr:<ndb_no>` source,
 the USDA SR dataset reference and `version="SR (release unspecified)"`: the

@@ -1,5 +1,6 @@
 """Real subprocess MCP round-trip through the specialist, using synthetic food data."""
 
+import copy
 import json
 from pathlib import Path
 
@@ -11,17 +12,22 @@ from sous_chef.services.nutrition import UsdaNutritionTool
 from sous_chef.services.recipe_specialist import RecipeSpecialistService
 from sous_chef.telemetry import configure_safe_telemetry
 from test_orchestrator_gateway import coordination_settings
-from test_recipe_specialist import run, setup
+from test_recipe_specialist import FIXTURE, run, setup
 from test_usda_nutrition import config
 
 
+@pytest.mark.parametrize(("servings", "energy"), [(1, 520), (2, 260), (4, 130)])
 def test_recipe_uses_only_readonly_source_nutrition_with_exact_mappings(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
+    servings: int,
+    energy: int,
 ) -> None:
     configure_safe_telemetry()
     log = tmp_path / "calls.jsonl"
-    _, grounding, model = setup()
+    draft = copy.deepcopy(FIXTURE["draft"])
+    draft["servings"] = servings
+    _, grounding, model = setup(draft)
     gateway = FoundryGateway(coordination_settings(), client_factory=model.factory)
     service = RecipeSpecialistService(gateway, grounding, UsdaNutritionTool(config(log=log)))
     result = run(service)
@@ -34,7 +40,11 @@ def test_recipe_uses_only_readonly_source_nutrition_with_exact_mappings(
         "99902",
         "99903",
     ]
-    assert recipe.nutrition.nutrients[0].amount == 260  # 100+150+10 g, two servings
+    assert recipe.nutrition.servings == servings
+    assert recipe.nutrition.nutrients[0].amount == energy
+    assert recipe.nutrition.coverage[0].whole_recipe_amount == 520
+    assert recipe.nutrition.is_estimate
+    assert recipe.nutrition.notice == "Informational estimate, not medical advice."
     assert [mapping.quantity for mapping in recipe.nutrition.mappings] == [
         line.quantity for line in recipe.ingredients
     ]

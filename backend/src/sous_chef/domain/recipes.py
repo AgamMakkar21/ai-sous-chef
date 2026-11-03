@@ -26,10 +26,19 @@ ReferenceId = Annotated[
 LineId = Annotated[str, StringConstraints(strict=True, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 MeasuredQuantity = Annotated[Quantity, Field(strict=False)]
 NUTRITION_NOTICE: Final = "Informational estimate, not medical advice."
+NutrientName = Literal["energy", "protein", "carbohydrate", "fat", "fiber", "sodium"]
+NUTRIENT_NAMES: Final[tuple[NutrientName, ...]] = (
+    "energy",
+    "protein",
+    "carbohydrate",
+    "fat",
+    "fiber",
+    "sodium",
+)
 
 
 class RecipeModel(GroceryModel):
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, json_schema_serialization_defaults_required=True)
 
 
 class RecipeSource(RecipeModel):
@@ -140,7 +149,7 @@ class ShoppingItem(RecipeModel):
 
 
 class Nutrient(RecipeModel):
-    name: Literal["energy", "protein", "carbohydrate", "fat", "fiber", "sodium"]
+    name: NutrientName
     amount: float = Field(ge=0, le=10_000_000)
     unit: Literal["kcal", "g", "mg"]
 
@@ -158,6 +167,53 @@ class NutritionMapping(RecipeModel):
     unit: GroceryUnit
     source_id: ReferenceId
     usda_food_id: ReferenceId
+    weight_grams: float | None = Field(default=None, gt=0, le=1_000_000_000)
+
+
+class NutrientCoverage(RecipeModel):
+    name: NutrientName
+    status: Literal["known", "partial", "unavailable"]
+    whole_recipe_amount: float | None = Field(ge=0, le=200_000_000)
+    covered_ingredient_line_ids: tuple[LineId, ...] = Field(max_length=30)
+    unknown_ingredient_line_ids: tuple[LineId, ...] = Field(max_length=30)
+
+    @model_validator(mode="after")
+    def coverage_state(self) -> Self:
+        covered = set(self.covered_ingredient_line_ids)
+        unknown = set(self.unknown_ingredient_line_ids)
+        expected = "partial" if covered and unknown else "known" if covered else "unavailable"
+        if (
+            not covered | unknown
+            or covered & unknown
+            or len(covered) != len(self.covered_ingredient_line_ids)
+            or len(unknown) != len(self.unknown_ingredient_line_ids)
+            or len(covered | unknown) > 30
+            or bool(covered) != (self.whole_recipe_amount is not None)
+            or self.status != expected
+        ):
+            raise ValueError("Nutrient coverage must distinguish attributed amounts from unknowns.")
+        return self
+
+
+class NutritionUnknownComponent(RecipeModel):
+    ingredient_line_id: LineId
+    reason: Literal[
+        "missing_quantity",
+        "missing_unit",
+        "unsupported_unit",
+        "food_unavailable",
+        "lookup_limit",
+        "missing_nutrients",
+    ]
+    unknown_nutrients: tuple[NutrientName, ...] = Field(
+        default=NUTRIENT_NAMES, min_length=1, max_length=6
+    )
+
+    @model_validator(mode="after")
+    def unique_nutrients(self) -> Self:
+        if len(set(self.unknown_nutrients)) != len(self.unknown_nutrients):
+            raise ValueError("Unknown nutrients must be unique.")
+        return self
 
 
 class NutritionEvidence(RecipeModel):
@@ -169,6 +225,10 @@ class NutritionEvidence(RecipeModel):
     nutrients: tuple[Nutrient, ...] = Field(max_length=6)
     mappings: tuple[NutritionMapping, ...] = Field(max_length=30)
     sources: tuple[RecipeSource, ...] = Field(max_length=9)
+    is_estimate: Literal[True] = True
+    notice: Literal["Informational estimate, not medical advice."] = NUTRITION_NOTICE
+    coverage: tuple[NutrientCoverage, ...] = Field(default=(), max_length=6)
+    unknown_components: tuple[NutritionUnknownComponent, ...] = Field(default=(), max_length=30)
 
     @model_validator(mode="after")
     def evidence_state(self) -> Self:
@@ -189,11 +249,57 @@ class NutritionEvidence(RecipeModel):
                 raise ValueError("Unavailable nutrition must not contain invented amounts.")
         elif not self.nutrients or not self.mappings or not self.sources:
             raise ValueError("Known or partial nutrition requires attributed tool evidence.")
+        if self.coverage:
+            names = {item.name for item in self.coverage}
+            line_ids = set(
+                self.coverage[0].covered_ingredient_line_ids
+                + self.coverage[0].unknown_ingredient_line_ids
+            )
+            covered_ids = {
+                line_id for item in self.coverage for line_id in item.covered_ingredient_line_ids
+            }
+            unknown_pairs = {
+                (line_id, item.name)
+                for item in self.coverage
+                for line_id in item.unknown_ingredient_line_ids
+            }
+            component_pairs = {
+                (item.ingredient_line_id, name)
+                for item in self.unknown_components
+                for name in item.unknown_nutrients
+            }
+            expected_status = (
+                "known"
+                if all(item.status == "known" for item in self.coverage)
+                else "partial"
+                if self.nutrients
+                else "unavailable"
+            )
+            if (
+                len(names) != 6
+                or covered_ids != set(mapping_ids)
+                or any(
+                    set(item.covered_ingredient_line_ids + item.unknown_ingredient_line_ids)
+                    != line_ids
+                    for item in self.coverage
+                )
+                or set(nutrients)
+                != {item.name for item in self.coverage if item.status != "unavailable"}
+                or unknown_pairs != component_pairs
+                or len({item.ingredient_line_id for item in self.unknown_components})
+                != len(self.unknown_components)
+                or self.status != expected_status
+            ):
+                raise ValueError(
+                    "Nutrition coverage must account for every ingredient and nutrient."
+                )
+        elif self.unknown_components:
+            raise ValueError("Unknown components require detailed nutrient coverage.")
         return self
 
 
 class RecipeNutrition(NutritionEvidence):
-    notice: Literal["Informational estimate, not medical advice."]
+    """Recipe and ingredient lookups carry the same informational-estimate contract."""
 
 
 class WebClaim(RecipeModel):
@@ -268,6 +374,12 @@ class StructuredRecipe(RecipeDraft):
         mapped = {mapping.ingredient_line_id for mapping in self.nutrition.mappings}
         if self.nutrition.status == "known" and mapped != set(ingredients):
             raise ValueError("Known nutrition requires every ingredient to be mapped.")
+        if self.nutrition.coverage:
+            coverage = self.nutrition.coverage[0]
+            if set(
+                coverage.covered_ingredient_line_ids + coverage.unknown_ingredient_line_ids
+            ) != set(ingredients):
+                raise ValueError("Nutrition coverage must match the generated recipe.")
         for mapping in self.nutrition.mappings:
             line = ingredients.get(mapping.ingredient_line_id)
             if line is None or line.quantity != mapping.quantity or line.unit != mapping.unit:

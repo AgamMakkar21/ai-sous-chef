@@ -581,7 +581,10 @@ def test_source_definition_uses_reviewed_safety_policy_and_strict_schema() -> No
     assert "allergies" in RECIPE_INSTRUCTIONS and "nutrition" in RECIPE_INSTRUCTIONS
     models: tuple[type[RecipeDraft], ...] = (RecipeDraft, StructuredRecipe)
     for model in models:
-        schema = model.model_json_schema()
+        # Enriched responses emit defaults while still accepting older stored snapshots.
+        schema = model.model_json_schema(
+            mode="validation" if model is RecipeDraft else "serialization"
+        )
         for item in [schema, *schema.get("$defs", {}).values()]:
             if item.get("type") == "object":
                 assert item["additionalProperties"] is False

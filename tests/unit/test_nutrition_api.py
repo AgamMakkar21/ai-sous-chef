@@ -3,6 +3,7 @@ import json
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sous_chef.domain.recipes import NUTRITION_NOTICE
 from sous_chef.services.nutrition import UsdaNutritionTool
 from test_usda_nutrition import config
 
@@ -30,10 +31,19 @@ def test_authenticated_lookup_returns_real_stdio_calories_per_100_g(
             "unit": "g",
             "sourceId": "usda:sr:99901",
             "usdaFoodId": "99901",
+            "weightGrams": 100,
         }
     ]
     assert response.headers["cache-control"] == "no-store"
     assert data["sources"][0]["kind"] == "usda"
+    assert data["isEstimate"] is True and data["notice"] == NUTRITION_NOTICE
+    assert data["coverage"][0] == {
+        "name": "energy",
+        "status": "known",
+        "wholeRecipeAmount": 200,
+        "coveredIngredientLineIds": ["ingredient"],
+        "unknownIngredientLineIds": [],
+    }
     assert "rice" not in caplog.text
 
 
@@ -71,6 +81,9 @@ def test_unmatched_food_is_unavailable_not_zero(client: TestClient) -> None:
     assert response.status_code == 200
     assert response.json()["data"]["status"] == "unavailable"
     assert response.json()["data"]["nutrients"] == []
+    assert response.json()["data"]["isEstimate"] is True
+    assert response.json()["data"]["notice"] == NUTRITION_NOTICE
+    assert all(item["wholeRecipeAmount"] is None for item in response.json()["data"]["coverage"])
 
 
 @pytest.mark.parametrize(
