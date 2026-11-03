@@ -115,7 +115,7 @@ def test_built_frontend_and_assets_use_the_same_server(
         response = test_client.get("/")
         assert "frontend fixture" in response.text
         assert response.headers["cache-control"] == "no-store"
-        assert response.headers["referrer-policy"] == "no-referrer"
+        assert response.headers["referrer-policy"] == "same-origin"
         response = test_client.get("/assets/test.js")
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-store"
