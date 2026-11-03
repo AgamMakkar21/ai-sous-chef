@@ -94,6 +94,9 @@ before running context tests offline.
 
 ## Pull request quality checks
 
+Follow [CONTRIBUTING](CONTRIBUTING.md), including the required two-user
+authorization matrix for every user-data endpoint.
+
 PRs targeting `dev` or `main` run formatting/lint, strict type checking,
 unit/API contract tests, installed-wheel smoke checks, and offline infrastructure
 tests, plus frontend lint/types and desktop/phone browser checks.
