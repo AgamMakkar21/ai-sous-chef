@@ -14,6 +14,31 @@ def set_tool(client: TestClient, mode: str = "", *, timeout: float = 10) -> None
     client.app.state.nutrition = UsdaNutritionTool(config(mode, timeout=timeout))
 
 
+def test_search_and_explicit_selection_return_only_candidate_backed_nutrition(
+    client: TestClient,
+) -> None:
+    set_tool(client, "candidates")
+    search = client.post("/api/v1/nutrition/search", json={"name": "chicken"})
+    assert search.status_code == 200 and search.headers["cache-control"] == "no-store"
+    assert len(search.json()["foods"]) == 2
+    assert search.json()["truncated"] is False
+    selected = client.post(LOOKUP, json={"name": "chicken", "foodId": "99901"})
+    assert selected.status_code == 200, selected.text
+    assert selected.json()["data"]["mappings"][0]["usdaFoodId"] == "99901"
+    foreign = client.post(LOOKUP, json={"name": "chicken", "foodId": "00001"})
+    assert foreign.status_code == 200
+    assert foreign.json()["data"]["status"] == "unavailable"
+    assert client.post(LOOKUP, json={"name": "chicken", "foodId": "1"}).status_code == 422
+    assert (
+        client.post(
+            "/api/v1/nutrition/search",
+            json={"name": "chicken"},
+            headers={"Authorization": ""},
+        ).status_code
+        == 401
+    )
+
+
 def test_authenticated_lookup_returns_real_stdio_calories_per_100_g(
     client: TestClient, caplog: pytest.LogCaptureFixture
 ) -> None:

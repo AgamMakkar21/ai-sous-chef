@@ -126,6 +126,7 @@ def run(
     budget: ExecutionBudget | None = None,
     deadline: float | None = None,
     max_input_tokens: int = POLICY.max_input_tokens,
+    selected_food_ids: dict[str, str] | None = None,
 ) -> SpecialistResult:
     operation = uuid4() if budget is None else budget.operation_id
     return asyncio.run(
@@ -139,6 +140,7 @@ def run(
             max_input_tokens=max_input_tokens,
             max_output_tokens=POLICY.output_tokens_per_call,
             deadline=monotonic() + 60 if deadline is None else deadline,
+            selected_food_ids=selected_food_ids,
         )
     )
 
