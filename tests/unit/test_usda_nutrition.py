@@ -41,6 +41,48 @@ def request(*lines: DraftIngredient, servings: int = 2) -> NutritionRequest:
     return NutritionRequest(servings=servings, ingredients=lines or (ingredient(),))
 
 
+def test_agents_can_search_then_select_a_real_candidate_with_original_source_id() -> None:
+    async def check() -> None:
+        tool = UsdaNutritionTool(config("candidates"))
+        candidates = await tool.search("chicken", deadline=monotonic() + 10)
+        assert len(candidates.foods) == 2 and not candidates.truncated
+        ambiguous = await tool.lookup(request(ingredient("chicken")), deadline=monotonic() + 10)
+        assert ambiguous.status == "unavailable"
+        selected = NutritionRequest(
+            servings=2,
+            ingredients=(ingredient("chicken"),),
+            selected_food_ids={"rice": candidates.foods[0].ndb_no},
+        )
+        evidence = await tool.lookup(selected, deadline=monotonic() + 10)
+        assert evidence.status == "known"
+        assert evidence.mappings[0].usda_food_id == "99901"
+        assert evidence.nutrients[0].amount == 100
+        unrelated = selected.model_copy(update={"selected_food_ids": {"rice": "00001"}})
+        assert (await tool.lookup(unrelated, deadline=monotonic() + 10)).status == "unavailable"
+
+    asyncio.run(check())
+
+
+def test_unambiguous_reordered_words_resolve_without_choosing_a_different_food_form() -> None:
+    tool = UsdaNutritionTool(config("reordered"))
+    known = asyncio.run(tool.lookup(request(ingredient("raw rice")), deadline=monotonic() + 10))
+    assert known.status == "known"
+    cooked = asyncio.run(tool.lookup(request(ingredient("rice cooked")), deadline=monotonic() + 10))
+    assert cooked.status == "unavailable"
+
+
+def test_selected_candidate_line_ids_and_original_five_digit_food_ids_are_validated() -> None:
+    for selection in ({"foreign": "99901"}, {"rice": "123"}, {"rice": "%"}):
+        with pytest.raises(ValidationError):
+            NutritionRequest(servings=1, ingredients=(ingredient(),), selected_food_ids=selection)
+
+
+def test_search_marks_saturated_candidates_but_does_not_automatically_select() -> None:
+    tool = UsdaNutritionTool(config("saturated"))
+    found = asyncio.run(tool.search("rice", deadline=monotonic() + 10))
+    assert len(found.foods) == 20 and found.truncated
+
+
 def test_known_food_has_typed_source_values_and_original_ndb_number() -> None:
     async def check() -> None:
         async with open_usda(config(), deadline=monotonic() + 10) as session:

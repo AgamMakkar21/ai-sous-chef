@@ -85,6 +85,23 @@ def tool_output(request: dict[str, object]) -> str:
     if params["name"] == "search_foods":
         assert set(arguments) == {"keyword", "limit"} and arguments["limit"] == 20
         foods = [food for food in FOODS if food["long_desc"] == arguments["keyword"]]
+        if MODE in {"candidates", "reordered"}:
+            foods = [
+                {
+                    "ndb_no": "99901",
+                    "long_desc": "Chicken, breast, meat only, raw",
+                    "shrt_desc": "CHICKEN BREAST RAW",
+                    "food_group": "Fixture",
+                },
+                {
+                    "ndb_no": "99902",
+                    "long_desc": "Chicken, thigh, meat and skin, roasted",
+                    "shrt_desc": "CHICKEN THIGH ROASTED",
+                    "food_group": "Fixture",
+                },
+            ]
+            if MODE == "reordered":
+                foods = [dict(FOODS[0], long_desc="Rice, raw", shrt_desc="RICE,RAW")]
         if MODE == "ambiguous" and foods:
             foods.append(dict(foods[0], ndb_no="99909"))
         if MODE == "mismatch":
@@ -94,6 +111,19 @@ def tool_output(request: dict[str, object]) -> str:
         return json.dumps(foods)
     assert params["name"] == "get_nutrition_profile" and set(arguments) == {"ndb_no"}
     food = next(food for food in FOODS if food["ndb_no"] == arguments["ndb_no"])
+    if MODE == "candidates":
+        food = dict(
+            food,
+            long_desc="Chicken, breast, meat only, raw"
+            if food["ndb_no"] == "99901"
+            else "Chicken, thigh, meat and skin, roasted",
+            shrt_desc="CHICKEN BREAST RAW"
+            if food["ndb_no"] == "99901"
+            else "CHICKEN THIGH ROASTED",
+            food_group="Fixture",
+        )
+    if MODE == "reordered":
+        food = dict(food, long_desc="Rice, raw", shrt_desc="RICE,RAW")
     if MODE == "missing_profile":
         return json.dumps({"error": "No food found with NDB number: " + food["ndb_no"]})
     rows = [

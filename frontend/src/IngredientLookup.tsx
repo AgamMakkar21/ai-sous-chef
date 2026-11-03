@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError } from "./api";
-import { lookupNutrition, type IngredientNutrition } from "./nutrition";
+import {
+  lookupNutrition,
+  searchNutrition,
+  type FoodSearch,
+  type FoodCandidate,
+  type IngredientNutrition,
+} from "./nutrition";
 import type { Session } from "./profile";
 
 type Props = { session: Session; onExpired: () => void };
@@ -11,11 +17,11 @@ export default function IngredientLookup({ session, onExpired }: Props) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState("");
+  const [candidates, setCandidates] = useState<FoodSearch | null>(null);
   const active = useRef<AbortController | null>(null);
   useEffect(() => () => active.current?.abort(), []);
 
-  async function lookup(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function lookup(candidate?: FoodCandidate) {
     if (active.current) return;
     setResult(null);
     setError("");
@@ -38,9 +44,20 @@ export default function IngredientLookup({ session, onExpired }: Props) {
         ingredient,
         session,
         controller.signal,
+        candidate?.ndb_no,
       );
+      if (nutrition.status === "unavailable" && !candidate) {
+        const matches = await searchNutrition(
+          ingredient,
+          session,
+          controller.signal,
+        );
+        if (!controller.signal.aborted) setCandidates(matches);
+      } else if (!controller.signal.aborted) {
+        setCandidates(null);
+      }
       if (!controller.signal.aborted)
-        setResult({ ...nutrition, name: ingredient });
+        setResult({ ...nutrition, name: candidate?.long_desc ?? ingredient });
     } catch (failure) {
       if (controller.signal.aborted) return;
       if (failure instanceof ApiError && failure.status === 401) {
@@ -69,12 +86,16 @@ export default function IngredientLookup({ session, onExpired }: Props) {
     >
       <h2 id="nutrition-heading">Ingredient calories</h2>
       <p id="nutrition-help">
-        Look up USDA calories per 100 g. Use the food's exact description and
-        form, such as Carrots, raw. This reads nutrition through MCP; it does
-        not change your groceries or call AI.
+        Look up USDA calories per 100 g. Search an ingredient, such as chicken,
+        then choose its cut and food form from USDA matches. This reads
+        nutrition through MCP; it does not change your groceries or call AI.
       </p>
       <form
-        onSubmit={(event) => void lookup(event)}
+        onSubmit={(event: FormEvent<HTMLFormElement>) => {
+          event.preventDefault();
+          setCandidates(null);
+          void lookup();
+        }}
         aria-label="Look up ingredient calories"
       >
         <div className="ingredient-lookup-form">
@@ -87,6 +108,7 @@ export default function IngredientLookup({ session, onExpired }: Props) {
                 setName(event.target.value);
                 setResult(null);
                 setError("");
+                setCandidates(null);
               }}
               required
               maxLength={100}
@@ -103,13 +125,45 @@ export default function IngredientLookup({ session, onExpired }: Props) {
       </form>
       {busy && <p role="status">Reading USDA nutrition through MCP...</p>}
       {error && <p role="alert">{error}</p>}
+      {candidates && (
+        <section aria-label="USDA food matches">
+          <h3>Choose the USDA food</h3>
+          <p>
+            Match the cut, skin and preparation. No candidate is selected
+            automatically.
+          </p>
+          {candidates.truncated && (
+            <p role="status">
+              Showing at most 20 matches. Refine your search to find a more
+              specific food.
+            </p>
+          )}
+          {!candidates.foods.length && (
+            <p>No USDA matches found. Try a shorter ingredient or cut name.</p>
+          )}
+          <ul className="grocery-list">
+            {candidates.foods.map((food) => (
+              <li key={food.ndb_no} className="grocery-row">
+                <button
+                  className="button secondary"
+                  disabled={busy}
+                  onClick={() => void lookup(food)}
+                >
+                  {food.long_desc} &middot; NDB {food.ndb_no}
+                </button>
+                <p>{food.food_group}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {result && (
         <div className="ingredient-nutrition-result" role="status">
           <h3>{result.name}</h3>
           {result.calories === null ? (
             <p>
               {result.status === "unavailable"
-                ? "No unambiguous USDA match was found. Try the exact description and food form."
+                ? "No unambiguous USDA match was found. Choose a specific food below or refine your search."
                 : "Calories are unavailable for this ingredient. Missing values are not zero."}
             </p>
           ) : (

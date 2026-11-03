@@ -30,6 +30,101 @@ function evidence(energy: number | null = 41) {
   };
 }
 
+test("ambiguous search lets the user choose an attributed food without guessing", async ({
+  page,
+}) => {
+  await backend(page);
+  const food = {
+    ndb_no: "11124",
+    long_desc: "Carrots, raw",
+    shrt_desc: "CARROTS,RAW",
+    food_group: "Vegetables",
+  };
+  await page.route("**/api/v1/nutrition/search", (route) =>
+    route.fulfill({ json: { foods: [food], truncated: false } }),
+  );
+  const bodies: unknown[] = [];
+  await page.route("**/api/v1/nutrition/lookup", async (route) => {
+    const body = route.request().postDataJSON() as { foodId?: string };
+    bodies.push(body);
+    await route.fulfill({
+      json: {
+        data: body.foodId
+          ? evidence()
+          : {
+              ...evidence(),
+              status: "unavailable",
+              nutrients: [],
+              mappings: [],
+              sources: [],
+            },
+      },
+    });
+  });
+  await page.goto("/");
+  await page.getByLabel("USDA ingredient name").fill("carrots");
+  await page
+    .getByRole("button", { name: "Look up calories", exact: true })
+    .click();
+  await expect(
+    page.getByRole("region", { name: "USDA food matches" }),
+  ).toBeVisible();
+  await expect(page.locator(".ingredient-nutrition-result")).not.toContainText(
+    "41 kcal",
+  );
+  await page.getByRole("button", { name: "Carrots, raw · NDB 11124" }).click();
+  await expect(page.locator(".ingredient-nutrition-result")).toContainText(
+    "41 kcal per 100 g",
+  );
+  expect(bodies).toEqual([
+    { name: "carrots" },
+    { name: "carrots", foodId: "11124" },
+  ]);
+});
+
+test("a saturated search asks for refinement and never chooses its first result", async ({
+  page,
+}) => {
+  await backend(page);
+  await page.route("**/api/v1/nutrition/search", (route) =>
+    route.fulfill({
+      json: {
+        foods: Array.from({ length: 20 }, (_, index) => ({
+          ndb_no: String(index).padStart(5, "0"),
+          long_desc: `Chicken fixture ${index}`,
+          shrt_desc: `CHICKEN ${index}`,
+          food_group: "Fixture",
+        })),
+        truncated: true,
+      },
+    }),
+  );
+  await page.route("**/api/v1/nutrition/lookup", (route) =>
+    route.fulfill({
+      json: {
+        data: {
+          ...evidence(),
+          status: "unavailable",
+          nutrients: [],
+          mappings: [],
+          sources: [],
+        },
+      },
+    }),
+  );
+  await page.goto("/");
+  await lookup(page);
+  await expect(
+    page.getByText("Showing at most 20 matches.", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "USDA food matches" }).getByRole("button"),
+  ).toHaveCount(20);
+  await expect(page.locator(".ingredient-nutrition-result")).not.toContainText(
+    "kcal",
+  );
+});
+
 async function lookup(page: Page) {
   await page
     .getByLabel("USDA ingredient name", { exact: true })

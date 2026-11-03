@@ -39,3 +39,8 @@ class UsdaFoodProfile(UsdaModel):
     food: UsdaFood
     basis: Literal["per_100_g"] = "per_100_g"
     nutrients: tuple[UsdaNutrientRow, ...] = Field(min_length=1, max_length=256, repr=False)
+
+
+class UsdaFoodSearch(UsdaModel):
+    foods: tuple[UsdaFood, ...] = Field(max_length=20)
+    truncated: bool

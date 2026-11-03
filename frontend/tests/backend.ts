@@ -31,6 +31,9 @@ export async function backend(
   page: Page,
   initial: Preferences | null = preferences,
 ) {
+  await page.route("**/api/v1/nutrition/search", (route) =>
+    route.fulfill({ json: { foods: [], truncated: false } }),
+  );
   await page.route("**/api/v1/groceries", (route) =>
     route.fulfill({
       headers: { ETag: '"revision-1"' },
