@@ -195,17 +195,31 @@ user IDs or conversation identifiers. The logical `usda_nutrition` tool remains
 one reserved composite operation in the existing request budget; it makes no
 additional model calls.
 
+The app-owned launcher replaces the dependency's literal-substring search tool
+registration with an ingredient-oriented read-only query; the checksum-pinned
+upstream file, tool names/input schemas, pool lifecycle and profile tool remain
+unchanged. Search splits punctuation-separated words and requires every term
+across the source descriptions, independent of order. Preparation terms such as
+`raw` and `roasted` match whole words, not substrings such as `strawberry`.
+All terms are bound parameters, not SQL fragments. Filtering and ranking happen
+in the database **before** the 20-row limit: exact descriptions first, then raw
+ingredient entries, other entries, and finally baby foods, fast/restaurant foods,
+prepared meals and soups. Thus `chicken, raw` retains the raw requirement even
+when the source description includes intervening cut/skin details; generic
+`chicken` prioritizes raw poultry without selecting a cut or inventing a form.
+Ranking is a convenience for candidate presentation, not evidence of uniqueness.
+
 A name-only lookup requires one unambiguous description/short-description match:
 case/whitespace/comma normalization or identical words in a different order.
 It does not infer a cut, skin, preparation, synonym or food form from a generic
-name. An empty multiword search can broaden to its first word once; a saturated
+name. Empty searches never broaden by dropping terms; a saturated
 20-row result cannot establish uniqueness and is never automatically selected.
 An explicit selected NDB number must belong to the current source search results;
 its profile descriptions/category must match that candidate before values are used.
 Unknown/ambiguous foods have unavailable nutrition rather than an invented mapping.
 At most nine distinct name/selection pairs are queried per recipe, reusing
-profiles only within that request; this bounds execution to 27 read-only MCP
-calls (up to two searches and one profile per pair) and nine sources. Additional/unmatched ingredients remain explicitly
+profiles only within that request; this bounds execution to 18 read-only MCP
+calls (one search and one profile per pair) and nine sources. Additional/unmatched ingredients remain explicitly
 unmapped and the result cannot be `known`.
 
 The backend converts only these mass units:
@@ -288,6 +302,11 @@ redaction. `tests/integration/test_usda_specialist.py` runs an actual child-proc
 MCP exchange through the recipe specialist and validates the final recipe.
 Its protocol fixture contains **synthetic** foods and values; it is not a live
 database check or USDA data certification, and is never selectable in deployment.
+The startup integration checks also run the actual registered search SQL against
+an in-memory SQLite fixture with more than 20 prepared chicken products, raw cuts
+and cooked entries. They verify term preservation, pre-limit filtering/ranking,
+word-boundary preparation matching and selected-ID revalidation through the real
+pinned server and MCP SDK; they do not certify a live PostgreSQL import.
 
 ## Ingredient calories in the app
 

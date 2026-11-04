@@ -5,7 +5,15 @@ import runpy
 import ssl
 from pathlib import Path
 
+from mcp.server.fastmcp import FastMCP
+
 db_config: dict[str, object] = {"password": "insecure sample"}
+mcp = FastMCP("synthetic-dependency")
+
+
+@mcp.tool()
+async def search_foods(keyword: str, limit: int = 20) -> str:
+    raise AssertionError("The launcher's search must replace the sample tool.")
 
 
 async def main() -> None:
