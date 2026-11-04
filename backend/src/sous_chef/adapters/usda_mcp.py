@@ -186,11 +186,6 @@ class UsdaMcpSession:
         foods = _FOODS.validate_json(
             await self._call("search_foods", {"keyword": name, "limit": SEARCH_LIMIT})
         )
-        words = re.findall(r"[^\W_]+", name, flags=re.UNICODE)
-        if not foods and len(words) > 1:
-            foods = _FOODS.validate_json(
-                await self._call("search_foods", {"keyword": words[0], "limit": SEARCH_LIMIT})
-            )
         if len(foods) > SEARCH_LIMIT or len({food.ndb_no for food in foods}) != len(foods):
             raise _invalid()
         return UsdaFoodSearch(foods=tuple(foods), truncated=len(foods) == SEARCH_LIMIT)

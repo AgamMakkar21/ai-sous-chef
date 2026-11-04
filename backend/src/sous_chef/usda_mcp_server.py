@@ -2,11 +2,14 @@
 
 import asyncio
 import importlib.util
+import json
 import os
+import re
 import socket
 import ssl
 from collections.abc import Callable
 from pathlib import Path
+from types import ModuleType
 from typing import TypedDict, TypeVar, Unpack
 
 _Protocol = TypeVar("_Protocol", bound=asyncio.BaseProtocol)
@@ -56,6 +59,72 @@ def _required(name: str) -> str:
     return value
 
 
+def _search_text(column: str) -> str:
+    expression = f"lower(fd.{column})"
+    for separator in ",-/().":
+        expression = f"replace({expression}, '{separator}', ' ')"
+    return f"(' ' || {expression} || ' ')"
+
+
+def _configure_search(module: ModuleType) -> None:
+    async def search_foods(keyword: str, limit: int = 20) -> str:
+        """Search all ingredient terms, ranking raw ingredients before prepared products."""
+        words = list(dict.fromkeys(re.findall(r"[^\W_]+", keyword.lower())))
+        if (
+            not words
+            or len(keyword) > 100
+            or any(character in keyword for character in "%_\x00\r\n")
+            or not 1 <= limit <= 20
+        ):
+            raise ValueError("Provide a food name and a search limit between 1 and 20.")
+        long_text, short_text = _search_text("long_desc"), _search_text("shrt_desc")
+        forms = {
+            "raw",
+            "uncooked",
+            "cooked",
+            "roasted",
+            "fried",
+            "boiled",
+            "baked",
+            "grilled",
+            "steamed",
+            "stewed",
+            "broiled",
+            "sauteed",
+        }
+        patterns = [f"% {word} %" if word in forms else f"%{word}%" for word in words]
+        conditions = " AND ".join(
+            f"({long_text} LIKE ${index} OR {short_text} LIKE ${index})"
+            for index in range(1, len(patterns) + 1)
+        )
+        # Only placeholder numbers and fixed column expressions enter SQL; terms are bound.
+        query = f"""
+            SELECT fd.ndb_no, fd.long_desc, fd.shrt_desc, fg.fddrp_desc AS food_group
+            FROM food_des fd
+            JOIN fd_group fg ON fd.fdgrp_cd = fg.fdgrp_cd
+            WHERE {conditions}
+            ORDER BY
+                CASE WHEN lower(fd.long_desc) = ${len(patterns) + 1} THEN 0 ELSE 1 END,
+                CASE
+                    WHEN lower(fg.fddrp_desc) IN (
+                        'baby foods', 'fast foods', 'restaurant foods',
+                        'meals, entrees, and side dishes', 'soups, sauces, and gravies'
+                    ) THEN 2
+                    WHEN {long_text} LIKE '% raw %' THEN 0
+                    ELSE 1
+                END,
+                fd.long_desc, fd.ndb_no
+            LIMIT ${len(patterns) + 2}
+        """
+        pool = await module.get_db_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(query, *patterns, keyword.strip().lower(), limit)
+        return json.dumps([dict(row) for row in rows], default=str)
+
+    module.mcp.remove_tool("search_foods")
+    module.mcp.add_tool(search_foods)
+
+
 def main() -> None:
     source = Path(_required("USDA_MCP_SOURCE"))
     if not source.is_absolute() or not source.is_file():
@@ -81,8 +150,9 @@ def main() -> None:
         raise ValueError("The USDA dependency could not be loaded.")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    # Keep the dependency's tools and cleanup, replacing only its insecure sample config.
+    # Keep the pinned source unchanged; specialize its search and protected configuration.
     module.__dict__["db_config"] = database
+    _configure_search(module)
     with asyncio.Runner(loop_factory=_DatabaseEventLoop) as runner:
         runner.run(module.main())
 

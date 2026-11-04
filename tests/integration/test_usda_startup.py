@@ -1,6 +1,8 @@
+import asyncio
 import json
 import sys
 from pathlib import Path
+from time import monotonic
 from unittest.mock import patch
 
 import pytest
@@ -10,7 +12,56 @@ from sous_chef.app import create_app
 from sous_chef.services.nutrition import UsdaNutritionTool
 from sous_chef.settings import ConfigurationError, Settings
 from sous_chef.usda_dependency import SOURCE_PATH, installed_source
-from test_usda_nutrition import config
+from test_usda_nutrition import config, ingredient, request
+
+
+def upstream_tool() -> UsdaNutritionTool:
+    if not SOURCE_PATH.is_file():
+        pytest.skip("Install the pinned source during build to run the upstream contract check.")
+    fixture = Path(__file__).parents[1] / "fixtures" / "usda_upstream_database.py"
+    return UsdaNutritionTool(
+        UsdaMcpConfig(Path(sys.executable), fixture, {"TEST_USDA_SOURCE": str(installed_source())})
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("chicken, raw", {"99910", "99911", "99913"}),
+        ("RAW chicken breast", {"99910", "99913"}),
+        ("chicken-breast (raw)", {"99910", "99913"}),
+        ("chicken roasted", {"99912", "99914"}),
+        ("chicken raw nonexistent", set()),
+        ("chicken raw' OR '1'='1", set()),
+    ],
+)
+def test_real_mcp_search_filters_every_term_before_limiting(name: str, expected: set[str]) -> None:
+    result = asyncio.run(upstream_tool().search(name, deadline=monotonic() + 10))
+    assert {food.ndb_no for food in result.foods} == expected
+    assert not result.truncated
+
+
+def test_real_mcp_ranks_raw_chicken_ahead_of_more_than_twenty_prepared_products() -> None:
+    async def check() -> None:
+        tool = upstream_tool()
+        found = await tool.search("chicken", deadline=monotonic() + 10)
+        assert len(found.foods) == 20 and found.truncated
+        assert {food.ndb_no for food in found.foods[:3]} == {"99910", "99911", "99913"}
+        assert found.foods[3].ndb_no == "99912"
+        assert all(food.food_group == "Poultry Products" for food in found.foods[:4])
+        assert (
+            await tool.lookup(request(ingredient("chicken")), deadline=monotonic() + 10)
+        ).status == "unavailable"
+        selected = request(ingredient("chicken, raw")).model_copy(
+            update={"selected_food_ids": {"rice": "99910"}}
+        )
+        evidence = await tool.lookup(selected, deadline=monotonic() + 10)
+        assert evidence.mappings[0].usda_food_id == "99910"
+        assert evidence.mappings[0].source_id == "usda:sr:99910"
+        wrong_form = selected.model_copy(update={"selected_food_ids": {"rice": "99912"}})
+        assert (await tool.lookup(wrong_form, deadline=monotonic() + 10)).status == "unavailable"
+
+    asyncio.run(check())
 
 
 def test_starting_app_runs_real_stdio_lookup_and_reaps_process(tmp_path: Path) -> None:
@@ -58,17 +109,7 @@ def test_default_offline_app_never_starts_live_mcp() -> None:
 
 
 def test_actual_pinned_upstream_and_mcp_sdk_start_with_synthetic_database() -> None:
-    if not SOURCE_PATH.is_file():
-        pytest.skip("Install the pinned source during build to run the upstream contract check.")
-    source = installed_source()
-    fixture = Path(__file__).parents[1] / "fixtures" / "usda_upstream_database.py"
-    tool = UsdaNutritionTool(
-        UsdaMcpConfig(
-            Path(sys.executable),
-            fixture,
-            {"TEST_USDA_SOURCE": str(source)},
-        )
-    )
+    tool = upstream_tool()
     settings = Settings(
         environment="local",
         adapter_mode="local",

@@ -89,6 +89,19 @@ def test_search_marks_saturated_candidates_but_does_not_automatically_select() -
     assert len(found.foods) == 20 and found.truncated
 
 
+def test_empty_multiword_search_never_drops_preparation_or_other_terms(tmp_path: Path) -> None:
+    log = tmp_path / "search.jsonl"
+    tool = UsdaNutritionTool(config(log=log))
+    found = asyncio.run(tool.search("chicken, raw", deadline=monotonic() + 10))
+    assert not found.foods and not found.truncated
+    calls = [
+        request["params"]["arguments"]
+        for request in map(json.loads, log.read_text().splitlines())
+        if request["method"] == "tools/call"
+    ]
+    assert calls == [{"keyword": "chicken, raw", "limit": 20}]
+
+
 def test_known_food_has_typed_source_values_and_original_ndb_number() -> None:
     async def check() -> None:
         async with open_usda(config(), deadline=monotonic() + 10) as session:
