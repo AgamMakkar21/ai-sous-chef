@@ -21,6 +21,10 @@ one structured answer (`clarification`, `unable`, `accept`). It rejects unknown
 functions, parallel/multiple actions, malformed arguments, refused/incomplete
 responses, and missing usage. The runtime tool list is restricted to that one
 function. Provider automatic retries remain disabled.
+The source definition selects the versioned blocking
+[`asc-responsible-ai-v1` content-safety policy](responsible-ai.md). Tool arguments
+also reject duplicate keys and excessive transport size; control answers require
+one completed output-text part.
 
 The backend dispatches the function through the typed `RecipeSpecialist` seam.
 It always supplies the **same complete `RequestContext`**, including hard
@@ -138,6 +142,8 @@ Orchestrator without recreating/rebinding its Entra identity:
    `.env.dev`/environment settings. Both agent identities must be distinct from
    each other and the app; configured principal pins, when present, must match.
    The command refuses local/prod targets, shared identities and disabled agents.
+   Have the owner apply and verify `asc-responsible-ai-v1` in the target Foundry
+   account before publication; compiling the policy is not deployment evidence.
 2. Sign in with an authorized publisher account. This administrative command uses
    `AzureCliCredential`, just like the existing delivery publisher; it is **not**
    an app runtime credential. It needs project-scoped agent version publication

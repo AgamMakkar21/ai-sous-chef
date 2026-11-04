@@ -189,6 +189,34 @@ class FoundationTests(unittest.TestCase):
         self.assertEqual({p["name"].split("'")[-2] for p in policies}, {"ftp", "scm"})
         self.assertTrue(all(p["properties"]["allow"] is False for p in policies))
 
+    def test_foundry_deployments_require_the_versioned_blocking_safety_policy(self) -> None:
+        resources = {resource["type"]: resource for resource in self.foundry["resources"]}
+        policy = resources["Microsoft.CognitiveServices/accounts/raiPolicies"]
+        self.assertIn("asc-responsible-ai-v1", policy["name"])
+        self.assertEqual(policy["apiVersion"], "2025-06-01")
+        self.assertEqual(policy["properties"]["basePolicyName"], "Microsoft.Default")
+        self.assertEqual(policy["properties"]["mode"], "Blocking")
+        filters = policy["properties"]["contentFilters"]
+        harms = {"Hate", "Sexual", "Violence", "Selfharm"}
+        expected = {
+            (category, source): "Medium"
+            for category in harms
+            for source in ("Prompt", "Completion")
+        } | {
+            ("Jailbreak", "Prompt"): None,
+            ("Protected Material Text", "Completion"): None,
+            ("Protected Material Code", "Completion"): None,
+        }
+        self.assertEqual(len(filters), len(expected))
+        self.assertEqual(
+            {(item["name"], item["source"]): item.get("severityThreshold") for item in filters},
+            expected,
+        )
+        self.assertTrue(all(item["enabled"] and item["blocking"] for item in filters))
+        deployment = resources["Microsoft.CognitiveServices/accounts/deployments"]
+        self.assertEqual(deployment["properties"]["raiPolicyName"], "asc-responsible-ai-v1")
+        self.assertTrue(any("raiPolicies" in item for item in deployment["dependsOn"]))
+
     def test_authored_settings_preserve_secrets_and_disable_ai_content_capture(self) -> None:
         site = next(r for r in self.app["resources"] if r["type"] == "Microsoft.Web/sites")
         self.assertNotIn("appSettings", site["properties"]["siteConfig"])

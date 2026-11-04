@@ -61,7 +61,29 @@ from sous_chef.settings import ConfigurationError, Settings
 from sous_chef.telemetry import ErrorCategory, Event, operational_event, trace_id
 
 FOUNDRY_API_VERSION = "v1"
+MAX_TOOL_ARGUMENT_CHARACTERS = 32_768
+MAX_MCP_ENVELOPE_CHARACTERS = 65_536
 Result = TypeVar("Result")
+
+
+def _tool_arguments(value: str) -> dict[str, object]:
+    def unique_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        fields: dict[str, object] = {}
+        for key, item in pairs:
+            if key in fields:
+                raise ValueError("Duplicate tool argument.")
+            fields[key] = item
+        return fields
+
+    if len(value) > MAX_TOOL_ARGUMENT_CHARACTERS:
+        raise ValueError("Tool arguments exceed the transport limit.")
+    try:
+        parsed: object = json.loads(value, object_pairs_hook=unique_fields)
+    except RecursionError:
+        raise ValueError("Tool arguments exceed the nesting limit.") from None
+    if not isinstance(parsed, dict):
+        raise ValueError("Tool arguments must be an object.")
+    return parsed
 
 
 @dataclass(frozen=True)
@@ -446,19 +468,28 @@ class FoundryGateway:
         self, request: FoundryRequest, response: Response
     ) -> tuple[RecipeDraft, RecipeGrounding, TokenUsage]:
         from sous_chef.recipe_definition import RECIPE_KNOWLEDGE_LABEL, RECIPE_KNOWLEDGE_TOOL
+        from sous_chef.services.context import _encoding
         from sous_chef.services.recipe_grounding import parse_mcp_grounding
 
         assert isinstance(request, GroundedRecipeGenerationRequest)
         calls = [item for item in response.output if item.type == "mcp_call"]
+        listings = [item for item in response.output if item.type == "mcp_list_tools"]
         allowed = {"reasoning", "message", "mcp_list_tools", "mcp_call"}
         if (
             len(calls) != 1
+            or len(listings) > 1
             or any(item.type not in allowed for item in response.output)
             or any(
                 item.server_label != RECIPE_KNOWLEDGE_LABEL or item.error is not None
-                for item in response.output
-                if item.type == "mcp_list_tools"
+                for item in listings
             )
+        ):
+            raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
+        envelopes = [item.model_dump_json() for item in (*listings, *calls)]
+        if (
+            sum(map(len, envelopes)) > MAX_MCP_ENVELOPE_CHARACTERS
+            or sum(len(_encoding().encode(item, disallowed_special=())) for item in envelopes)
+            > POLICY.max_tool_result_tokens
         ):
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
         call = calls[0]
@@ -471,8 +502,13 @@ class FoundryGateway:
                 else FoundryFailure.UNAVAILABLE
             )
             raise FoundryGatewayError(code, request)
-        if call.output is None or json.loads(call.arguments) != {"query": request.retrieval_query}:
-            raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
+        try:
+            if call.output is None or _tool_arguments(call.arguments) != {
+                "query": request.retrieval_query
+            }:
+                raise ValueError
+        except ValueError:
+            raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request) from None
         grounding = parse_mcp_grounding(
             call.output,
             max_results=self._settings.foundry_iq_max_results,
@@ -562,7 +598,9 @@ class FoundryGateway:
                     usage=accounting,
                     call=SpecialistCall(
                         call_id=action.call_id,
-                        arguments=SpecialistArguments.model_validate_json(action.arguments),
+                        arguments=SpecialistArguments.model_validate(
+                            _tool_arguments(action.arguments)
+                        ),
                         reasoning=tuple(
                             OpaqueReasoning(
                                 id=item.id,
@@ -573,7 +611,12 @@ class FoundryGateway:
                         ),
                     ),
                 )
-            if action.type != "message":
+            if (
+                action.type != "message"
+                or action.status != "completed"
+                or len(action.content) != 1
+                or action.content[0].type != "output_text"
+            ):
                 raise ValueError
             return CoordinationStep(
                 usage=accounting,

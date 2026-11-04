@@ -218,6 +218,48 @@ def test_coordination_requires_attribution_and_preflights_input_budget() -> None
     assert harness.requests == []
 
 
+@pytest.mark.parametrize(
+    "change", ["duplicate", "oversized", "nested", "identity", "database", "url"]
+)
+def test_hostile_function_arguments_cannot_expand_authority(
+    change: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    configure_safe_telemetry()
+    arguments = function_output()["arguments"]
+    if change == "duplicate":
+        arguments = '{"requirements":"private injected instruction",' + arguments[1:]
+    elif change == "oversized":
+        arguments = " " * 32_769 + arguments
+    elif change == "nested":
+        arguments = '{"requirements":' + "[" * 2000 + "0" + "]" * 2000 + "}"
+    else:
+        extra = {
+            "identity": {"userId": "private-other-user", "principalId": "private-agent"},
+            "database": {"sql": "UPDATE Users SET allergies = '[]'"},
+            "url": {"url": "https://private.example.invalid/upload"},
+        }[change]
+        arguments = json.dumps(json.loads(arguments) | extra)
+    harness = Harness(body=body(function_output(arguments=arguments)))
+    gateway = FoundryGateway(coordination_settings(), client_factory=harness.factory)
+    with pytest.raises(FoundryGatewayError) as caught:
+        asyncio.run(gateway.coordinate(request()))
+    assert caught.value.code == FoundryFailure.INVALID_RESULT
+    assert len(harness.requests) == 1
+    assert "private" not in str(caught.value) and "private" not in caplog.text
+
+
+def test_fragmented_control_message_is_not_concatenated_into_a_valid_answer() -> None:
+    message = response_body()["output"][0]
+    content = message["content"][0]
+    content["text"] = '{"status":"unable",'
+    message["content"].append({**content, "text": '"explanation":"Cannot help."}'})
+    harness = Harness(body=body(message))
+    gateway = FoundryGateway(coordination_settings(), client_factory=harness.factory)
+    with pytest.raises(FoundryGatewayError) as caught:
+        asyncio.run(gateway.coordinate(request()))
+    assert caught.value.code == FoundryFailure.INVALID_RESULT
+
+
 def test_large_character_context_is_allowed_only_within_the_token_limit() -> None:
     harness = Harness(body=body(function_output()))
     gateway = FoundryGateway(coordination_settings(), client_factory=harness.factory)
@@ -276,6 +318,7 @@ def test_publication_creates_reproducible_source_version_under_existing_identity
     definition = invocation.kwargs["definition"].as_dict()
     assert definition["model"] == config.foundry_orchestrator_deployment
     assert definition["tools"][0]["name"] == "recipe_specialist"
+    assert definition["rai_config"] == {"rai_policy_name": "asc-responsible-ai-v1"}
     assert invocation.kwargs["metadata"]["asc_policy_version"] == "2"
     client.agents.create.assert_not_called()
     assert config.agents_enabled  # No settings or release manifest mutation.
