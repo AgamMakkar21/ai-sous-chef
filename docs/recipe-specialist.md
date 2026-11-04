@@ -613,8 +613,8 @@ Non-recipe replies select a typed `clarification` or `unable` control result,
 never public free-form text. Clarifications select one backend-authored request,
 ingredient, time-budget or constraint question; inability uses the fixed safe
 response. Executor `content` is retained as a private compatibility input but is
-never displayed or persisted, including on the text-only path. ASC-38 must select
-the corresponding control kind/code rather than render coordinator prose.
+never displayed or persisted, including on the text-only path. ASC-38's executor
+selects the corresponding control kind rather than rendering coordinator prose.
 
 `services/recipe_safety.py` supplies `check_current_recipe` for delivery, edits
 and reuse, and `prepare_recipe_save` for a future save endpoint. The latter loads

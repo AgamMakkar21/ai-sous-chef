@@ -171,9 +171,12 @@ class OrchestratorFailure(StrEnum):
 
 
 class OrchestratorError(RuntimeError):
-    def __init__(self, code: OrchestratorFailure, operation_id: UUID) -> None:
+    def __init__(
+        self, code: OrchestratorFailure, operation_id: UUID, *, outcome_unknown: bool = False
+    ) -> None:
         self.code = code
         self.operation_id = operation_id
+        self.outcome_unknown = outcome_unknown
         super().__init__(f"{code.value}; operation_id={operation_id}.")
 
 

@@ -3,8 +3,8 @@
 ASC-21 / #18 adds empty conversation creation, metadata listing and bounded turn
 retrieval. ASC-22 / #25 adds idempotent sends, durable operation state and explicit
 failed-turn retries. Cosmos `ChatHistory` remains the durable history authority.
-There is no production agent pipeline, transcript copy, automatic title generation
-or deployment in these changes.
+ASC-38 / #39 composes the managed-agent recipe pipeline behind those sends.
+There is no transcript copy, automatic title generation or deployment in these changes.
 
 ## Bounded request context (ASC-23 / #24)
 
@@ -31,8 +31,8 @@ is counted using pinned `tiktoken==0.12.0` and `o200k_base`, the GPT-5 deploymen
 family encoding. Counting adds a 64-token framing allowance. The context ceiling
 is **11,000 input tokens**, leaving **1,000** for executor/agent instructions and
 **4,000** for bounded tools within the ADR's **16,000 input-token** per-call ceiling.
-The future production executor must count its *complete* provider request, reserve
-output capacity separately, and enforce cumulative request token limits; these
+The managed-agent executor uses the Orchestrator's *complete* provider-request
+counting, separate output reservations and cumulative request limits; these
 reservations do not authorize unchecked tool or instruction growth.
 
 Install the updated locked dependencies. Before offline tests or a network-restricted
@@ -198,7 +198,12 @@ uses the server-derived `/userId` partition, a record-kind filter and a bounded
 SDK page. Listing summaries never enumerates the transcript.
 
 Each public turn has `turnId`, `conversationId`, `turnIndex`, `status`,
-`messages`, `createdAt` and `updatedAt`. It contains one user message while
+`messages`, `createdAt`, `updatedAt`, `generatedRecipeId` and `recipe`.
+The last two fields are null for non-recipe replies and incomplete turns.
+A completed recipe exposes the full validated `StructuredRecipe`: ingredients,
+instructions, shopping gaps, source-backed estimated nutrition and provenance.
+Its generated UUID identifies that persisted snapshot, not a saved/cooked recipe.
+It contains one user message while
 `pending`, `failed` or `outcomeUnknown`; only `completed` contains the user and
 one validated assistant message in that order. Each message exposes only
 `messageId`, `role`, `entityId`, `content` and `timestamp`; content is bounded
@@ -206,8 +211,10 @@ at 4,000 characters. Invalid stored exchange/state combinations return a safe
 502 rather than a false empty/successful history.
 
 Internal prompts, provider response IDs, operation records and raw Cosmos
-metadata never enter these responses. Structured recipe views remain a later chat-generation deliverable, not arbitrary
-private payload passthrough here. The read endpoints do not invoke agents.
+metadata never enter these responses. Structured recipes use the strict public
+schema, not arbitrary private payload passthrough. Send, history, operation
+inspection and completed-key replay return the same persisted recipe/reference.
+The read endpoints do not invoke agents.
 
 ## Durable chat sends (ASC-22)
 
@@ -251,8 +258,9 @@ Only the process that successfully admits the batch invokes the executor.
 Completion atomically appends the validated assistant message to that same
 bounded turn, finalizes the operation and releases the conversation guard.
 Each message has a server-issued UUID, server-controlled role/entity and UTC
-timestamp. Optional `generatedRecipeId` and `providerResponseId` references are
-stored internally from validated executor output, never accepted from clients.
+timestamp. Optional `generatedRecipeId` and `providerResponseId` references come
+from validated executor output, never clients; only the generated recipe reference
+is public.
 A lost completion response is reconciled by point-reading the operation; a
 completed key can be replayed after an application restart even without an
 executor configured.
@@ -310,15 +318,37 @@ completed execution as a known retryable failure.
 `create_app(settings, chat_executor=...)` injects the `ChatExecutor` interface.
 It receives server-derived user/conversation/turn/operation IDs, user text,
 validated explicit preferences and a monotonic execution deadline. It must
-return a `ValidatedReply` containing only final public output after the real
-pipeline's deterministic safety checks. Explicit-over-learned precedence,
-distinct agent identities and provider reconciliation remain that pipeline's
-responsibility (ASC-38 / #39); this boundary does not change them.
+return a typed `ValidatedReply`; `ChatService` owns final safety validation,
+deterministic rendering and atomic persistence, not executor-authored prose.
 
-The deterministic fake exists **only in `tests/unit/test_chat_api.py`**.
-There is no environment switch, default fake, live Foundry invocation, or
-success-shaped fallback. The normal application has no executor yet and
-returns 503 `configuration_unavailable` before admitting a new turn; reads,
+Without an injected executor, the application installs `RecipeChatExecutor` when
+`ASC_ADAPTER_MODE=live`, `ASC_AGENTS_ENABLED=true` and `ASC_USDA_ENABLED=true`.
+It composes the existing pinned `FoundryGateway`, `OrchestratorService`,
+`RecipeSpecialistService`, identity-bound Foundry IQ retrieval and USDA MCP tool.
+Conditional Web IQ stays behind the existing routing policy and shared budget.
+The executor uses the authorized `RequestContext` and remaining send deadline,
+requires a full structured recipe rather than a projection, and selects fixed
+backend clarification/inability text instead of model-authored prose.
+
+Use the reviewed [agent pins and identity setup](orchestrator.md) and
+[Foundry IQ / USDA configuration](recipe-specialist.md). Both agent names/versions,
+distinct workload/agent principal IDs, complete recipe knowledge settings and
+the protected USDA MCP configuration are required. Incomplete enabled configuration
+fails startup; enabled USDA also retains its source-backed startup check.
+No new environment variables, credentials or provider fallback are introduced.
+The checked-in dev agent manifest remains disabled; publish/pin reviewed agent
+definitions and explicitly activate the release through the existing review process.
+This implementation does not deploy or assert live dev acceptance.
+
+Known provider/validation failures become recoverable failed turns. Coordinator
+or specialist timeouts and uncertain transport outcomes become `outcomeUnknown`,
+retain the conversation fence and never trigger automatic regeneration/replay.
+No recovery worker or remote-outcome reconciliation is added here.
+Learned context uses the existing injected evidence reader described above;
+ASC-49 supplies the feedback-to-context production path. Empty learning works normally.
+
+The deterministic fake exists **only in tests**. Disabled/app-only releases
+return 503 `configuration_unavailable` before admitting a new turn; reads,
 operation inspection and existing-key replay remain available.
 
 ## Offline coverage and live boundary
@@ -331,9 +361,15 @@ isolation, atomic/concurrent/uncertain creation and privacy-safe failures. `test
 first-admission races, pending duplicates, atomic completion, interrupted
 execution, actual deadlines, stale-result fencing and pre-invocation validation.
 The shared Cosmos tests continue to cover deadlines, throttling and cleanup.
+`tests/integration/test_recipe_chat.py` exercises the application-installed executor,
+signed authentication, real Cosmos/Foundry SDK transports and a real stdio MCP
+fixture subprocess. It verifies pantry availability/shopping gaps, attributed
+nutrition, conditional Web IQ, eligible learning, latest-profile safety, durable
+replay, known-failure retries and unknown-outcome fencing. All source/tool data
+is synthetic; no Azure agents or private user data are accessed.
 
 ```bash
-python -m pytest tests/unit/test_chat_api.py tests/unit/test_conversation_api.py tests/unit/test_cosmos_repository.py
+python -m pytest tests/unit/test_chat_api.py tests/unit/test_conversation_api.py tests/unit/test_authorization_matrix.py tests/integration/test_recipe_chat.py
 ```
 
 These checks do not prove Azure connectivity or live deployment. Approved
