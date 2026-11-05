@@ -30,7 +30,7 @@ class EndpointCase:
     path: str
     status: int = 200
     body: dict[str, Any] | None = None
-    guarded_record: Literal["profile", "conversation"] | None = "profile"
+    guarded_record: Literal["profile", "conversation", "turn", "recipe"] | None = "profile"
 
     @property
     def name(self) -> str:
@@ -48,6 +48,32 @@ INSPECT_CASE = EndpointCase(
     BASE + "/{conversation_id}/operations/{operation_id}",
     guarded_record="conversation",
 )
+SAVE_CASE = EndpointCase(
+    "POST",
+    "/api/v1/recipes",
+    201,
+    {"generatedRecipeId": "{generated_recipe_id}"},
+    "turn",
+)
+COOK_CASE = EndpointCase(
+    "POST",
+    "/api/v1/recipes/{history_id}/cooked",
+    body={},
+    guarded_record="recipe",
+)
+REJECT_CASE = EndpointCase(
+    "POST",
+    "/api/v1/generated-recipes/{generated_recipe_id}/rejections",
+    201,
+    {"reason": "matrix explicit rejection"},
+    "turn",
+)
+REVISE_CASE = EndpointCase(
+    "POST",
+    "/api/v1/generated-recipes/{generated_recipe_id}/revisions",
+    body={"reason": "matrix requested revision"},
+    guarded_record="turn",
+)
 CASES = (
     EndpointCase("GET", ME),
     EndpointCase("PUT", ME + "/onboarding", body=preferences()),
@@ -61,8 +87,12 @@ CASES = (
     EndpointCase("GET", BASE + "/{conversation_id}/turns", guarded_record="conversation"),
     SEND_CASE,
     INSPECT_CASE,
+    SAVE_CASE,
+    COOK_CASE,
+    REJECT_CASE,
+    REVISE_CASE,
 )
-FOREIGN_ID_CASES = tuple(case for case in CASES if "{" in case.path)
+FOREIGN_ID_CASES = tuple(case for case in CASES if "{" in case.path or case == SAVE_CASE)
 NON_USER_DATA = {
     ("POST", "/api/v1/nutrition/lookup"): "Read-only USDA data; no stored user-state access.",
     ("POST", "/api/v1/nutrition/search"): "Read-only USDA candidates; no stored user-state access.",
@@ -79,12 +109,16 @@ class UserData:
     second_conversation_id: str
     operation_id: str
     turn_ids: tuple[str, ...]
+    generated_recipe_id: str
+    history_id: str
 
     def path(self, case: EndpointCase) -> str:
         return case.path.format(
             grocery_id=self.grocery_id,
             conversation_id=self.conversation_id,
             operation_id=self.operation_id,
+            generated_recipe_id=self.generated_recipe_id,
+            history_id=self.history_id,
         )
 
     def hints(self) -> dict[str, str]:
@@ -104,6 +138,8 @@ class UserData:
             self.second_conversation_id,
             self.operation_id,
             *self.turn_ids,
+            self.generated_recipe_id,
+            self.history_id,
         ):
             assert value not in public
 
@@ -128,16 +164,26 @@ class TwoUserApi:
         headers: dict[str, str] | None = None,
         params: dict[str, str] | None = None,
     ) -> Response:
+        payload = deepcopy(case.body if body is None else body)
+        if payload is not None and payload.get("generatedRecipeId") == "{generated_recipe_id}":
+            payload["generatedRecipeId"] = (target or actor).generated_recipe_id
+        revision = (
+            self.transport.documents[("RecipeHistory", actor.user.user_id, actor.history_id)][
+                "_etag"
+            ]
+            if case == COOK_CASE
+            else self.profile(actor)["_etag"]
+        )
         return self.client.request(
             case.method,
             (target or actor).path(case),
             headers={
                 **actor.headers,
-                "If-Match": self.profile(actor)["_etag"],
+                "If-Match": revision,
                 "Idempotency-Key": "matrix-request",
                 **(headers or {}),
             },
-            json=deepcopy(case.body if body is None else body),
+            json=payload,
             params=params,
         )
 
@@ -171,7 +217,10 @@ def two_user_api(
             conversation = create(client, marker + " conversation")
             second = create(client, marker + " second conversation")
             turns = []
+            generated_recipe_id = ""
             for index in range(2):
+                executor.recipe = full_recipe() if index == 0 else None
+                executor.recipe_id = uuid4()
                 result = send(
                     client,
                     conversation,
@@ -180,6 +229,14 @@ def two_user_api(
                 )
                 assert result.status_code == 200, result.text
                 turns.append(str(result.json()["data"]["turnId"]))
+                if index == 0:
+                    generated_recipe_id = result.json()["data"]["generatedRecipeId"]
+            saved = client.post(
+                "/api/v1/recipes",
+                json={"generatedRecipeId": generated_recipe_id},
+                headers={"Idempotency-Key": "seed-acceptance"},
+            )
+            assert saved.status_code == 201, saved.text
             users.append(
                 UserData(
                     AuthenticatedUser.from_verified_identity(AUTH_ISSUER, subject),
@@ -190,6 +247,8 @@ def two_user_api(
                     second,
                     result.headers["location"].rsplit("/", 1)[1],
                     tuple(turns),
+                    generated_recipe_id,
+                    saved.json()["data"]["historyId"],
                 )
             )
         del client.headers["Authorization"]
@@ -258,7 +317,10 @@ def test_structured_recipe_and_reference_stay_in_the_authenticated_partition(
     assert history.status_code == 200
     api.assert_partition(bob, before)
     assert turn["generatedRecipeId"] not in history.text
-    assert all(item["recipe"] is None for item in history.json()["items"])
+    assert all(
+        item["generatedRecipeId"] in (None, bob.generated_recipe_id)
+        for item in history.json()["items"]
+    )
     alice.assert_private(history)
     inspected = api.client.get(generated.headers["location"], headers=bob.headers)
     assert_problem(inspected, 404, "not_found")
@@ -317,6 +379,8 @@ def test_guessed_foreign_ids_and_absent_ids_have_identical_safe_errors_and_no_si
         grocery_id=str(uuid4()),
         conversation_id=str(uuid4()),
         operation_id=str(uuid4()),
+        generated_recipe_id=str(uuid4()),
+        history_id=str(uuid4()),
     )
     before = deepcopy(two_user_api.transport.documents)
     executions = len(two_user_api.executor.calls)
@@ -342,9 +406,17 @@ def test_wrong_owner_records_in_the_authenticated_partition_fail_before_data_or_
     actor, other = two_user_api.users[actor_index], two_user_api.users[1 - actor_index]
     if case.guarded_record == "profile":
         record = two_user_api.profile(actor)
-    else:
+    elif case.guarded_record == "conversation":
         record = two_user_api.transport.documents[
             ("ChatHistory", actor.user.user_id, actor.conversation_id)
+        ]
+    elif case.guarded_record == "turn":
+        record = two_user_api.transport.documents[
+            ("ChatHistory", actor.user.user_id, actor.turn_ids[0])
+        ]
+    else:
+        record = two_user_api.transport.documents[
+            ("RecipeHistory", actor.user.user_id, actor.history_id)
         ]
     record["userId"] = other.user.user_id
     before = deepcopy(two_user_api.transport.documents)
@@ -484,6 +556,33 @@ def test_chat_references_cannot_cross_users_or_conversations(
         502 if reference == "foreign_turn" else 404,
         "cosmos_invalid_result" if reference == "foreign_turn" else "not_found",
     )
+    other.assert_private(response)
+    assert two_user_api.transport.documents == before
+    assert len(two_user_api.executor.calls) == executions
+    two_user_api.assert_partition(actor, since)
+
+
+@pytest.mark.parametrize("case", [SAVE_CASE, REJECT_CASE, REVISE_CASE], ids=lambda case: case.name)
+@pytest.mark.parametrize("actor_index", [0, 1])
+@pytest.mark.parametrize("reference", ["foreign_conversation", "wrong_conversation_owner"])
+def test_recipe_sources_require_their_owned_parent_conversation(
+    two_user_api: TwoUserApi, case: EndpointCase, actor_index: int, reference: str
+) -> None:
+    actor, other = two_user_api.users[actor_index], two_user_api.users[1 - actor_index]
+    source = two_user_api.transport.documents[
+        ("ChatHistory", actor.user.user_id, actor.turn_ids[0])
+    ]
+    if reference == "foreign_conversation":
+        source["conversationId"] = other.conversation_id
+    else:
+        two_user_api.transport.documents[
+            ("ChatHistory", actor.user.user_id, actor.conversation_id)
+        ]["userId"] = other.user.user_id
+    before = deepcopy(two_user_api.transport.documents)
+    executions = len(two_user_api.executor.calls)
+    since = len(two_user_api.transport.item_calls())
+    response = two_user_api.request(case, actor)
+    assert_problem(response, 404, "not_found")
     other.assert_private(response)
     assert two_user_api.transport.documents == before
     assert len(two_user_api.executor.calls) == executions

@@ -24,7 +24,7 @@ from sous_chef.domain.chat import (
     TurnStatus,
     ValidatedReply,
 )
-from sous_chef.domain.context import LearnedPreferenceReader
+from sous_chef.domain.context import LearnedPreferenceReader, RecipeRevisionContext
 from sous_chef.domain.conversations import ConversationModel, IdempotencyConflict, TurnMessage
 from sous_chef.domain.cosmos import (
     CosmosError,
@@ -156,6 +156,8 @@ class ChatService:
                     "recipe": checked.recipe.model_dump(mode="json", by_alias=True),
                     "safetyProfileRevision": checked.profile_revision,
                     "safetyPolicyVersion": checked.policy_version,
+                    "occasionId": turn.body.get("occasionId") or str(reply.generated_recipe_id),
+                    "supersedesRecipeId": turn.body.get("supersedesRecipeId"),
                 }
             except (RecipeSafetyError, OnboardingRequired):
                 reply = None
@@ -272,12 +274,18 @@ class ChatService:
         conversation_id: UUID4,
         request: SendMessage,
         key: str,
+        *,
+        revision: RecipeRevisionContext | None = None,
     ) -> OperationView:
         deadline = monotonic() + SEND_TIMEOUT_SECONDS
         expires_at = datetime.now(UTC) + timedelta(seconds=SEND_TIMEOUT_SECONDS)
-        identity = f"{user.user_id}\0{conversation_id}\0send\0{key}"
+        scope = "recipe-revision" if revision is not None else "send"
+        identity = f"{user.user_id}\0{conversation_id}\0{scope}\0{key}"
         operation_id = UUID(bytes=hashlib.sha256(identity.encode()).digest()[:16], version=4)
-        request_hash = hashlib.sha256(request.model_dump_json().encode()).hexdigest()
+        request_json = request.model_dump_json()
+        if revision is not None:
+            request_json += "\0" + str(revision.generated_recipe_id)
+        request_hash = hashlib.sha256(request_json.encode()).hexdigest()
         async with open_cosmos(self.settings, deadline=deadline) as repository:
             conversation = await _owned(repository, user, conversation_id)
             existing = await repository.read(user, CHAT, str(operation_id))
@@ -288,6 +296,39 @@ class ChatService:
             metadata = StoredConversation.model_validate_json(json.dumps(conversation.body))
             if metadata.active_operation_id is not None:
                 raise SendConflict
+            retry_turn = None
+            if request.retry_of_turn_id is not None:
+                retry_turn = await repository.read(user, CHAT, str(request.retry_of_turn_id))
+                if retry_turn is None or retry_turn.body.get("conversationId") != str(
+                    conversation_id
+                ):
+                    raise OwnedResourceNotFound
+                retry_view = ConversationService._turn(retry_turn, conversation_id)
+                if (
+                    retry_view.status != "failed"
+                    or retry_view.messages[0].content != request.content
+                ):
+                    raise SendConflict
+                if retry_view.supersedes_recipe_id is not None:
+                    source = ConversationService._turn(
+                        await repository.generated_recipe(
+                            user, str(retry_view.supersedes_recipe_id)
+                        ),
+                        conversation_id,
+                    )
+                    if (
+                        retry_view.occasion_id is None
+                        or source.recipe is None
+                        or source.messages[0].entity_id != user.user_id
+                        or (source.occasion_id or source.generated_recipe_id)
+                        != retry_view.occasion_id
+                    ):
+                        raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4())
+                    revision = RecipeRevisionContext(
+                        generated_recipe_id=retry_view.supersedes_recipe_id,
+                        occasion_id=retry_view.occasion_id,
+                        recipe=source.recipe,
+                    )
             profile = await repository.read(user, ProductContainer.USERS, user.user_id)
             if profile is None:
                 raise OnboardingRequired
@@ -300,6 +341,7 @@ class ChatService:
                         profile,
                         request.content,
                         deadline=deadline - 5,
+                        revision=revision,
                     )
             except TimeoutError:
                 raise CosmosError(CosmosFailure.TIMEOUT, uuid4()) from None
@@ -325,6 +367,10 @@ class ChatService:
                         "status": "pending",
                         "messages": [message.model_dump(mode="json", by_alias=True)],
                         "currentOperationId": str(operation_id),
+                        "occasionId": str(revision.occasion_id) if revision else None,
+                        "supersedesRecipeId": str(revision.generated_recipe_id)
+                        if revision
+                        else None,
                     },
                 )
                 creates = (turn_request,)
@@ -332,21 +378,13 @@ class ChatService:
                 next_index = metadata.next_turn_index + 1
             else:
                 turn_id = request.retry_of_turn_id
-                turn = await repository.read(user, CHAT, str(turn_id))
-                if turn is None or turn.body.get("conversationId") != str(conversation_id):
-                    raise OwnedResourceNotFound
-                public_turn = ConversationService._turn(turn, conversation_id)
-                if (
-                    public_turn.status != "failed"
-                    or public_turn.messages[0].content != request.content
-                ):
-                    raise SendConflict
+                assert retry_turn is not None
                 creates = ()
                 patches = (
                     (
-                        turn,
+                        retry_turn,
                         RecordPatch(
-                            etag=turn.etag,
+                            etag=retry_turn.etag,
                             fields={"status": "pending", "currentOperationId": str(operation_id)},
                         ),
                     ),

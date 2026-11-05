@@ -37,6 +37,10 @@ def main() -> None:
             "/api/v1/me/preferences": {"patch"},
             "/api/v1/groceries": {"get", "post"},
             "/api/v1/groceries/{grocery_id}": {"patch", "delete"},
+            "/api/v1/recipes": {"post"},
+            "/api/v1/recipes/{history_id}/cooked": {"post"},
+            "/api/v1/generated-recipes/{generated_recipe_id}/rejections": {"post"},
+            "/api/v1/generated-recipes/{generated_recipe_id}/revisions": {"post"},
         }
         if response.status_code != 200 or any(
             not methods.issubset(response.json()["paths"].get(path, {}))
@@ -55,6 +59,10 @@ def main() -> None:
             ("/api/v1/groceries", "post"),
             ("/api/v1/groceries/invalid", "patch"),
             ("/api/v1/groceries/invalid", "delete"),
+            ("/api/v1/recipes", "post"),
+            ("/api/v1/recipes/invalid/cooked", "post"),
+            ("/api/v1/generated-recipes/invalid/rejections", "post"),
+            ("/api/v1/generated-recipes/invalid/revisions", "post"),
         ):
             if client.request(method.upper(), path, json={}).status_code != 401:
                 raise RuntimeError("Installed-wheel API routes must require authentication.")

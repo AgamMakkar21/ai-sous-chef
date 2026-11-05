@@ -87,6 +87,8 @@ class ConversationTurn(ConversationModel):
     created_at: AwareDatetime
     updated_at: AwareDatetime
     generated_recipe_id: UUID4 | None = None
+    occasion_id: UUID4 | None = None
+    supersedes_recipe_id: UUID4 | None = None
     recipe: StructuredRecipe | None = Field(default=None, repr=False)
 
     @model_validator(mode="after")

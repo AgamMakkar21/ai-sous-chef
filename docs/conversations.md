@@ -198,11 +198,16 @@ uses the server-derived `/userId` partition, a record-kind filter and a bounded
 SDK page. Listing summaries never enumerates the transcript.
 
 Each public turn has `turnId`, `conversationId`, `turnIndex`, `status`,
-`messages`, `createdAt`, `updatedAt`, `generatedRecipeId` and `recipe`.
-The last two fields are null for non-recipe replies and incomplete turns.
+`messages`, `createdAt`, `updatedAt`, `generatedRecipeId`, `recipe`, `occasionId`
+and `supersedesRecipeId`. The recipe and generated reference are null for
+non-recipe replies and incomplete turns.
 A completed recipe exposes the full validated `StructuredRecipe`: ingredients,
 instructions, shopping gaps, source-backed estimated nutrition and provenance.
 Its generated UUID identifies that persisted snapshot, not a saved/cooked recipe.
+Recipe generations establish an occasion; [explicit revisions](recipe-lifecycle.md)
+retain it and point to their source through `supersedesRecipeId`. The full source
+recipe remains mandatory, token-budgeted untrusted context, including on an
+explicit known-failure retry. Older stored turns without lineage still deserialize.
 It contains one user message while
 `pending`, `failed` or `outcomeUnknown`; only `completed` contains the user and
 one validated assistant message in that order. Each message exposes only

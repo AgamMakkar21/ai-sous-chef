@@ -281,12 +281,16 @@ class Transport(AsyncHttpTransport[HttpRequest, AsyncHttpResponse]):
                 if name == container
                 and owner == partition
                 and document["recordKind"] == parameters["@kind"]
-                and document["createdAt"] <= parameters["@upper"]
+                and document["createdAt"] <= parameters.get("@upper", "9999")
                 and (
                     "@conversation" not in parameters
                     or document.get("conversationId") == parameters["@conversation"]
                 )
                 and ("@status" not in parameters or document.get("status") == parameters["@status"])
+                and (
+                    "@recipe" not in parameters
+                    or document.get("generatedRecipeId") == parameters["@recipe"]
+                )
             ]
             if parameters["@kind"] == "turn":
                 items.sort(
@@ -295,6 +299,8 @@ class Transport(AsyncHttpTransport[HttpRequest, AsyncHttpResponse]):
                 )
             else:
                 items.sort(key=lambda item: (item["createdAt"], item["id"]), reverse=True)
+            if "@recipe" in parameters:
+                items = items[:2]
             offset = int(headers.get("x-ms-continuation", "0"))
             limit = int(headers["x-ms-max-item-count"])
             page = items[offset : offset + limit]

@@ -29,6 +29,7 @@ class RecordKind(StrEnum):
     TURN = "turn"
     SEND_OPERATION = "sendOperation"
     RECIPE = "recipe"
+    RECIPE_OPERATION = "recipeOperation"
     BEHAVIOR = "behavior"
     FEEDBACK_REVISION = "feedbackRevision"
     PROCESSING = "processing"
