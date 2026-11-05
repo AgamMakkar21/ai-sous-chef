@@ -1,6 +1,6 @@
 """Source-controlled New Foundry prompt definition; no portal-only instructions."""
 
-from azure.ai.projects.models import FunctionTool, PromptAgentDefinition
+from azure.ai.projects.models import FunctionTool, PromptAgentDefinition, RaiConfig
 
 from sous_chef.domain.orchestrator import POLICY, SpecialistArguments
 
@@ -88,4 +88,5 @@ def build_orchestrator_definition(model_deployment: str) -> PromptAgentDefinitio
         model=model_deployment,
         instructions=ORCHESTRATOR_INSTRUCTIONS,
         tools=[specialist_tool()],
+        rai_config=RaiConfig(rai_policy_name="asc-responsible-ai-v1"),
     )

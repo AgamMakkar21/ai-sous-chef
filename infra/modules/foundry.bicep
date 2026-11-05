@@ -49,6 +49,91 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = {
   }
 }
 
+resource responsibleAiPolicy 'Microsoft.CognitiveServices/accounts/raiPolicies@2025-06-01' = {
+  parent: account
+  name: 'asc-responsible-ai-v1'
+  properties: {
+    basePolicyName: 'Microsoft.Default'
+    mode: 'Blocking'
+    contentFilters: [
+      {
+        name: 'Hate'
+        enabled: true
+        blocking: true
+        severityThreshold: 'Medium'
+        source: 'Prompt'
+      }
+      {
+        name: 'Sexual'
+        enabled: true
+        blocking: true
+        severityThreshold: 'Medium'
+        source: 'Prompt'
+      }
+      {
+        name: 'Violence'
+        enabled: true
+        blocking: true
+        severityThreshold: 'Medium'
+        source: 'Prompt'
+      }
+      {
+        name: 'Selfharm'
+        enabled: true
+        blocking: true
+        severityThreshold: 'Medium'
+        source: 'Prompt'
+      }
+      {
+        name: 'Hate'
+        enabled: true
+        blocking: true
+        severityThreshold: 'Medium'
+        source: 'Completion'
+      }
+      {
+        name: 'Sexual'
+        enabled: true
+        blocking: true
+        severityThreshold: 'Medium'
+        source: 'Completion'
+      }
+      {
+        name: 'Violence'
+        enabled: true
+        blocking: true
+        severityThreshold: 'Medium'
+        source: 'Completion'
+      }
+      {
+        name: 'Selfharm'
+        enabled: true
+        blocking: true
+        severityThreshold: 'Medium'
+        source: 'Completion'
+      }
+      {
+        name: 'Jailbreak'
+        enabled: true
+        blocking: true
+        source: 'Prompt'
+      }
+      {
+        name: 'Protected Material Text'
+        enabled: true
+        blocking: true
+        source: 'Completion'
+      }
+      {
+        name: 'Protected Material Code'
+        enabled: true
+        blocking: true
+        source: 'Completion'
+      }
+    ]
+  }
+}
+
 // Deployments on one account must be created one at a time.
 @batchSize(1)
 resource modelDeployments 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = [for item in deployments: {
@@ -59,6 +144,7 @@ resource modelDeployments 'Microsoft.CognitiveServices/accounts/deployments@2025
     capacity: capacity
   }
   properties: {
+    raiPolicyName: responsibleAiPolicy.name
     model: {
       format: 'OpenAI'
       name: item.model

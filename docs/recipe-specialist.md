@@ -646,18 +646,20 @@ ordinary non-web recipes.
 `PromptAgentDefinition` with GPT-5.4's configured deployment, strict draft schema,
 the approved recipe MCP and native Web IQ tools, and an explicit `RaiConfig`.
 The source definition defaults to `tool_choice=none`; only the gateway's
-stage-specific override enables the appropriate tool. Supported baseline safety is
-required now; broad Responsible AI evaluation remains separate work.
+stage-specific override enables the appropriate tool.
+[ASC-37 versions the platform controls and untrusted-tool guardrails](responsible-ai.md);
+passing platform filters never replaces the deterministic ingredient/cooking gates.
 
 Use the existing dev-only publisher and existing identity-bound agents; do not
 recreate agents, assume a source version, use `latest`, or edit prompts only in
 the portal. In addition to the [existing dev publication setup](orchestrator.md#reproducible-dev-source-publication),
 set `ASC_FOUNDRY_RECIPE_NUTRITION_RAI_POLICY_NAME` to the approved, existing
-baseline content-safety policy in the target Foundry account/project. This is a
-nonsecret policy name, not a new policy provisioning/evaluation task. Publication
+content-safety policy in the target Foundry account/project. Use
+`asc-responsible-ai-v1` after the owner applies and verifies the reviewed foundation
+policy; an approved custom policy still requires separate control review. Publication
 refuses an absent name; an invalid remote policy must fail rather than disable
 safety or substitute another policy. The `.env.dev.example` value is intentionally
-empty rather than guessing an account-specific policy.
+empty because source configuration does not prove that the policy is deployed.
 
 An authorized owner can explicitly publish the specialist source:
 

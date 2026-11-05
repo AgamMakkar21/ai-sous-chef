@@ -176,6 +176,9 @@ Issue [ASC-10 / #10](https://github.com/AgamMakkar21/ai-sous-chef/issues/10).
 - Three `GlobalStandard` deployments: `orchestrator` (gpt-5.4-mini), `recipe-nutrition`
   (gpt-5.4) and `extraction` (gpt-5.4-nano). Models and versions are the
   `modelDeployments` parameter in `main.bicep`; the app only knows the deployment names.
+- One versioned `asc-responsible-ai-v1` blocking content-safety policy, associated
+  with every deployment. See [Responsible AI controls and limitations](../docs/responsible-ai.md)
+  before owner-approved deployment or agent publication.
 
 The deployment output `foundryProjectEndpoint` is the value for
 `ASC_FOUNDRY_PROJECT_ENDPOINT`. Set the three `ASC_FOUNDRY_*_DEPLOYMENT` names
@@ -188,7 +191,7 @@ Deployment is incremental, so it does not change unrelated resources. Run the
 same validate and what-if commands as above with a new `--name`
 (`ai-sous-chef-dev-foundry-rollout`). Do not reuse `ai-sous-chef-dev-foundry`: it
 is the nested module's name, and ARM rejects it with `DeploymentActive`. Expect only the Foundry resource, project and
-three deployments in the preview.
+three deployments plus the content-safety policy and its associations in the preview.
 
 After deploying, check the wiring with one small call per deployment:
 
