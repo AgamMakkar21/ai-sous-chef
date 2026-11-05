@@ -10,6 +10,11 @@ ASC-09 extends the same reviewed job to deploy the
 [feedback Functions host](feedback-host.md) after web smoke checks. Complete its
 one-time provisioning, worker-scoped publisher grant and `ASC_FUNCTION_APP_NAME`
 environment variable before merging that extension; missing setup fails delivery.
+After those safety checks, worker deployment applies and reads back the declared
+Python 3.12, Always On and `/api/health` host settings when they have drifted.
+It does not change identities, connections, hosting plans or permissions.
+Read-only smoke/production/rollback checks still reject drift; deployment errors
+name the mismatched host fields without printing configuration values.
 
 ## One-time owner setup
 

@@ -119,11 +119,18 @@ Owner grants or keys. Allow time for role propagation, then:
    checks the web app first, then builds/deploys `worker/` from the **same current
    reviewed commit**, and retries worker health for up to five minutes.
 
+   After validating the dev target, separate identity and keyless application settings,
+   delivery reconciles only the three reviewed host settings: Python 3.12, Always On
+   and `/api/health`. It reads them back before uploading the worker ZIP and fails if
+   the update fails or drift remains. Other settings, hosting plans and permissions
+   are not changed. Host checks during smoke, production preflight and rollback remain
+   read-only and reject drift rather than repairing it.
+
 The source ZIP has `host.json` at its root and a generated `release.json`;
 uncommitted files are excluded by `git archive`. Remote Oryx build requires
 `SCM_DO_BUILD_DURING_DEPLOYMENT=true`, `ENABLE_ORYX_BUILD=true` and no
 `WEBSITE_RUN_FROM_PACKAGE` mount. Publishing basic authentication stays disabled;
-delivery uses the existing Entra/OIDC token. Missing worker configuration, stale
+delivery uses the existing Entra/OIDC token. Missing identity/connection configuration, stale
 commits, shared identities, failed builds and failed startup checks fail the job.
 A web rollout can succeed before worker delivery fails; there is no claimed
 cross-app atomic deployment or automatic rollback.
