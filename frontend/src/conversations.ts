@@ -93,6 +93,194 @@ function isTurn(value: unknown, conversationId: string): value is Turn {
   );
 }
 
+export type ChatAttempt = {
+  key: string;
+  content: string;
+  retryOfTurnId?: string;
+};
+export type Operation = {
+  operationId: string;
+  conversationId: string;
+  turnId: string;
+  status: Turn["status"];
+  failureCode:
+    | "execution_failed"
+    | "invalid_assistant_response"
+    | "execution_outcome_unknown"
+    | null;
+  turn: Turn;
+};
+type SendResult =
+  | { kind: "completed"; turn: Turn }
+  | { kind: "operation"; operationId: string; operation?: Operation };
+
+function isOperation(
+  value: unknown,
+  conversationId: string,
+): value is Operation {
+  if (
+    !isRecord(value) ||
+    !isConversationId(value.operationId) ||
+    value.conversationId !== conversationId ||
+    !isTurn(value.turn, conversationId) ||
+    value.turnId !== value.turn.turnId
+  )
+    return false;
+  return (
+    ((value.status === "pending" || value.status === "completed") &&
+      value.failureCode === null &&
+      (value.status !== "completed" || value.turn.status === "completed")) ||
+    (value.status === "failed" &&
+      (value.failureCode === "execution_failed" ||
+        value.failureCode === "invalid_assistant_response")) ||
+    (value.status === "outcomeUnknown" &&
+      value.failureCode === "execution_outcome_unknown")
+  );
+}
+
+function matchesAttempt(turn: Turn, attempt: ChatAttempt) {
+  return (
+    turn.messages[0]?.content === attempt.content &&
+    (!attempt.retryOfTurnId || turn.turnId === attempt.retryOfTurnId)
+  );
+}
+
+export async function inspectOperation(
+  session: Session,
+  conversationId: string,
+  operationId: string,
+  signal: AbortSignal,
+): Promise<Operation> {
+  await verifySession(session, signal);
+  const value = await json(
+    await request(
+      `/api/v1/conversations/${conversationId}/operations/${operationId}`,
+      { signal },
+    ),
+  );
+  if (
+    !isRecord(value) ||
+    !isOperation(value.data, conversationId) ||
+    value.data.operationId !== operationId
+  )
+    throw new ApiError(502, "invalid_response");
+  return value.data;
+}
+
+export async function sendMessage(
+  session: Session,
+  conversationId: string,
+  attempt: ChatAttempt,
+  signal: AbortSignal,
+): Promise<SendResult> {
+  const current = await verifySession(session, signal);
+  let response: Response;
+  try {
+    response = await request(
+      `/api/v1/conversations/${conversationId}/turns`,
+      {
+        method: "POST",
+        signal,
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": current.csrfToken,
+          "Idempotency-Key": attempt.key,
+        },
+        body: JSON.stringify({
+          content: attempt.content,
+          ...(attempt.retryOfTurnId
+            ? { retryOfTurnId: attempt.retryOfTurnId }
+            : {}),
+        }),
+      },
+      75_000,
+    );
+  } catch (error) {
+    const prefix = `/api/v1/conversations/${conversationId}/operations/`;
+    const location = error instanceof ApiError ? error.location : null;
+    const operationId = location?.startsWith(prefix)
+      ? location.slice(prefix.length)
+      : null;
+    if (
+      error instanceof ApiError &&
+      (error.status === 502 || error.status === 504) &&
+      isConversationId(operationId)
+    )
+      return { kind: "operation", operationId };
+    throw error;
+  }
+  const value = await json(response);
+  if (
+    response.status === 200 &&
+    isRecord(value) &&
+    isTurn(value.data, conversationId) &&
+    value.data.status === "completed" &&
+    matchesAttempt(value.data, attempt)
+  )
+    return { kind: "completed", turn: value.data };
+  if (
+    response.status === 202 &&
+    isRecord(value) &&
+    isOperation(value.data, conversationId) &&
+    value.data.status === "pending" &&
+    matchesAttempt(value.data.turn, attempt)
+  )
+    return {
+      kind: "operation",
+      operationId: value.data.operationId,
+      operation: value.data,
+    };
+  throw new ApiError(502, "invalid_response");
+}
+
+const operationKey = "asc.chat-operations";
+type OperationReference = { conversationId: string; operationId: string };
+
+function operationReferences(owner: string): OperationReference[] {
+  const saved = sessionStorage.getItem(operationKey);
+  if (saved === null) return [];
+  const value: unknown = JSON.parse(saved);
+  if (
+    !isRecord(value) ||
+    typeof value.owner !== "string" ||
+    !Array.isArray(value.operations) ||
+    value.operations.length > 20 ||
+    !value.operations.every(
+      (entry) =>
+        isRecord(entry) &&
+        isConversationId(entry.conversationId) &&
+        isConversationId(entry.operationId),
+    )
+  )
+    throw new SyntaxError("Invalid saved operation references.");
+  if (value.owner !== owner) {
+    sessionStorage.removeItem(operationKey);
+    return [];
+  }
+  return value.operations as OperationReference[];
+}
+
+export function savedOperation(owner: string, conversationId: string) {
+  return operationReferences(owner).find(
+    (entry) => entry.conversationId === conversationId,
+  )?.operationId;
+}
+
+export function rememberOperation(
+  owner: string,
+  conversationId: string,
+  operationId: string | null,
+) {
+  const operations = operationReferences(owner).filter(
+    (entry) => entry.conversationId !== conversationId,
+  );
+  if (operationId) operations.push({ conversationId, operationId });
+  sessionStorage.setItem(
+    operationKey,
+    JSON.stringify({ owner, operations: operations.slice(-20) }),
+  );
+}
+
 export function safeTitle(value: string): string {
   return (
     [

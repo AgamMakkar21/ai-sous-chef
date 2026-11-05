@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import { ApiError, getProfile, getSession } from "./api";
 import ProfileForm from "./ProfileForm";
@@ -50,6 +50,7 @@ export default function App() {
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  const leaving = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -74,25 +75,52 @@ export default function App() {
 
   useEffect(() => {
     const update = () => {
-      if (!busy) setSelected(initialTab());
+      const next = initialTab();
+      if (next === selected) return;
+      if (
+        busy ||
+        (!editing && dirty && !window.confirm("Discard your unsaved changes?"))
+      ) {
+        window.history.replaceState(null, "", `#${selected}`);
+        return;
+      }
+      setSelected(next);
     };
     window.addEventListener("hashchange", update);
     return () => window.removeEventListener("hashchange", update);
-  }, [busy]);
+  }, [busy, dirty, editing, selected]);
 
-  function expire() {
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (!leaving.current) event.preventDefault();
+    };
+    if (!editing && selected === "sous-chef" && (dirty || busy))
+      window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty, busy, editing, selected]);
+
+  const expire = useCallback(() => {
     setState({ kind: "signed-out" });
     setEditing(false);
     setDirty(false);
     setSaved(false);
-  }
+    setBusy(false);
+  }, []);
 
   function discard(): boolean {
-    return !dirty || window.confirm("Discard your unsaved profile changes?");
+    return (
+      !dirty ||
+      window.confirm(
+        editing
+          ? "Discard your unsaved profile changes?"
+          : "Leave this recipe request? Unsaved input will be discarded; accepted requests are not cancelled.",
+      )
+    );
   }
 
   function openProfile() {
-    if (editing || busy) return;
+    if (editing || busy || !discard()) return;
+    setDirty(false);
     setSaved(false);
     setEditing(true);
     setState({ kind: "loading" });
@@ -107,12 +135,7 @@ export default function App() {
   }
 
   function selectTab(value: string) {
-    if (
-      busy ||
-      !tabs.some((tab) => tab.id === value) ||
-      (editing && !discard())
-    )
-      return;
+    if (busy || !tabs.some((tab) => tab.id === value) || !discard()) return;
     setSelected(value);
     window.history.replaceState(null, "", `#${value}`);
     setEditing(false);
@@ -173,6 +196,7 @@ export default function App() {
               aria-disabled={busy}
               onClick={(event) => {
                 if (busy || !discard()) event.preventDefault();
+                else leaving.current = true;
               }}
             >
               Sign out
@@ -285,6 +309,8 @@ export default function App() {
                       key={ready.session.userId}
                       session={ready.session}
                       onExpired={expire}
+                      onBusy={setBusy}
+                      onDirty={setDirty}
                     />
                   ) : (
                     <>
