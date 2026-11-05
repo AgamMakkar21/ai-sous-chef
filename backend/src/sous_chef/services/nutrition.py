@@ -1,12 +1,14 @@
-"""Deterministic recipe estimates from attributed USDA SR per-100-g evidence."""
+"""Deterministic recipe estimates from attributed FoodData Central evidence."""
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from decimal import ROUND_HALF_UP, Decimal
 from time import monotonic
 from typing import Literal
 
 from pydantic import ValidationError
 
-from sous_chef.adapters.usda_mcp import UsdaMcpConfig, open_usda
+from sous_chef.adapters.usda_mcp import UsdaMcpClient, UsdaMcpConfig, UsdaMcpSession, open_usda
 from sous_chef.domain.foundry import FoundryFailure
 from sous_chef.domain.nutrition import UsdaFoodProfile, UsdaFoodSearch
 from sous_chef.domain.recipes import (
@@ -47,6 +49,27 @@ def _rounded(value: Decimal) -> float:
 class UsdaNutritionTool:
     def __init__(self, config: UsdaMcpConfig) -> None:
         self.config = config
+        self._client: UsdaMcpClient | None = None
+
+    @asynccontextmanager
+    async def lifespan(self) -> AsyncIterator[None]:
+        self._client = UsdaMcpClient(self.config)
+        try:
+            await self.check()
+            yield
+        finally:
+            await self._client.close()
+            self._client = None
+
+    @asynccontextmanager
+    async def _session(self, deadline: float) -> AsyncIterator[UsdaMcpSession]:
+        manager = (
+            self._client.session(deadline=deadline)
+            if self._client
+            else open_usda(self.config, deadline=deadline)
+        )
+        async with manager as session:
+            yield session
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "UsdaNutritionTool":
@@ -55,7 +78,7 @@ class UsdaNutritionTool:
     async def search(self, name: str, *, deadline: float) -> UsdaFoodSearch:
         """Public source candidates for user/agent resolution; never fabricated mappings."""
         try:
-            async with open_usda(self.config, deadline=deadline) as session:
+            async with self._session(deadline) as session:
                 return await session.search(name)
         except RecipeToolError as error:
             operational_event(Event.USDA_FAILED, category=ErrorCategory(error.code.value))
@@ -63,28 +86,24 @@ class UsdaNutritionTool:
 
     async def check(self) -> None:
         """Check public food data, not just MCP initialization."""
-        request = NutritionRequest.model_validate(
-            {
-                "servings": 1,
-                "ingredients": (
-                    {"line_id": "startup", "name": "Carrots, raw", "quantity": 100, "unit": "g"},
-                ),
-            }
-        )
+        started = monotonic()
         try:
-            evidence = await self.lookup(
-                request, deadline=monotonic() + self.config.timeout_seconds
-            )
+            async with self._session(monotonic() + self.config.timeout_seconds) as session:
+                candidates = await session.search("Carrots, raw")
+                if not candidates.foods:
+                    raise RecipeToolError(FoundryFailure.NO_RESULTS)
+                await session.profile(candidates.foods[0])
         except RecipeToolError as error:
-            raise ConfigurationError(
-                f"USDA startup check failed ({error.code.value}); check protected database "
-                "configuration, TLS, firewall access and the pinned dependency."
-            ) from None
-        if evidence.status == "unavailable":
-            raise ConfigurationError(
-                "USDA startup check found no nutrition for Carrots, raw; "
-                "check the imported SR data."
+            operational_event(
+                Event.USDA_FAILED,
+                category=ErrorCategory(error.code.value),
+                duration_ms=(monotonic() - started) * 1000,
             )
+            raise ConfigurationError(
+                f"USDA startup check failed ({error.code.value}); check ASC_USDA_API_KEY, "
+                "FoodData Central availability and API quota."
+            ) from None
+        operational_event(Event.USDA_COMPLETED, duration_ms=(monotonic() - started) * 1000)
 
     async def lookup(self, request: NutritionRequest, *, deadline: float) -> NutritionEvidence:
         started = monotonic()
@@ -118,7 +137,7 @@ class UsdaNutritionTool:
         unknown: list[NutritionUnknownComponent] = []
         totals = {name: Decimal(0) for _, name, _ in _NUTRIENTS}
         covered: dict[NutrientName, list[str]] = {name: [] for _, name, _ in _NUTRIENTS}
-        async with open_usda(self.config, deadline=deadline) as session:
+        async with self._session(deadline) as session:
             for line in request.ingredients:
                 if line.quantity is None:
                     unknown.append(
@@ -191,13 +210,16 @@ class UsdaNutritionTool:
                     if label in values:
                         totals[name] += values[label] * grams / Decimal(100)
                         covered[name].append(line.line_id)
-                food_id = profile.food.ndb_no
-                source_id = f"usda:sr:{food_id}"
+                food_id = profile.food.fdc_id
+                source_id = f"usda:fdc:{food_id}"
                 sources[source_id] = RecipeSource(
                     source_id=source_id,
                     kind="usda",
-                    version="SR (release unspecified)",
-                    reference="https://www.ars.usda.gov/Services/docs.htm?docid=8964",
+                    version=(
+                        f"{profile.food.data_type}; published "
+                        f"{profile.food.publication_date or 'date unspecified'}"
+                    ),
+                    reference=f"https://fdc.nal.usda.gov/food-details/{food_id}/nutrients",
                 )
                 mappings.append(
                     NutritionMapping(

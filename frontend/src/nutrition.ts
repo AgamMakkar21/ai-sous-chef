@@ -3,15 +3,21 @@ import { isRecord, type Session } from "./profile";
 
 export type IngredientNutrition = {
   calories: number | null;
-  source: { id: string; foodId: string; version: string } | null;
+  source: {
+    id: string;
+    foodId: string;
+    version: string;
+    reference: string;
+  } | null;
   status: "known" | "partial" | "unavailable";
 };
 
 export type FoodCandidate = {
-  ndb_no: string;
+  fdc_id: string;
   long_desc: string;
   shrt_desc: string;
   food_group: string;
+  data_type: "Foundation" | "SR Legacy";
 };
 export type FoodSearch = { foods: FoodCandidate[]; truncated: boolean };
 
@@ -35,17 +41,16 @@ export async function searchNutrition(
     !isRecord(value) ||
     !Array.isArray(value.foods) ||
     value.foods.length > 20 ||
-    typeof value.truncated !== "boolean" ||
-    value.truncated !== (value.foods.length === 20)
+    typeof value.truncated !== "boolean"
   )
     throw new ApiError(502, "invalid_response");
   const foods: FoodCandidate[] = [];
   for (const food of value.foods) {
     if (
       !isRecord(food) ||
-      typeof food.ndb_no !== "string" ||
-      !/^[0-9]{5}$/.test(food.ndb_no) ||
-      foods.some((row) => row.ndb_no === food.ndb_no) ||
+      typeof food.fdc_id !== "string" ||
+      !/^[1-9][0-9]{0,9}$/.test(food.fdc_id) ||
+      foods.some((row) => row.fdc_id === food.fdc_id) ||
       typeof food.long_desc !== "string" ||
       !food.long_desc.trim() ||
       food.long_desc.length > 500 ||
@@ -54,14 +59,16 @@ export async function searchNutrition(
       food.shrt_desc.length > 500 ||
       typeof food.food_group !== "string" ||
       !food.food_group.trim() ||
-      food.food_group.length > 500
+      food.food_group.length > 500 ||
+      (food.data_type !== "Foundation" && food.data_type !== "SR Legacy")
     )
       throw new ApiError(502, "invalid_response");
     foods.push({
-      ndb_no: food.ndb_no,
+      fdc_id: food.fdc_id,
       long_desc: food.long_desc,
       shrt_desc: food.shrt_desc,
       food_group: food.food_group,
+      data_type: food.data_type,
     });
   }
   return { foods, truncated: value.truncated };
@@ -140,16 +147,17 @@ export async function lookupNutrition(
     mapping.quantity !== 100 ||
     mapping.unit !== "g" ||
     typeof mapping.usdaFoodId !== "string" ||
-    !/^[0-9]{5}$/.test(mapping.usdaFoodId) ||
+    !/^[1-9][0-9]{0,9}$/.test(mapping.usdaFoodId) ||
     (foodId !== undefined && mapping.usdaFoodId !== foodId) ||
     !isRecord(source) ||
     source.kind !== "usda" ||
-    source.sourceId !== `usda:sr:${mapping.usdaFoodId}` ||
+    source.sourceId !== `usda:fdc:${mapping.usdaFoodId}` ||
     source.sourceId !== mapping.sourceId ||
     typeof source.version !== "string" ||
     !source.version.trim() ||
     source.version.length > 240 ||
-    source.reference !== "https://www.ars.usda.gov/Services/docs.htm?docid=8964"
+    source.reference !==
+      `https://fdc.nal.usda.gov/food-details/${mapping.usdaFoodId}/nutrients`
   )
     throw new ApiError(502, "invalid_response");
   return {
@@ -159,6 +167,7 @@ export async function lookupNutrition(
       id: source.sourceId,
       foodId: mapping.usdaFoodId,
       version: source.version,
+      reference: source.reference,
     },
   };
 }

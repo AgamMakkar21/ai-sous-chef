@@ -20,7 +20,7 @@ The [Recipe + Nutrition specialist](docs/recipe-specialist.md) supplies versione
 instructions, strict recipe output, identity-bound recipe retrieval, read-only USDA
 nutrition and the deterministic final recipe gate. Live chat activation remains
 separate work; [USDA setup](docs/recipe-specialist.md#usda-nutrition-asc-32)
-requires the supplied integration and protected database configuration.
+uses an app-owned MCP server over the FoodData Central API and a protected USDA API key.
 See [frontend setup and scope](docs/frontend.md).
 See [profile API setup and usage](docs/profiles.md) and
 [conversation setup and HTTP contracts](docs/conversations.md) for the persistence APIs.
@@ -50,7 +50,6 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
 python -m pip install --no-build-isolation --no-deps -e .
-python -m sous_chef.usda_dependency
 cp .env.local.example .env.local
 export ASC_ENVIRONMENT=local
 python -m uvicorn sous_chef.app:create_app --factory --host 0.0.0.0 --port 8000 --reload --no-access-log
@@ -69,11 +68,11 @@ without authentication. After authentication the root serves the frontend when
 its build is installed; otherwise it returns a truthful 503. Local readiness
 doubles do not supply a browser login or fake profiles.
 
-For both collaborators to test the **real USDA MCP/database on app startup**,
+For both collaborators to test the **real USDA API-backed MCP on app startup**,
 follow [shared USDA setup](docs/recipe-specialist.md#shared-developer-and-azure-setup).
-Each developer uses their own untracked credentials for the shared database.
+Each developer uses an untracked FoodData Central API key (`ASC_USDA_API_KEY`).
 `ASC_USDA_ENABLED=true` makes startup fail rather than report success with a broken
-MCP/database connection. CI packages the same pinned MCP source into the Azure
+MCP/API connection. CI packages the same app-owned MCP server into the Azure
 backend; deployment never depends on either developer's laptop.
 
 In another Ubuntu terminal, verify the scaffold:
@@ -120,7 +119,8 @@ settings with field names and setup guidance, never the rejected values.
 | `ASC_ENVIRONMENT` | Required explicit environment selection |
 | `ASC_ADAPTER_MODE` | Required `local` or `live`; local doubles are forbidden in dev/prod |
 | `ASC_AGENTS_ENABLED` | Default `true`; staged dev delivery sets `false` to disable managed agents until their tools are ready |
-| `ASC_USDA_ENABLED` | Default `false` for offline tests; set `true` for a real MCP/database check on every local or hosted app start |
+| `ASC_USDA_ENABLED` | Default `false` for offline tests; set `true` for a real API-backed MCP check on every local or hosted app start |
+| `ASC_USDA_API_KEY` | Protected FoodData Central API key; never put it in browser configuration, logs or source |
 | `ASC_READINESS_TIMEOUT_SECONDS` | Positive finite readiness deadline, at most 10 seconds; default 2 |
 | `ASC_STATIC_DIR` | Optional frontend build directory; default `backend/src/sous_chef/static` |
 | `ASC_COSMOS_ENDPOINT` | Required in live mode; HTTPS URL without credentials or query parameters |

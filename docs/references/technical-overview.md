@@ -230,7 +230,7 @@ static search. Every variation still passes deterministic safety validation.
 | Source | Purpose |
 | --- | --- |
 | [Hugging Face recipe dataset](https://huggingface.co/datasets/untitledwebsite123/food-recipes/viewer/default/train?p=5225) | Curated recipe corpus, cleaned and indexed through Foundry IQ |
-| [USDA MCP integration](https://github.com/HemantaPatil/mcp_postgres) | Authoritative food/nutrition retrieval |
+| [USDA FoodData Central API](https://fdc.nal.usda.gov/api-guide/) through an app-owned MCP | Authoritative food/nutrition retrieval; no USDA database |
 | Web IQ | Conditional current/external grounding when it adds value |
 
 Treat the dataset as an ingestion source, not a giant prompt. Prioritize explicit

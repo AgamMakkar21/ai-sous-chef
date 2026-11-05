@@ -1,164 +1,299 @@
 import asyncio
-import hashlib
-import io
-import socket
+import json
+import sys
+from decimal import Decimal
 from pathlib import Path
-from urllib.error import URLError
+from typing import Literal
 
+import httpx
 import pytest
-from sous_chef import usda_dependency
+from pydantic import SecretStr
 from sous_chef.adapters.usda_mcp import UsdaMcpConfig
 from sous_chef.settings import ConfigurationError, Settings
-from sous_chef.usda_mcp_server import _DatabaseEventLoop
+from sous_chef.usda_mcp_server import FdcError, FoodDataCentral
+
+FOOD = {
+    "fdcId": 1234567,
+    "description": "Chicken, breast, raw",
+    "dataType": "Foundation",
+    "foodCategory": {"description": "Poultry Products"},
+    "publicationDate": "2024-04-18",
+}
 
 
-def test_database_connection_tries_another_address_without_waiting_for_a_blocked_one(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def check() -> None:
-        loop = asyncio.get_running_loop()
-        server = await loop.create_server(asyncio.Protocol, "127.0.0.1", 0)
-        port = server.sockets[0].getsockname()[1]
-        original_connect = loop.sock_connect
-        blocked = asyncio.Event()
-        cancelled = asyncio.Event()
-
-        async def resolve(
-            *args: object, **kwargs: object
-        ) -> list[tuple[int, int, int, str, tuple[str, int]]]:
-            return [
-                (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (host, port))
-                for host in ("127.0.0.2", "127.0.0.1")
-            ]
-
-        async def connect(sock: socket.socket, address: tuple[str, int]) -> None:
-            if address[0] == "127.0.0.2":
-                blocked.set()
-                try:
-                    await asyncio.Event().wait()
-                finally:
-                    cancelled.set()
-            else:
-                await original_connect(sock, address)
-
-        monkeypatch.setattr(loop, "getaddrinfo", resolve)
-        monkeypatch.setattr(loop, "sock_connect", connect)
-        try:
-            transport, _ = await asyncio.wait_for(
-                loop.create_connection(asyncio.Protocol, "synthetic.invalid", port), timeout=2
-            )
-            transport.close()
-            assert blocked.is_set()
-            assert cancelled.is_set()
-        finally:
-            server.close()
-            await server.wait_closed()
-
-    with asyncio.Runner(loop_factory=_DatabaseEventLoop) as runner:
-        runner.run(check())
-
-
-def test_setup_installs_once_and_rejects_modified_source(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    source = b"# synthetic pinned source\n"
-    target = tmp_path / "_usda" / "main.py"
-    monkeypatch.setattr(usda_dependency, "SOURCE_PATH", target)
-    monkeypatch.setattr(usda_dependency, "SOURCE_SHA256", hashlib.sha256(source).hexdigest())
-    calls: list[str] = []
-
-    def download(url: str, *, timeout: int) -> io.BytesIO:
-        assert timeout == 30
-        calls.append(url)
-        return io.BytesIO(source)
-
-    monkeypatch.setattr(usda_dependency, "urlopen", download)
-    usda_dependency.install()
-    assert usda_dependency.installed_source() == target
-    usda_dependency.install()
-    assert calls == [usda_dependency.SOURCE_URL]
-    target.write_bytes(b"modified")
-    with pytest.raises(usda_dependency.UsdaSetupError, match="checksum"):
-        usda_dependency.install()
-    assert calls == [usda_dependency.SOURCE_URL]
-
-
-def test_bad_download_never_becomes_executable_source(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    target = tmp_path / "_usda" / "main.py"
-    monkeypatch.setattr(usda_dependency, "SOURCE_PATH", target)
-    monkeypatch.setattr(usda_dependency, "urlopen", lambda *args, **kwargs: io.BytesIO(b"bad"))
-    with pytest.raises(usda_dependency.UsdaSetupError, match="checksum"):
-        usda_dependency.install()
-    assert not target.exists()
-
-
-def test_missing_source_has_setup_guidance_not_runtime_download(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setattr(usda_dependency, "SOURCE_PATH", tmp_path / "missing.py")
-    with pytest.raises(ConfigurationError, match="python -m sous_chef.usda_dependency"):
-        UsdaMcpConfig.from_settings(
-            Settings(
-                environment="local",
-                adapter_mode="local",
-                _env_file=None,
-            )
+def test_default_config_needs_only_protected_api_key_not_database_or_download() -> None:
+    config = UsdaMcpConfig.from_settings(
+        Settings(
+            environment="local",
+            adapter_mode="local",
+            _env_file=None,
+            usda_api_key=SecretStr("synthetic-private-key"),
+            usda_mcp_env={"USDA_POSTGRES_PASSWORD": SecretStr("obsolete-credential")},
         )
-
-
-def test_network_failure_is_safe_and_does_not_create_source(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    def unavailable(*args: object, **kwargs: object) -> None:
-        raise URLError("private network configuration")
-
-    target = tmp_path / "_usda" / "main.py"
-    monkeypatch.setattr(usda_dependency, "SOURCE_PATH", target)
-    monkeypatch.setattr(usda_dependency, "urlopen", unavailable)
-    with pytest.raises(usda_dependency.UsdaSetupError) as caught:
-        usda_dependency.install()
-    assert "private" not in str(caught.value) and not target.exists()
-
-
-def test_default_config_uses_this_apps_interpreter_launcher_and_pinned_source(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    import sys
-
-    source = b"# synthetic pinned source\n"
-    target = tmp_path / "main.py"
-    target.write_bytes(source)
-    monkeypatch.setattr(usda_dependency, "SOURCE_PATH", target)
-    monkeypatch.setattr(usda_dependency, "SOURCE_SHA256", hashlib.sha256(source).hexdigest())
-    settings = Settings(
-        environment="local",
-        adapter_mode="local",
-        _env_file=None,
-        usda_mcp_env={
-            "USDA_POSTGRES_HOST": "synthetic.invalid",
-            "USDA_POSTGRES_DATABASE": "usda",
-            "USDA_POSTGRES_USER": "readonly",
-            "USDA_POSTGRES_PASSWORD": "private",
-        },
     )
-    config = UsdaMcpConfig.from_settings(settings)
     assert config.python == Path(sys.executable)
     assert config.server.name == "usda_mcp_server.py"
-    assert config.environment["USDA_MCP_SOURCE"] == str(target)
+    assert config.environment["USDA_API_KEY"] == "synthetic-private-key"
+    assert "PYTHONPATH" in config.environment
+    assert "USDA_POSTGRES_PASSWORD" not in config.environment
     assert "private" not in repr(config)
-    with pytest.raises(ConfigurationError, match="USDA_POSTGRES_HOST") as caught:
+    with pytest.raises(ConfigurationError, match="ASC_USDA_API_KEY"):
         UsdaMcpConfig.from_settings(
             Settings(
                 environment="local",
                 adapter_mode="local",
                 _env_file=None,
+                usda_mcp_env={"USDA_POSTGRES_PASSWORD": SecretStr("obsolete-credential")},
             )
         )
+
+
+@pytest.mark.parametrize("environment", ["dev", "prod"])
+@pytest.mark.parametrize("override", ["usda_mcp_server", "usda_mcp_python"])
+def test_hosted_api_cannot_be_replaced_by_a_legacy_database_launcher(
+    environment: Literal["dev", "prod"],
+    override: Literal["usda_mcp_server", "usda_mcp_python"],
+) -> None:
+    settings = Settings(
+        environment=environment,
+        adapter_mode="live",
+        agents_enabled=False,
+        cosmos_endpoint="https://synthetic.documents.azure.com",
+        cosmos_database="synthetic",
+        usda_api_key=SecretStr("synthetic-private-key"),
+        usda_mcp_server=Path(sys.executable) if override == "usda_mcp_server" else None,
+        usda_mcp_python=Path(sys.executable) if override == "usda_mcp_python" else None,
+        _env_file=None,
+    )
+    with pytest.raises(ConfigurationError, match="Remove ASC_USDA_MCP_SERVER") as caught:
+        UsdaMcpConfig.from_settings(settings)
     assert "private" not in str(caught.value)
+
+
+def test_search_preserves_terms_filters_forms_and_ranks_before_twenty_result_limit() -> None:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.host == "api.nal.usda.gov"
+        assert request.headers["X-Api-Key"] == "synthetic-private-key"
+        assert "api_key" not in request.url.params
+        return httpx.Response(
+            200,
+            json={
+                "totalHits": 35,
+                "foods": [
+                    *[
+                        dict(
+                            FOOD,
+                            fdcId=2000000 + index,
+                            description=f"Babyfood, chicken dinner {index}",
+                            foodCategory="Baby Foods",
+                        )
+                        for index in range(30)
+                    ],
+                    dict(FOOD, fdcId=3000000, description="Chicken, breast, roasted"),
+                    dict(FOOD, fdcId=3000001, description="Babyfood, chicken and strawberry"),
+                    FOOD,
+                ],
+            },
+        )
+
+    async def check() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            api = FoodDataCentral(client, SecretStr("synthetic-private-key"))
+            raw = await api.search("chicken, raw")
+            assert [food.fdc_id for food in raw.foods] == ["1234567"]
+            assert raw.truncated  # Provider reports additional unexamined matches.
+            generic = await api.search("chicken")
+            assert len(generic.foods) == 20 and generic.foods[0].fdc_id == "1234567"
+
+    asyncio.run(check())
+    assert json.loads(requests[0].content)["query"] == "+chicken +raw"
+
+
+@pytest.mark.parametrize("environment", ["dev", "prod"])
+def test_hosted_api_configuration_needs_no_database_settings(
+    environment: Literal["dev", "prod"],
+) -> None:
+    config = UsdaMcpConfig.from_settings(
+        Settings(
+            environment=environment,
+            adapter_mode="live",
+            agents_enabled=False,
+            cosmos_endpoint="https://synthetic.documents.azure.com",
+            cosmos_database="synthetic",
+            usda_enabled=True,
+            usda_api_key=SecretStr("synthetic-private-key"),
+            _env_file=None,
+        )
+    )
+    assert set(config.environment) == {"USDA_API_KEY", "PYTHONPATH"}
+    assert config.environment["USDA_API_KEY"] == "synthetic-private-key"
+    assert config.python == Path(sys.executable)
+    assert config.server.name == "usda_mcp_server.py"
+
+
+@pytest.mark.parametrize("count", [20, 21])
+def test_complete_search_is_only_truncated_when_candidates_were_omitted(count: int) -> None:
+    async def check() -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    json={
+                        "totalHits": count,
+                        "foods": [dict(FOOD, fdcId=1234567 + i) for i in range(count)],
+                    },
+                )
+            )
+        ) as client:
+            result = await FoodDataCentral(client, SecretStr("synthetic-key")).search("chicken")
+            assert len(result.foods) == 20
+            assert result.truncated == (count > 20)
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [
+        (401, "authentication"),
+        (403, "authentication"),
+        (404, "no_results"),
+        (429, "throttled"),
+        (500, "unavailable"),
+        (302, "unavailable"),
+    ],
+)
+def test_provider_failures_are_safe_and_never_retried(status: int, code: str) -> None:
+    calls = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            status, text="private-key-and-provider-details", headers={"Retry-After": "60"}
+        )
+
+    async def check() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            api = FoodDataCentral(client, SecretStr("synthetic-private-key"))
+            with pytest.raises(FdcError) as caught:
+                await api.search("chicken")
+            assert caught.value.code == code and "private" not in str(caught.value)
+            if status == 429:
+                with pytest.raises(FdcError, match="throttled"):
+                    await api.search("carrots")
+
+    asyncio.run(check())
+    assert calls == 1
+
+
+@pytest.mark.parametrize(
+    ("retry_after", "seconds"),
+    [
+        ("60", 60),
+        ("0", 1),
+        ("99999", 3600),
+        ("", 3600),
+        ("not-a-duration", 3600),
+        ("9" * 5000, 3600),
+    ],
+)
+def test_quota_cooldown_is_bounded_and_invalid_headers_are_safe(
+    retry_after: str, seconds: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("sous_chef.usda_mcp_server.monotonic", lambda: 100.0)
+
+    async def check() -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(429, headers={"Retry-After": retry_after})
+            )
+        ) as client:
+            api = FoodDataCentral(client, SecretStr("synthetic-private-key"))
+            with pytest.raises(FdcError, match="throttled"):
+                await api.search("chicken")
+            assert api._retry_at == 100.0 + seconds
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "malformed",
+        "oversized",
+        "duplicate",
+        "branded",
+        "negative",
+        "wrong_unit",
+        "wrong_id",
+        "timeout",
+    ],
+)
+def test_invalid_or_timed_out_api_details_cannot_become_nutrition(kind: str) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        if kind == "timeout":
+            raise httpx.ReadTimeout("private-key", request=request)
+        if kind == "malformed":
+            return httpx.Response(200, text="private invalid JSON")
+        if kind == "oversized":
+            return httpx.Response(200, content=b"x" * 2_097_153)
+        nutrient = {"nutrient": {"id": 1008, "unitName": "KCAL"}, "amount": 100}
+        food = dict(FOOD, foodNutrients=[nutrient])
+        if kind == "duplicate":
+            food["foodNutrients"] = [nutrient, nutrient]
+        elif kind == "branded":
+            food["dataType"] = "Branded"
+        elif kind == "negative":
+            nutrient["amount"] = -1
+        elif kind == "wrong_unit":
+            nutrient["nutrient"] = {"id": 1008, "unitName": "KJ"}
+        elif kind == "wrong_id":
+            food["fdcId"] = 7654321
+        return httpx.Response(200, json=food)
+
+    async def check() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            api = FoodDataCentral(client, SecretStr("synthetic-private-key"))
+            with pytest.raises(FdcError) as caught:
+                await api.profile("1234567")
+            assert caught.value.code == ("timeout" if kind == "timeout" else "invalid_result")
+            assert "private" not in str(caught.value)
+
+    asyncio.run(check())
+
+
+def test_source_zero_missing_values_and_energy_preference_are_distinct() -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                **FOOD,
+                "foodNutrients": [
+                    {"nutrient": {"id": id, "unitName": unit}, "amount": amount}
+                    for id, unit, amount in [
+                        (2047, "KCAL", 120),
+                        (2048, "KCAL", 110),
+                        (1008, "KCAL", 100),
+                        (1079, "G", 0),
+                        (1003, "G", None),
+                    ]
+                ],
+            },
+        )
+
+    async def check() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            result = await FoodDataCentral(client, SecretStr("synthetic-private-key")).profile(
+                "1234567"
+            )
+            assert {row.nutrdesc: row.nutr_val for row in result.nutrients} == {
+                "Energy": Decimal(100),
+                "Fiber, total dietary": Decimal(0),
+            }
+            assert result.food.fdc_id == "1234567" and result.food.publication_date == "2024-04-18"
+
+    asyncio.run(check())

@@ -26,10 +26,10 @@ def test_search_and_explicit_selection_return_only_candidate_backed_nutrition(
     selected = client.post(LOOKUP, json={"name": "chicken", "foodId": "99901"})
     assert selected.status_code == 200, selected.text
     assert selected.json()["data"]["mappings"][0]["usdaFoodId"] == "99901"
-    foreign = client.post(LOOKUP, json={"name": "chicken", "foodId": "00001"})
+    foreign = client.post(LOOKUP, json={"name": "chicken", "foodId": "1234567"})
     assert foreign.status_code == 200
     assert foreign.json()["data"]["status"] == "unavailable"
-    assert client.post(LOOKUP, json={"name": "chicken", "foodId": "1"}).status_code == 422
+    assert client.post(LOOKUP, json={"name": "chicken", "foodId": "0"}).status_code == 422
     assert (
         client.post(
             "/api/v1/nutrition/search",
@@ -54,7 +54,7 @@ def test_authenticated_lookup_returns_real_stdio_calories_per_100_g(
             "ingredientLineId": "ingredient",
             "quantity": 100,
             "unit": "g",
-            "sourceId": "usda:sr:99901",
+            "sourceId": "usda:fdc:99901",
             "usdaFoodId": "99901",
             "weightGrams": 100,
         }
@@ -86,6 +86,7 @@ def test_disabled_lookup_does_not_invent_nutrition(client: TestClient) -> None:
         ("error", 503, "nutrition_unavailable"),
         ("malformed", 502, "nutrition_invalid_result"),
         ("timeout", 504, "nutrition_timeout"),
+        ("throttled", 429, "nutrition_throttled"),
     ],
 )
 def test_lookup_reports_safe_tool_errors(

@@ -15,16 +15,16 @@ function evidence(energy: number | null = 41) {
         ingredientLineId: "ingredient",
         quantity: 100,
         unit: "g",
-        sourceId: "usda:sr:11124",
-        usdaFoodId: "11124",
+        sourceId: "usda:fdc:1234567",
+        usdaFoodId: "1234567",
       },
     ],
     sources: [
       {
-        sourceId: "usda:sr:11124",
-        version: "SR (release unspecified)",
+        sourceId: "usda:fdc:1234567",
+        version: "SR Legacy; published 4/1/2019",
         kind: "usda",
-        reference: "https://www.ars.usda.gov/Services/docs.htm?docid=8964",
+        reference: "https://fdc.nal.usda.gov/food-details/1234567/nutrients",
       },
     ],
   };
@@ -35,10 +35,11 @@ test("ambiguous search lets the user choose an attributed food without guessing"
 }) => {
   await backend(page);
   const food = {
-    ndb_no: "11124",
+    fdc_id: "1234567",
     long_desc: "Carrots, raw",
     shrt_desc: "CARROTS,RAW",
     food_group: "Vegetables",
+    data_type: "SR Legacy",
   };
   await page.route("**/api/v1/nutrition/search", (route) =>
     route.fulfill({ json: { foods: [food], truncated: false } }),
@@ -72,58 +73,67 @@ test("ambiguous search lets the user choose an attributed food without guessing"
   await expect(page.locator(".ingredient-nutrition-result")).not.toContainText(
     "41 kcal",
   );
-  await page.getByRole("button", { name: "Carrots, raw · NDB 11124" }).click();
+  await page
+    .getByRole("button", { name: "Carrots, raw · FDC 1234567" })
+    .click();
   await expect(page.locator(".ingredient-nutrition-result")).toContainText(
     "41 kcal per 100 g",
   );
   expect(bodies).toEqual([
     { name: "carrots" },
-    { name: "carrots", foodId: "11124" },
+    { name: "carrots", foodId: "1234567" },
   ]);
 });
 
-test("a saturated search asks for refinement and never chooses its first result", async ({
-  page,
-}) => {
-  await backend(page);
-  await page.route("**/api/v1/nutrition/search", (route) =>
-    route.fulfill({
-      json: {
-        foods: Array.from({ length: 20 }, (_, index) => ({
-          ndb_no: String(index).padStart(5, "0"),
-          long_desc: `Chicken fixture ${index}`,
-          shrt_desc: `CHICKEN ${index}`,
-          food_group: "Fixture",
-        })),
-        truncated: true,
-      },
-    }),
-  );
-  await page.route("**/api/v1/nutrition/lookup", (route) =>
-    route.fulfill({
-      json: {
-        data: {
-          ...evidence(),
-          status: "unavailable",
-          nutrients: [],
-          mappings: [],
-          sources: [],
+for (const count of [2, 20]) {
+  test(`an incomplete search with ${count} candidates asks for refinement without choosing a result`, async ({
+    page,
+  }) => {
+    await backend(page);
+    await page.route("**/api/v1/nutrition/search", (route) =>
+      route.fulfill({
+        json: {
+          foods: Array.from({ length: count }, (_, index) => ({
+            fdc_id: String(2000000 + index),
+            long_desc: `Chicken fixture ${index}`,
+            shrt_desc: `CHICKEN ${index}`,
+            food_group: "Fixture",
+            data_type: "SR Legacy",
+          })),
+          truncated: true,
         },
-      },
-    }),
-  );
-  await page.goto("/");
-  await lookup(page);
-  await expect(
-    page.getByText("Showing at most 20 matches.", { exact: false }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("region", { name: "USDA food matches" }).getByRole("button"),
-  ).toHaveCount(20);
-  await expect(page.locator(".ingredient-nutrition-result")).not.toContainText(
-    "kcal",
-  );
-});
+      }),
+    );
+    await page.route("**/api/v1/nutrition/lookup", (route) =>
+      route.fulfill({
+        json: {
+          data: {
+            ...evidence(),
+            status: "unavailable",
+            nutrients: [],
+            mappings: [],
+            sources: [],
+          },
+        },
+      }),
+    );
+    await page.goto("/");
+    await lookup(page);
+    await expect(
+      page.getByText("Showing a limited set of matches (at most 20).", {
+        exact: false,
+      }),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByRole("region", { name: "USDA food matches" })
+        .getByRole("button"),
+    ).toHaveCount(count);
+    await expect(
+      page.locator(".ingredient-nutrition-result"),
+    ).not.toContainText("kcal");
+  });
+}
 
 async function lookup(page: Page) {
   await page
@@ -150,13 +160,13 @@ test("ingredient lookup shows calories, mass basis and USDA attribution without 
   await lookup(page);
   const result = page.locator(".ingredient-nutrition-result");
   await expect(result).toContainText("41 kcal per 100 g");
-  await expect(result).toContainText("NDB 11124");
-  await expect(result).toContainText("usda:sr:11124");
+  await expect(result).toContainText("FDC 1234567");
+  await expect(result).toContainText("usda:fdc:1234567");
   await expect(
-    result.getByRole("link", { name: "USDA Standard Reference" }),
+    result.getByRole("link", { name: "USDA FoodData Central" }),
   ).toHaveAttribute(
     "href",
-    "https://www.ars.usda.gov/Services/docs.htm?docid=8964",
+    "https://fdc.nal.usda.gov/food-details/1234567/nutrients",
   );
   expect(requests).toEqual([
     { body: { name: "Carrots, raw" }, token: "t".repeat(43) },
@@ -208,6 +218,7 @@ for (const state of ["unavailable", "no-energy", "zero"] as const) {
 for (const failure of [
   "unavailable",
   "timeout",
+  "throttled",
   "malformed",
   "wrong-unit",
   "wrong-source",
@@ -228,12 +239,18 @@ for (const failure of [
       } else if (failure === "wrong-unit" || failure === "wrong-source") {
         const data = evidence();
         if (failure === "wrong-unit") data.nutrients[0]!.unit = "kJ";
-        else data.sources[0]!.sourceId = "usda:sr:00000";
+        else data.sources[0]!.sourceId = "usda:fdc:00000";
         await route.fulfill({ json: { data } });
       } else {
         await route.fulfill({
           status:
-            failure === "signed-out" ? 401 : failure === "timeout" ? 504 : 503,
+            failure === "signed-out"
+              ? 401
+              : failure === "timeout"
+                ? 504
+                : failure === "throttled"
+                  ? 429
+                  : 503,
           json: {
             code: "nutrition_unavailable",
             detail: "private-provider-details",
@@ -260,7 +277,9 @@ for (const failure of [
       await expect(page.getByRole("alert")).toContainText(
         failure === "timeout"
           ? "timed out"
-          : "Nutrition could not be retrieved",
+          : failure === "throttled"
+            ? "USDA API quota reached"
+            : "Nutrition could not be retrieved",
       );
     await expect(page.locator("body")).not.toContainText(
       "private-provider-details",
@@ -306,7 +325,7 @@ test("same-origin lookup sends Referer for Easy Auth but external links do not",
     await route.fulfill({ json: { data: evidence() } });
   });
   let externalReferer: string | undefined;
-  await page.route("https://www.ars.usda.gov/**", async (route) => {
+  await page.route("https://fdc.nal.usda.gov/**", async (route) => {
     externalReferer = route.request().headers()["referer"];
     await route.fulfill({
       contentType: "text/html",
@@ -319,7 +338,7 @@ test("same-origin lookup sends Referer for Easy Auth but external links do not",
     "41 kcal",
   );
   expect(internalReferer).toBe(new URL(page.url()).origin + "/");
-  await page.getByRole("link", { name: "USDA Standard Reference" }).click();
+  await page.getByRole("link", { name: "USDA FoodData Central" }).click();
   await expect(
     page.getByRole("heading", { name: "External source fixture" }),
   ).toBeVisible();

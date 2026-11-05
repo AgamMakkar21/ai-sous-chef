@@ -71,10 +71,13 @@ retrieval-output, provenance, source-schema and combined specialist-evidence
 limits remain in force. A control answer must contain exactly one completed
 output-text part; fragments are not concatenated into a trusted control action.
 
-USDA retains its checksum-pinned subprocess, exact `search_foods` /
-`get_nutrition_profile` schemas and bounded JSON-RPC messages. Discovery of
-`execute_query` does not authorize its execution. Neither source text nor a
-returned tool request can select a Cosmos partition or mutate user data.
+USDA uses the packaged, app-owned FoodData Central API subprocess, exact
+`search_foods` / `get_nutrition_profile` schemas and bounded JSON-RPC messages.
+Only public ingredient terms and source IDs go to the fixed USDA HTTPS origin;
+the API key stays in a protected HTTP header. Arbitrary URLs and SQL are not
+exposed, and discovery of `execute_query` does not authorize its execution.
+Neither source text nor a returned tool request can select a Cosmos partition
+or mutate user data.
 
 The final gate checks the full recipe, including declared ingredients, instruction
 references, cooking methods and animal-food handling. The delivery hook rereads

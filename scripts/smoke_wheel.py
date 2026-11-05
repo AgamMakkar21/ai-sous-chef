@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sous_chef import __file__ as package_file
 from sous_chef.app import create_app
 from sous_chef.settings import Settings
-from sous_chef.usda_dependency import installed_source
+from sous_chef.usda_mcp_server import __file__ as usda_server_file
 
 
 def main() -> None:
@@ -16,8 +16,8 @@ def main() -> None:
     frontend = Path(package_file).parent / "static" / "index.html"
     if not frontend.is_file() or 'id="root"' not in frontend.read_text(encoding="utf-8"):
         raise RuntimeError("Installed wheel must include the compiled frontend.")
-    if not installed_source().is_relative_to(Path(sys.prefix)):
-        raise RuntimeError("Installed wheel must include the checksum-pinned USDA dependency.")
+    if not Path(usda_server_file).is_relative_to(Path(sys.prefix)):
+        raise RuntimeError("Installed wheel must include the FoodData Central MCP server.")
     settings = Settings(environment="local", adapter_mode="local", _env_file=None)
     with TestClient(create_app(settings)) as client:
         for path, expected in (
