@@ -3,6 +3,8 @@
 - Date: 2026-10-02
 - Status: Proposed
 - Scope: MVP architecture, implementation conventions, and product behavior.
+- USDA revision (2026-11-05): the owner-directed API-backed MCP replaces the
+  original PostgreSQL integration; see [current setup](../recipe-specialist.md#usda-nutrition-asc-32).
 
 ## Context and references
 
@@ -50,19 +52,19 @@ access. Never give the browser Cosmos, Foundry, or USDA credentials.
 | Orchestrator Agent | Interpret request, coordinate the specialist, check fit, request bounded revision |
 | Recipe + Nutrition Agent | Ground and adapt recipes; identify missing ingredients; obtain nutrition |
 | Foundry IQ | Retrieve curated recipe knowledge from the specified Hugging Face dataset |
-| USDA MCP | Authoritative nutrition through the specified PostgreSQL-backed integration |
+| USDA MCP | Authoritative nutrition through an app-owned MCP wrapping the official FoodData Central API; no USDA database |
 | Web IQ | Conditional current/external grounding, not mandatory for every request |
 | Application Insights, Log Analytics, Azure Monitor, OpenTelemetry | Correlated operations, dependencies, performance, failures, and resource utilization |
 | Managed identities, Entra Agent ID, and Azure RBAC | Secretless authentication by default, separate workload identities, and a distinct identity for each interactive agent |
 
 Required recipe source:
 <https://huggingface.co/datasets/untitledwebsite123/food-recipes/viewer/default/train?p=5225>.
-Required USDA integration: <https://github.com/HemantaPatil/mcp_postgres>.
+Required USDA source: <https://fdc.nal.usda.gov/api-guide/>.
 These links identify intended sources, not approved licenses, pinned revisions,
 hosted endpoints, or proven remote transport.
 
 There is no second orchestration framework, separate frontend hosting service,
-Container Apps migration, substitute nutrition API, or model-memory nutrition
+Container Apps migration, third-party nutrition API, or model-memory nutrition
 fallback in this architecture.
 
 Grocery, profile, onboarding, and explicit-preference CRUD never invokes AI or
@@ -619,9 +621,9 @@ Implementation tests must exercise distinct agent principal IDs and actual tool
 callers, managed-identity access without secret fallback, managed-agent handoff,
 the configured Foundry IQ/Web IQ/MCP connections, structured output,
 authentication, evaluation/tracing, provider-side history isolation/deletion,
-and token/call/deadline enforcement. Record the USDA repository revision,
-dataset provenance/license, PostgreSQL host/importer, read-only parameterized
-tools, remote transport, authorization, and operational ownership during normal
+and token/call/deadline enforcement. Record the app-owned USDA MCP source revision,
+FDC dataset/data-type provenance, read-only API tools, fixed HTTPS transport,
+protected API-key handling, and operational ownership during normal
 integration setup. Runtime failures and wiring bugs remain explicit errors to
 fix, not successful fallbacks or a reason to introduce a discovery phase.
 

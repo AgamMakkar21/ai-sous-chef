@@ -65,9 +65,11 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if config.usda_enabled:
             nutrition = UsdaNutritionTool.from_settings(config)
-            await nutrition.check()
-            app.state.nutrition = nutrition
-        yield
+            async with nutrition.lifespan():
+                app.state.nutrition = nutrition
+                yield
+        else:
+            yield
 
     app = FastAPI(
         title="AI Sous Chef",

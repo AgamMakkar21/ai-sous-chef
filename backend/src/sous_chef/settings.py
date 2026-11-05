@@ -100,6 +100,7 @@ class Settings(BaseSettings):
     )
     app_workload_principal_id: str | None = Field(default=None, pattern=_GUID, repr=False)
     usda_enabled: bool = False
+    usda_api_key: SecretStr | None = Field(default=None, repr=False)
     usda_mcp_python: Path | None = Field(default=None, repr=False)
     usda_mcp_server: Path | None = Field(default=None, repr=False)
     usda_mcp_env: dict[str, SecretStr] = Field(default_factory=dict, repr=False)
@@ -107,6 +108,14 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_environment(self) -> Self:
+        if self.usda_api_key is not None:
+            key = self.usda_api_key.get_secret_value()
+            if (
+                not key
+                or len(key) > 200
+                or any(character.isspace() or character == "\x00" for character in key)
+            ):
+                raise ConfigurationError("ASC_USDA_API_KEY must be a nonempty protected API key.")
         for path in (self.usda_mcp_python, self.usda_mcp_server):
             if path is not None and not path.is_absolute():
                 raise ConfigurationError("USDA interpreter and server paths must be absolute.")

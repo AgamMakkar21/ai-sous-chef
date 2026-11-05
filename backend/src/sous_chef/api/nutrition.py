@@ -10,7 +10,7 @@ from sous_chef.api.problems import problem_response
 from sous_chef.api.revisions import require_no_query
 from sous_chef.domain.foundry import FoundryFailure
 from sous_chef.domain.groceries import GroceryName
-from sous_chef.domain.nutrition import NdbNumber, UsdaFoodSearch
+from sous_chef.domain.nutrition import FdcId, UsdaFoodSearch
 from sous_chef.domain.profiles import ProfileModel
 from sous_chef.domain.recipes import NutritionEvidence, NutritionRequest, RecipeToolError
 from sous_chef.services.nutrition import UsdaNutritionTool
@@ -22,7 +22,7 @@ class IngredientLookup(ProfileModel):
 
 
 class SelectedIngredientLookup(IngredientLookup):
-    food_id: NdbNumber | None = None
+    food_id: FdcId | None = None
 
 
 class NutritionEnvelope(ProfileModel):
@@ -65,6 +65,7 @@ def create_nutrition_router() -> APIRouter:
     def failed(error: RecipeToolError) -> JSONResponse:
         status, code, title = {
             FoundryFailure.TIMEOUT: (504, "nutrition_timeout", "Nutrition lookup timed out"),
+            FoundryFailure.THROTTLED: (429, "nutrition_throttled", "USDA API quota exceeded"),
             FoundryFailure.INVALID_RESULT: (
                 502,
                 "nutrition_invalid_result",

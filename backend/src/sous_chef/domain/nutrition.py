@@ -1,11 +1,11 @@
-"""The supplied USDA SR MCP contract; nutrient values are per 100 g, not FDC IDs."""
+"""Validated FoodData Central MCP evidence; nutrient values are per 100 g."""
 
 from decimal import Decimal
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-NdbNumber = Annotated[str, StringConstraints(strict=True, pattern=r"^[0-9]{5}$")]
+FdcId = Annotated[str, StringConstraints(strict=True, pattern=r"^[1-9][0-9]{0,9}$")]
 SourceText = Annotated[
     str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=500)
 ]
@@ -18,10 +18,12 @@ class UsdaModel(BaseModel):
 
 
 class UsdaFood(UsdaModel):
-    ndb_no: NdbNumber
+    fdc_id: FdcId
     long_desc: SourceText = Field(repr=False)
     shrt_desc: SourceText = Field(repr=False)
     food_group: SourceText = Field(repr=False)
+    data_type: Literal["Foundation", "SR Legacy"]
+    publication_date: SourceText | None = None
 
 
 class UsdaNutrientRow(UsdaModel):
@@ -30,7 +32,7 @@ class UsdaNutrientRow(UsdaModel):
     food_group: SourceText = Field(repr=False)
     nutrdesc: SourceText
     units: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=20)]
-    # asyncpg Decimals are serialized as strings by the supplied server.
+    # MCP serializes exact source decimals as strings.
     nutr_val: Decimal = Field(ge=0, le=10_000_000, repr=False)
     sr_order: int = Field(strict=True, ge=0, le=100_000)
 

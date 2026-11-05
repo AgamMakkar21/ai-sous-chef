@@ -44,7 +44,7 @@ export default function IngredientLookup({ session, onExpired }: Props) {
         ingredient,
         session,
         controller.signal,
-        candidate?.ndb_no,
+        candidate?.fdc_id,
       );
       if (nutrition.status === "unavailable" && !candidate) {
         const matches = await searchNutrition(
@@ -69,7 +69,9 @@ export default function IngredientLookup({ session, onExpired }: Props) {
           ? "Check the ingredient name and try again."
           : failure instanceof ApiError && failure.status === 504
             ? "The nutrition lookup timed out. Try again."
-            : "Nutrition could not be retrieved. Try again; no calorie estimate was invented.",
+            : failure instanceof ApiError && failure.status === 429
+              ? "USDA API quota reached. Try again later."
+              : "Nutrition could not be retrieved. Try again; no calorie estimate was invented.",
       );
     } finally {
       if (!controller.signal.aborted) {
@@ -134,8 +136,8 @@ export default function IngredientLookup({ session, onExpired }: Props) {
           </p>
           {candidates.truncated && (
             <p role="status">
-              Showing at most 20 matches. Refine your search to find a more
-              specific food.
+              Showing a limited set of matches (at most 20). Refine your search
+              to find a more specific food.
             </p>
           )}
           {!candidates.foods.length && (
@@ -143,15 +145,17 @@ export default function IngredientLookup({ session, onExpired }: Props) {
           )}
           <ul className="grocery-list">
             {candidates.foods.map((food) => (
-              <li key={food.ndb_no} className="grocery-row">
+              <li key={food.fdc_id} className="grocery-row">
                 <button
                   className="button secondary"
                   disabled={busy}
                   onClick={() => void lookup(food)}
                 >
-                  {food.long_desc} &middot; NDB {food.ndb_no}
+                  {food.long_desc} &middot; FDC {food.fdc_id}
                 </button>
-                <p>{food.food_group}</p>
+                <p>
+                  {food.food_group} &middot; {food.data_type}
+                </p>
               </li>
             ))}
           </ul>
@@ -179,10 +183,8 @@ export default function IngredientLookup({ session, onExpired }: Props) {
           )}
           {result.source && (
             <p>
-              <a href="https://www.ars.usda.gov/Services/docs.htm?docid=8964">
-                USDA Standard Reference
-              </a>{" "}
-              &middot; NDB {result.source.foodId}
+              <a href={result.source.reference}>USDA FoodData Central</a>{" "}
+              &middot; FDC {result.source.foodId}
               <br />
               Source: {result.source.id} &middot; {result.source.version}
             </p>

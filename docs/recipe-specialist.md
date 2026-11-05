@@ -26,196 +26,111 @@ and food identifiers are synthetic, not real USDA facts.
 
 ## USDA nutrition (ASC-32)
 
-The backend uses the supplied
-[HemantaPatil/mcp_postgres](https://github.com/HemantaPatil/mcp_postgres)
-integration, inspected at revision `2a313bc599a477bc2b2df6dcc43857e4002ab22f`.
-Its actual transport is stdio. Its `search_foods(keyword, limit=20)` returns
-`ndb_no`, `long_desc`, `shrt_desc`, `food_group`; `get_nutrition_profile(ndb_no)`
-returns nutrient rows with those descriptions, `nutrdesc`, `units`, `nutr_val`
-and `sr_order`. These are **USDA SR NDB numbers**, including leading zeros,
-not FoodData Central FDC IDs. Amounts use the SR per-100-g edible-food basis.
-The typed raw profile retains the original nutrient names, units and values.
+The backend runs an app-owned MCP stdio server that wraps the official
+[USDA FoodData Central REST API](https://fdc.nal.usda.gov/api-guide/).
+It replaces the earlier PostgreSQL/SR28 integration: no database, data download,
+upstream executable download, SQL tool or database firewall is needed.
+The server and its pinned MCP/HTTP dependencies ship in the normal Python package.
 
-The application pins the imported runtime libraries (`mcp==1.30.0`,
-`asyncpg==0.32.0`) in its normal Python 3.12 dependency locks. It fetches only the
-upstream server module at setup/build time, verifies its fixed SHA-256, and
-packages it with the app. It does not install the upstream project metadata or
-its unused plotting/psycopg dependencies. The source module and its actual MCP
-protocol are exercised on Python 3.12; a second developer-specific interpreter
-or checkout is no longer required. Runtime never downloads or installs code.
+The only tools are `search_foods(keyword, limit=20)` and
+`get_nutrition_profile(fdc_id)`. Identifiers are original **FDC IDs**, not padded
+five-digit NDB numbers. Only Foundation and SR Legacy records are accepted;
+their nutrient amounts use the per-100-g basis. Branded and Survey/FNDDS records
+are intentionally excluded from this ingredient-oriented integration.
+The normalization retains `long_desc`, `shrt_desc` and `food_group` for existing
+candidate consumers: both description fields contain the API's actual description,
+not an invented abbreviation, and group is its category or explicit data type.
+`data_type` and an optional source `publication_date` accompany each candidate.
 
 ### Shared developer and Azure setup
 
-Both collaborators use the same reviewed application branch and the same Azure
-database, but separate read-only database accounts. Create each account using
-pgAdmin's password field and grant only CONNECT to `usda`, USAGE on `public` and
-SELECT on `fd_group`, `food_des`, `nutr_def`, `nut_data`. Do not grant the
-administrator account or share its password. Add each developer's current public
-IP to the Azure database firewall; restrictive work Wi-Fi/VPNs may still block
-outbound port 5432. The Azure app later needs its own allowed network path.
-
-From the repository root, using the app's Python 3.12 virtual environment:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.\.venv\Scripts\python.exe -m pip install --no-build-isolation --no-deps -e .
-.\.venv\Scripts\python.exe -m sous_chef.usda_dependency
-```
-
-The final command downloads exactly revision
-`2a313bc599a477bc2b2df6dcc43857e4002ab22f` from GitHub, checks SHA-256
-`1edc1d9d3fbc5458bb45020ed985c8cd14c3051633165ecaf8d382b393eda379`,
-and writes ignored `_usda/main.py` inside the application package. An existing
-file is verified, not silently replaced or upgraded. No secrets or Azure access
-are required for this step. Both developers run it once after dependency setup;
-CI runs the same command before creating deployment ZIPs and wheels. Missing or
-modified source fails setup/startup rather than downloading a fallback.
-
-Keep the existing `.env.local` settings and add `ASC_USDA_ENABLED=true` to enable
-the real startup check. Do not copy over an existing file or commit credentials.
-For a password-free command history, use a PowerShell credential prompt and pass
-the connection configuration to that process:
-
-```powershell
-$env:ASC_ENVIRONMENT = "local"
-$env:ASC_USDA_ENABLED = "true"
-$credential = Get-Credential -Message "Your own read-only USDA PostgreSQL login"
-try {
-    $env:ASC_USDA_MCP_ENV = @{
-        USDA_POSTGRES_HOST = "<server>.postgres.database.azure.com"
-        USDA_POSTGRES_DATABASE = "usda"
-        USDA_POSTGRES_USER = $credential.UserName
-        USDA_POSTGRES_PASSWORD = $credential.GetNetworkCredential().Password
-    } | ConvertTo-Json -Compress
-    .\.venv\Scripts\python.exe -m uvicorn sous_chef.app:create_app --factory `
-        --host 127.0.0.1 --port 8000 --no-access-log
-}
-finally {
-    Remove-Item Env:\ASC_USDA_MCP_ENV -ErrorAction SilentlyContinue
-    Remove-Variable credential -ErrorAction SilentlyContinue
-}
-```
-
-The local adapter/auth/profile settings remain unchanged. `ASC_ADAPTER_MODE=local`
-does not turn enabled USDA into a fixture; this is a real external database call.
-Python loads `.env.local` because `ASC_ENVIRONMENT=local`. Alternatively store
-`ASC_USDA_MCP_ENV` as single-quoted JSON in that untracked file. Never put real
-credentials in examples, screenshots, command arguments, source or shared logs.
-
-On **every app start** with USDA enabled, FastAPI starts the real stdio MCP child,
-validates its tools and performs an attributed lookup for `Carrots, raw` using
-100 g and one serving. It accepts known/partial source-backed nutrition, not an
-empty lookup. Broken source/dependencies, credentials, data, TLS or connectivity
-prevent startup with a safe error. The startup check does not invoke Foundry,
-change data, enable chat or bypass authentication/release gates. An enabled local
-app must pass exactly the same startup check as Azure.
-
-The MCP child is **request-scoped**, not a permanent network daemon: the startup
-check closes/reaps its child; each recipe nutrition lookup starts its own child
-inside that backend host and closes it afterward. The app owns the process and
-there is no manual MCP server command or developer laptop endpoint. Simultaneous
-requests do not share protocol state or user data. `app.state.nutrition` holds the
-configured real adapter after the startup check; the specialist factory uses the
-same settings. Existing chat activation remains its own deliverable.
-
-Offline unit/API tests leave `ASC_USDA_ENABLED=false` (the default) and require
-no database. Startup integration tests explicitly enable it and use subprocess
-fixtures. A separate upstream contract test uses the real pinned source and MCP
-SDK with synthetic database rows; it does not certify Azure connectivity.
-
-For **Azure App Service**, merge through the normal reviewed dev delivery flow.
-CI fetches/verifies the dependency before cloud login; the source ZIP and wheel
-include it, and Oryx installs the locked MCP/asyncpg dependencies with the app.
-Set these protected App Service environment variables:
+1. Get a private key from [USDA's signup](https://fdc.nal.usda.gov/api-key-signup).
+   Do not send it through chat, commit it, put it in a browser build, or use
+   `DEMO_KEY` for normal app traffic.
+2. Deploy the reviewed API-backed version through the normal dev delivery flow.
+   No manual MCP process, external MCP host or APIM is required.
+3. Configure these protected App Service settings (or Key Vault references):
 
 | Setting | Value |
 | --- | --- |
 | `ASC_USDA_ENABLED` | `true` |
-| `ASC_USDA_MCP_ENV` | JSON with the four database connection keys above, using an app-specific read-only account; store securely/directly or through a Key Vault reference |
+| `ASC_USDA_API_KEY` | The private FoodData Central key; plain secret value, not JSON |
 
-Do not set developer interpreter/source paths in Azure. The app automatically
-uses its own Python interpreter, included launcher and checksum-pinned source.
-Existing infrastructure/deployment retains these owner-managed app settings.
-Allow the app's actual outbound addresses or approved VNet path through the
-PostgreSQL firewall, rather than broadly allowing all Azure services. Ensure
-TLS certificate trust and port 5432 connectivity from the app host. Only enable
-the startup check once those settings and the reviewed artifact are in place.
-Restart the app; failed startup means the integration is not ready. The supplied
-database password flow does not claim managed-identity database authentication.
+Remove `ASC_USDA_MCP_SERVER` and `ASC_USDA_MCP_PYTHON` overrides before starting
+the new build: hosted environments accept only the packaged API-backed server.
+Custom launchers remain available only for explicit local development/tests.
+Old `ASC_USDA_MCP_ENV` database configuration is ignored by the default server
+and is never forwarded to its process. No database fallback exists, including
+when the API key is missing or the API fails.
 
-Advanced operator overrides `ASC_USDA_MCP_PYTHON` / `ASC_USDA_MCP_SERVER` remain
-available for a separately managed interpreter/entrypoint. They are unnecessary
-for this shared setup and must not reference another developer's machine.
+Keep the old database available only for rollback to the old build during the
+reviewed rollout. After deploying the API-backed version, restart the app and
+confirm startup, a candidate search, and a selected-food nutrition lookup succeed.
+Then remove `ASC_USDA_MCP_ENV` and obsolete database credentials/firewall access.
+The owner may delete the old USDA PostgreSQL database after accepting that rollback
+to the old build will then require restoring it. Delete the PostgreSQL server only
+if no other databases/applications use it. Do not delete Cosmos DB: it still stores
+application profiles, groceries and conversations.
 
-Configure the dependency's database connection securely **before using it**:
-the upstream sample contains hardcoded local database credentials and is not a
-production configuration. Point `ASC_USDA_MCP_SERVER` at the included
-`sous_chef/usda_mcp_server.py` entrypoint in the installed application package
-(selected automatically by the shared setup above).
-It loads the supplied module, replaces its `db_config` from protected
-configuration, and runs its original async main/cleanup. It requires
-`USDA_MCP_SOURCE` (automatically resolved to the pinned source in the normal setup),
-`USDA_POSTGRES_HOST`, `USDA_POSTGRES_DATABASE`, `USDA_POSTGRES_USER`,
-`USDA_POSTGRES_PASSWORD`, and optionally `USDA_POSTGRES_PORT` (default 5432).
-The wrapper enforces certificate/hostname-verified TLS, a five-second connection
-and statement deadline, a one-to-two-connection pool and read-only transactions.
-TLS uses Python's default system-trusted CA certificates; no separate PostgreSQL
-`root.crt` file is required. Certificate and hostname verification remain mandatory.
-The isolated MCP socket event loop uses asyncio Happy Eyeballs with a 250 ms
-address-family fallback, so an unreachable IPv4 or IPv6 route cannot exhaust the
-connection deadline before another resolved address is attempted. It keeps the
-original database hostname for TLS verification and changes no system networking
-settings.
-Do not copy sample credentials
-or database secrets into this repository. `ASC_USDA_MCP_ENV` is a JSON object of
-explicit server-only environment variables; store it as a protected App Service
-setting/Key Vault reference. Pass those server configuration keys through that
-object. Values are `SecretStr`, redacted in settings/config
-representations, and never logged. Use this launcher rather than directly running
-upstream `main.py`: passing environment variables alone does not override its
-hardcoded dictionary. Use a database role limited to SELECT on the
-required USDA tables. No consumer data belongs in that database.
+The host needs outbound HTTPS to `api.nal.usda.gov:443`, not PostgreSQL port 5432.
+Save settings and restart the API-backed app. Startup checks real USDA search
+and a returned candidate's validated profile; it does not silently choose that
+candidate for a user's nutrition request. A missing/invalid key, exhausted quota
+or unavailable API prevents enabled startup with a safe diagnostic.
+App-only Foundry settings and browser authentication remain unchanged.
 
-Stdio itself has no remote token-authentication mechanism. This implementation
-does not impersonate an Entra Agent identity or replace the existing managed
-Foundry identity bindings. The gateway still invokes the pinned specialist
-identity with managed-identity-first credentials. Database authentication stays
-inside the configured dependency; use managed identity there if the deployment
-supports it, otherwise protected server-only credentials. Backend/application
-credentials and the rest of the parent environment are **not** inherited by the
-child: only OS essentials and explicitly configured server variables are passed.
-Keep that entrypoint read-only/operator-controlled and its stdout MCP-only.
+For local development, add `ASC_USDA_ENABLED=true` and `ASC_USDA_API_KEY` to the
+existing ignored `.env.local`, without overwriting other settings. Use a secret
+editor/prompt rather than placing the key in shell history. Install the normal
+Python requirements and editable package; no separate USDA setup command exists.
+Offline tests leave USDA disabled and use explicitly selected synthetic HTTP
+transports. They never use a real API key.
 
-Each recipe nutrition lookup starts one isolated stdio session, negotiates MCP
-`2024-11-05`, validates both advertised input schemas and executes only
-`search_foods` and `get_nutrition_profile`. Other advertised tools, including
-`execute_query`, are never callable. Only food names and selected NDB numbers
-leave the backend, not profiles, allergies, history, groceries owned by the user,
-user IDs or conversation identifiers. The logical `usda_nutrition` tool remains
-one reserved composite operation in the existing request budget; it makes no
-additional model calls.
+### Runtime and search boundaries
 
-The app-owned launcher replaces the dependency's literal-substring search tool
-registration with an ingredient-oriented read-only query; the checksum-pinned
-upstream file, tool names/input schemas, pool lifecycle and profile tool remain
-unchanged. Search splits punctuation-separated words and requires every term
-across the source descriptions, independent of order. Preparation terms such as
-`raw` and `roasted` match whole words, not substrings such as `strawberry`.
-All terms are bound parameters, not SQL fragments. Filtering and ranking happen
-in the database **before** the 20-row limit: exact descriptions first, then raw
-ingredient entries, other entries, and finally baby foods, fast/restaurant foods,
-prepared meals and soups. Thus `chicken, raw` retains the raw requirement even
-when the source description includes intervening cut/skin details; generic
-`chicken` prioritizes raw poultry without selecting a cut or inventing a form.
-Ranking is a convenience for candidate presentation, not evidence of uniqueness.
+The app's lifespan owns **one serialized MCP process per worker** and reuses it
+after the startup check. It closes the child at shutdown; failed or cancelled
+protocol exchanges are discarded before a later request starts a new process.
+Requests waiting for the process lock consume their own deadline, and the 2 MiB
+protocol budget resets for each operation. Well-formed quota/authentication
+failures retain the process so its rate-limit cooldown is preserved.
+Standalone specialist callers without an app lifespan retain isolated,
+automatically closed sessions. No cross-request food/query cache is introduced.
+
+Only OS essentials and the explicitly configured API key/import path enter the
+default child environment. The key is sent to the fixed USDA HTTPS origin in an
+`X-Api-Key` header, never a URL, browser response or model prompt. Redirects and
+environment-proxy inheritance are disabled. HTTP responses are capped at 2 MiB;
+requests have a five-second HTTP timeout inside the composite ten-second deadline.
+No automatic HTTP retries occur. A 429 blocks subsequent API calls in that worker
+for the numeric `Retry-After` duration (clamped to 1-3,600 seconds), or one hour
+when the header is absent or invalid. It becomes a typed quota error and HTTP 429
+in the app, not empty foods or a fabricated successful estimate. USDA currently
+documents a default 1,000 requests/hour/IP; monitor the account's actual quota.
+
+The MCP allowlist contains only the two nutrition tools; arbitrary SQL, URLs,
+headers and caller-chosen API endpoints are not exposed. The existing managed
+Foundry agent identities remain separate from this backend-owned subprocess.
+Only ingredient names/FDC IDs leave the backend, not profile, allergy, history,
+user or conversation metadata. The logical `usda_nutrition` tool is still one
+reserved composite operation and makes no additional model calls.
+
+Search sends all punctuation-separated terms to FDC as required terms. It reads
+one relevance-ranked page of at most 200 Foundation/SR Legacy records, validates
+it, preserves every term locally, then ranks before the app's 20-candidate limit.
+Preparation words match whole words (`raw` does not match `strawberry`).
+Exact descriptions rank first, then raw ingredients, other entries and prepared
+food categories. This prioritizes raw chicken without inventing a cut/skin.
+`truncated=true` also reports an incomplete upstream page, even with fewer than
+20 eligible candidates: refine the query rather than assume exhaustive results.
 
 A name-only lookup requires one unambiguous description/short-description match:
 case/whitespace/comma normalization or identical words in a different order.
 It does not infer a cut, skin, preparation, synonym or food form from a generic
 name. Empty searches never broaden by dropping terms; a saturated
 20-row result cannot establish uniqueness and is never automatically selected.
-An explicit selected NDB number must belong to the current source search results;
-its profile descriptions/category must match that candidate before values are used.
+An explicit selected FDC ID must belong to the current search results;
+its detail ID, data type and descriptions must match before values are used.
 Unknown/ambiguous foods have unavailable nutrition rather than an invented mapping.
 At most nine distinct name/selection pairs are queried per recipe, reusing
 profiles only within that request; this bounds execution to 18 read-only MCP
@@ -270,8 +185,10 @@ A nutrient is `known` only if every ingredient contributes that nutrient;
 when one nutrient is missing. The overall status is `known` only when all six
 nutrients cover every ingredient. An entirely `unavailable` result has no
 amounts, mappings or citations, but still includes unknown-component coverage.
-The upstream query omits zero-valued nutrients, so an absent nutrient is
-**unknown, not zero**. An explicitly returned zero is retained as source data.
+An absent/null API nutrient is **unknown, not zero**. An explicitly returned
+zero is retained as source data. Nutrients are selected by FDC nutrient ID,
+not a provider spelling guess. Energy uses kcal ID 1008 when present, otherwise
+2048 (Atwater specific), then 2047 (Atwater general); kJ is never relabeled kcal.
 Consumers must label partial amounts as subtotals and display the notice; none
 of these states certifies a precise cooked-food measurement, diagnosis or
 treatment.
@@ -281,10 +198,11 @@ detailed coverage/weights; defaults preserve read compatibility without
 inventing coverage for them. No new configuration is required beyond the
 existing enabled USDA integration.
 
-Provenance includes the unchanged NDB number, a unique `usda:sr:<ndb_no>` source,
-the USDA SR dataset reference and `version="SR (release unspecified)"`: the
-dependency does not return a dataset release and the backend never fabricates
-one. A nutrition profile must match the selected food descriptions/category.
+Provenance includes the unchanged FDC ID, a unique `usda:fdc:<fdc_id>` source,
+the canonical `https://fdc.nal.usda.gov/food-details/<fdc_id>/nutrients` reference
+and the source data type/publication date (explicitly unspecified when absent).
+Older stored `usda:sr:` citations remain historical evidence and are not rewritten
+or reinterpreted as FDC IDs. A fresh profile must match the selected candidate.
 No nutrition output from model memory is accepted.
 
 `ASC_USDA_MCP_TIMEOUT_SECONDS` defaults to 10 (maximum 10), inside the shared
@@ -301,12 +219,12 @@ source IDs, omissions, errors, schemas, limits, cancellation and credential
 redaction. `tests/integration/test_usda_specialist.py` runs an actual child-process
 MCP exchange through the recipe specialist and validates the final recipe.
 Its protocol fixture contains **synthetic** foods and values; it is not a live
-database check or USDA data certification, and is never selectable in deployment.
-The startup integration checks also run the actual registered search SQL against
-an in-memory SQLite fixture with more than 20 prepared chicken products, raw cuts
-and cooked entries. They verify term preservation, pre-limit filtering/ranking,
-word-boundary preparation matching and selected-ID revalidation through the real
-pinned server and MCP SDK; they do not certify a live PostgreSQL import.
+USDA API check or data certification, and is never selectable in deployment.
+The startup integration checks run the actual production MCP server with a
+synthetic HTTP transport and more than 20 prepared chicken products. They cover
+word preservation/ranking, FDC attribution, source-ID revalidation, startup,
+process reuse and shutdown. Unit checks cover malformed/oversized API payloads,
+units, missing/zero values, authentication, rate limiting and timeouts.
 
 ## Ingredient calories in the app
 
@@ -317,7 +235,7 @@ USDA description from **Choose the USDA food**, checking its cut, skin and
 preparation. Up to 20 real source candidates are shown; a full result set asks
 you to refine the query. No first-hit or model-memory choice is made.
 The result shows source-backed kcal **per 100 g**, the
-unchanged SR NDB number, source ID and dataset provenance. It does not infer a
+unchanged FDC ID, source ID and data-type/publication provenance. It does not infer a
 portion size or update groceries. Unknown/ambiguous matches and missing energy
 values stay unavailable rather than becoming zero. Nutrition remains an
 informational estimate, not medical advice.
@@ -328,7 +246,8 @@ The signed-in browser sends `POST /api/v1/nutrition/lookup` with
 the enabled app's real USDA adapter, deadlines and allowlist. It sends only the
 ingredient description to MCP, not user/profile data, and makes no model calls.
 `POST /api/v1/nutrition/search` takes the same name and returns typed
-`foods` (original `ndb_no`, `long_desc`, `shrt_desc`, `food_group`) and an honest
+`foods` (original `fdc_id`, normalized descriptions/category, `data_type` and
+optional `publication_date`) and an honest
 `truncated` flag. Selecting a candidate sends the original query plus `foodId`
 to `/lookup`; the backend revalidates membership in the search results and the
 source profile. IDs outside that candidate set cannot produce nutrition.
@@ -345,14 +264,14 @@ authentication to test the lookup.
 ### Agent food resolution
 
 `UsdaNutritionTool.search(name, deadline=...)` exposes the same typed, bounded
-source candidates to agent composition. A resolver may select an NDB ID only
+source candidates to agent composition. A resolver may select an FDC ID only
 when the ingredient's cut/form supports it; generic `chicken` cannot authorize
 choosing breast, skin or raw/cooked state. Otherwise ask for clarification or
 leave nutrition unavailable. No source values are generated by the model.
 
 Pass justified selections in `NutritionRequest.selected_food_ids`, keyed by
 ingredient line ID. `RecipeSpecialistService.generate` also accepts those
-`selected_food_ids` for a composing caller; unknown line IDs or malformed NDB
+`selected_food_ids` for a composing caller; unknown line IDs or malformed FDC
 numbers are rejected, and the adapter validates candidate membership and profile
 provenance. Different selections of the same ingredient name never share a cached
 profile. Existing specialist name lookups automatically support equivalent word

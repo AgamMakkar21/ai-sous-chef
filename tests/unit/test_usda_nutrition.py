@@ -20,7 +20,6 @@ from sous_chef.services.nutrition import UsdaNutritionTool
 from sous_chef.services.recipe_specialist import RecipeSpecialistService
 from sous_chef.settings import ConfigurationError, Settings
 from sous_chef.telemetry import configure_safe_telemetry
-from sous_chef.usda_mcp_server import __file__ as LAUNCHER
 
 SERVER = Path(__file__).parents[1] / "fixtures" / "usda_mcp_server.py"
 
@@ -57,13 +56,13 @@ def test_agents_can_search_then_select_a_real_candidate_with_original_source_id(
         selected = NutritionRequest(
             servings=2,
             ingredients=(ingredient("chicken"),),
-            selected_food_ids={"rice": candidates.foods[0].ndb_no},
+            selected_food_ids={"rice": candidates.foods[0].fdc_id},
         )
         evidence = await tool.lookup(selected, deadline=monotonic() + 10)
         assert evidence.status == "known"
         assert evidence.mappings[0].usda_food_id == "99901"
         assert evidence.nutrients[0].amount == 100
-        unrelated = selected.model_copy(update={"selected_food_ids": {"rice": "00001"}})
+        unrelated = selected.model_copy(update={"selected_food_ids": {"rice": "1234567"}})
         assert (await tool.lookup(unrelated, deadline=monotonic() + 10)).status == "unavailable"
 
     asyncio.run(check())
@@ -77,8 +76,8 @@ def test_unambiguous_reordered_words_resolve_without_choosing_a_different_food_f
     assert cooked.status == "unavailable"
 
 
-def test_selected_candidate_line_ids_and_original_five_digit_food_ids_are_validated() -> None:
-    for selection in ({"foreign": "99901"}, {"rice": "123"}, {"rice": "%"}):
+def test_selected_candidate_line_ids_and_original_fdc_ids_are_validated() -> None:
+    for selection in ({"foreign": "99901"}, {"rice": "0"}, {"rice": "00001"}, {"rice": "%"}):
         with pytest.raises(ValidationError):
             NutritionRequest(servings=1, ingredients=(ingredient(),), selected_food_ids=selection)
 
@@ -106,7 +105,7 @@ def test_known_food_has_typed_source_values_and_original_ndb_number() -> None:
     async def check() -> None:
         async with open_usda(config(), deadline=monotonic() + 10) as session:
             profile = await session.food("rice")
-            assert profile.food.ndb_no == "99901"
+            assert profile.food.fdc_id == "99901"
             assert profile.basis == "per_100_g"
             assert profile.nutrients[0].nutr_val == Decimal(200)
             assert profile.nutrients[0].units == "kcal"
@@ -466,31 +465,11 @@ def test_settings_are_explicit_and_credentials_are_redacted() -> None:
         Settings(environment="local", adapter_mode="local", usda_mcp_timeout_seconds=float("inf"))
 
 
-def test_secure_entrypoint_overrides_sample_db_config_and_does_not_inherit_app_secrets(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("ASC_PAGINATION_KEY", "private app credential")
-    environment = {
-        "USDA_MCP_SOURCE": str(SERVER.with_name("usda_dependency.py")),
-        "USDA_POSTGRES_HOST": "synthetic.invalid",
-        "USDA_POSTGRES_DATABASE": "usda",
-        "USDA_POSTGRES_USER": "readonly",
-        "USDA_POSTGRES_PASSWORD": "private server credential",
-    }
-    tool = UsdaNutritionTool(UsdaMcpConfig(Path(sys.executable), Path(LAUNCHER), environment))
-    result = asyncio.run(tool.lookup(request(), deadline=monotonic() + 10))
-    assert result.status == "known"
-    del environment["USDA_POSTGRES_PASSWORD"]
-    with pytest.raises(RecipeToolError) as caught:
-        asyncio.run(tool.lookup(request(), deadline=monotonic() + 10))
-    assert caught.value.code == FoundryFailure.UNAVAILABLE
-
-
 def test_exact_message_and_session_byte_limits() -> None:
     async def check() -> None:
         async with open_usda(config("at_limit"), deadline=monotonic() + 10) as session:
-            # Two setup messages + seven two-message lookups = exactly 2 MiB.
-            for _ in range(7):
+            # Each request budget excludes the one-time initialization exchange.
+            for _ in range(8):
                 await session.food("rice")
             assert session._bytes == 2_097_152
             with pytest.raises(RecipeToolError) as caught:
@@ -542,24 +521,24 @@ def test_live_specialist_factory_selects_real_nutrition_not_fixtures() -> None:
     settings = Settings.model_validate(
         coordination_settings().model_dump()
         | {
-            "usda_mcp_python": Path(sys.executable),
-            "usda_mcp_server": SERVER,
+            "usda_api_key": "synthetic-private-key",
         }
     )
     specialist = RecipeSpecialistService.from_settings(settings)
     assert isinstance(specialist._nutrition, UsdaNutritionTool)
     assert specialist._recipes is None
+    assert UsdaMcpConfig.from_settings(settings).server.name == "usda_mcp_server.py"
 
 
-def test_ndb_leading_zeros_survive_recipe_mapping() -> None:
-    evidence = asyncio.run(
-        UsdaNutritionTool(config("leading_zero")).lookup(
-            request(),
-            deadline=monotonic() + 10,
+def test_legacy_padded_ndb_ids_are_not_reinterpreted_as_fdc_ids() -> None:
+    with pytest.raises(RecipeToolError) as caught:
+        asyncio.run(
+            UsdaNutritionTool(config("leading_zero")).lookup(
+                request(),
+                deadline=monotonic() + 10,
+            )
         )
-    )
-    assert evidence.mappings[0].usda_food_id == "00001"
-    assert evidence.sources[0].source_id == "usda:sr:00001"
+    assert caught.value.code == FoundryFailure.INVALID_RESULT
 
 
 def test_first_fuzzy_search_hit_is_never_assumed_to_be_the_requested_food() -> None:

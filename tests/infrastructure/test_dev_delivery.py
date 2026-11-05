@@ -469,12 +469,7 @@ class DeliveryTests(unittest.TestCase):
             frontend = b"<html><body>compiled frontend fixture</body></html>"
             (backend / "static" / "index.html").write_bytes(frontend)
             archive = Path(directory) / "app.zip"
-            usda_source = Path(directory) / "usda-main.py"
-            usda_source.write_bytes(b"# checksum-verified synthetic USDA source\n")
-            with (
-                patch.object(delivery, "ROOT", root),
-                patch("sous_chef.usda_dependency.installed_source", return_value=usda_source),
-            ):
+            with patch.object(delivery, "ROOT", root):
                 delivery.package(sha, archive)
             with zipfile.ZipFile(archive) as package:
                 names = package.namelist()
@@ -484,9 +479,7 @@ class DeliveryTests(unittest.TestCase):
                     package.read("backend/src/sous_chef/app.py"), b"# reviewed backend fixture\n"
                 )
                 self.assertEqual(package.read("backend/src/sous_chef/static/index.html"), frontend)
-                self.assertEqual(
-                    package.read("backend/src/sous_chef/_usda/main.py"), usda_source.read_bytes()
-                )
+                self.assertNotIn("backend/src/sous_chef/_usda/main.py", names)
                 self.assertEqual(
                     json.loads(package.read("backend/src/sous_chef/release.json")), {"commit": sha}
                 )

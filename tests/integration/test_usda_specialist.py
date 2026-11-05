@@ -79,7 +79,7 @@ def test_recipe_uses_only_readonly_source_nutrition_with_exact_mappings(
     calls = [message["params"] for message in messages if message["method"] == "tools/call"]
     assert len(calls) == 6 and len(model.requests) == 1
     assert {call["name"] for call in calls} == {"search_foods", "get_nutrition_profile"}
-    assert {tuple(call["arguments"]) for call in calls} == {("keyword", "limit"), ("ndb_no",)}
+    assert {tuple(call["arguments"]) for call in calls} == {("keyword", "limit"), ("fdc_id",)}
     assert "peanut" not in log.read_text()  # No profile/history/identity enters USDA.
     assert "99901" not in caplog.text and "rice" not in caplog.text
 
