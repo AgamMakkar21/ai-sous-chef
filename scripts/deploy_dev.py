@@ -17,6 +17,11 @@ if TYPE_CHECKING:
 
 ROOT = Path(__file__).resolve().parents[1]
 ROLES = ("orchestrator", "recipe_nutrition")
+WORKER_HOST_CONFIG = {
+    "linuxFxVersion": "Python|3.12",
+    "alwaysOn": True,
+    "healthCheckPath": "/api/health",
+}
 
 
 class DeliveryError(RuntimeError):
@@ -572,7 +577,22 @@ def smoke(
     raise DeliveryError(f"{environment} smoke failed at {last_failure} after five minutes.")
 
 
-def worker_target(environment: str = "dev", *, allow_dispatch: bool = False) -> dict[str, Any]:
+def _worker_host_mismatches(config: dict[str, Any]) -> list[str]:
+    mismatches = []
+    for name, expected in WORKER_HOST_CONFIG.items():
+        actual = config.get(name)
+        if name == "linuxFxVersion" and isinstance(actual, str):
+            actual, expected = actual.casefold(), str(expected).casefold()
+        if type(actual) is not type(expected) or actual != expected:
+            mismatches.append(name)
+    return mismatches
+
+
+def worker_target(
+    environment: str = "dev", *, allow_dispatch: bool = False, configure_host: bool = False
+) -> dict[str, Any]:
+    if configure_host and (environment != "dev" or allow_dispatch):
+        raise DeliveryError("Worker host configuration changes require a reviewed dev push.")
     release_event(environment, allow_dispatch)
     group = required("ASC_RESOURCE_GROUP")
     worker: dict[str, Any] = az(
@@ -669,12 +689,31 @@ def worker_target(environment: str = "dev", *, allow_dispatch: bool = False) -> 
             "Worker runtime, keyless connections, monitoring or build settings mismatch."
         )
     config = az("webapp", "config", "show", "-g", group, "-n", required("ASC_FUNCTION_APP_NAME"))
-    if (
-        config.get("linuxFxVersion", "").lower() != "python|3.12"
-        or config.get("alwaysOn") is not True
-        or config.get("healthCheckPath") != "/api/health"
-    ):
-        raise DeliveryError("Worker requires Python 3.12, Always On and the host health check.")
+    mismatches = _worker_host_mismatches(config)
+    if mismatches and configure_host:
+        print("Applying reviewed worker host settings: " + ", ".join(mismatches) + ".")
+        az(
+            "webapp",
+            "config",
+            "set",
+            "-g",
+            group,
+            "-n",
+            required("ASC_FUNCTION_APP_NAME"),
+            "--generic-configurations",
+            json.dumps(WORKER_HOST_CONFIG),
+            expect_json=False,
+        )
+        config = az(
+            "webapp", "config", "show", "-g", group, "-n", required("ASC_FUNCTION_APP_NAME")
+        )
+        mismatches = _worker_host_mismatches(config)
+    if mismatches:
+        raise DeliveryError(
+            "Worker host configuration mismatch: "
+            + ", ".join(mismatches)
+            + ". Requires Python 3.12, Always On and healthCheckPath=/api/health."
+        )
     return worker
 
 
@@ -697,7 +736,7 @@ def worker_deploy() -> None:
     sha = commit()
     if command("git", "rev-parse", "HEAD").strip() != sha or current_dev_commit() != sha:
         raise DeliveryError("Worker checkout must match the current reviewed dev commit.")
-    worker_target()
+    worker_target(configure_host=True)
     archive = Path(os.environ["RUNNER_TEMP"]) / "asc-worker-dev.zip"
     try:
         worker_package(sha, archive)

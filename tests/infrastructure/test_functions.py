@@ -238,6 +238,8 @@ class FunctionsDeliveryTests(unittest.TestCase):
             "wrong_endpoint",
             "no_monitoring_auth",
             "no_always_on",
+            "no_health",
+            "wrong_health",
             "no_build",
         ):
             worker, web, config = self.fixtures()
@@ -269,6 +271,10 @@ class FunctionsDeliveryTests(unittest.TestCase):
                 del settings["APPLICATIONINSIGHTS_AUTHENTICATION_STRING"]
             elif mode == "no_always_on":
                 config["alwaysOn"] = False
+            elif mode == "no_health":
+                del config["healthCheckPath"]
+            elif mode == "wrong_health":
+                config["healthCheckPath"] = "/health"
             elif mode == "no_build":
                 settings["SCM_DO_BUILD_DURING_DEPLOYMENT"] = "false"
             with (
@@ -290,6 +296,107 @@ class FunctionsDeliveryTests(unittest.TestCase):
                 else:
                     with self.assertRaises(delivery.DeliveryError):
                         delivery.worker_target()
+
+    def test_dev_delivery_applies_only_declared_host_settings_and_reads_them_back(self) -> None:
+        for changes in (
+            {},
+            {"linuxFxVersion": "Python|3.11"},
+            {"alwaysOn": False},
+            {"alwaysOn": 1},
+            {"healthCheckPath": None},
+            {"linuxFxVersion": "", "alwaysOn": False, "healthCheckPath": ""},
+        ):
+            worker, web, config = self.fixtures()
+            responses = [
+                worker,
+                web,
+                [{"name": key, "value": value} for key, value in SETTINGS.items()],
+                config | changes,
+                None,
+                config,
+            ]
+            with (
+                self.subTest(changes=changes),
+                patch.dict(os.environ, ENV, clear=True),
+                patch.object(delivery, "az", side_effect=responses) as az,
+            ):
+                self.assertEqual(delivery.worker_target(configure_host=True), worker)
+                self.assertEqual(az.call_count, 6 if changes else 4)
+                if changes:
+                    update = az.call_args_list[4]
+                    self.assertEqual(update.args[:3], ("webapp", "config", "set"))
+                    self.assertEqual(update.args[update.args.index("-n") + 1], "synthetic-worker")
+                    payload = update.args[update.args.index("--generic-configurations") + 1]
+                    self.assertEqual(json.loads(payload), config)
+                    self.assertEqual(update.kwargs, {"expect_json": False})
+                    self.assertEqual(az.call_args_list[5].args[:3], ("webapp", "config", "show"))
+
+    def test_host_reconciliation_cannot_continue_after_a_failed_update_or_readback(self) -> None:
+        for failure in ("update", "readback"):
+            worker, web, config = self.fixtures()
+            drift = config | {"healthCheckPath": None}
+            with (
+                self.subTest(failure=failure),
+                patch.dict(os.environ, ENV, clear=True),
+                patch.object(
+                    delivery,
+                    "az",
+                    side_effect=[
+                        worker,
+                        web,
+                        [{"name": key, "value": value} for key, value in SETTINGS.items()],
+                        drift,
+                        delivery.DeliveryError("Update rejected") if failure == "update" else None,
+                        drift,
+                    ],
+                ) as az,
+            ):
+                with self.assertRaises(delivery.DeliveryError) as caught:
+                    delivery.worker_target(configure_host=True)
+                self.assertEqual(az.call_count, 5 if failure == "update" else 6)
+                if failure == "readback":
+                    self.assertIn("healthCheckPath", str(caught.exception))
+
+    def test_host_reconciliation_still_rejects_unsafe_targets_before_writing(self) -> None:
+        for mode in ("prod", "same_identity", "connection_string", "no_build"):
+            worker, web, config = self.fixtures()
+            settings = dict(SETTINGS)
+            if mode == "prod":
+                worker["tags"]["environment"] = "prod"
+            elif mode == "same_identity":
+                worker["identity"] = web["identity"]
+            elif mode == "connection_string":
+                settings["AzureWebJobsStorage"] = "private-key"
+            else:
+                settings["SCM_DO_BUILD_DURING_DEPLOYMENT"] = "false"
+            with (
+                self.subTest(mode=mode),
+                patch.dict(os.environ, ENV, clear=True),
+                patch.object(
+                    delivery,
+                    "az",
+                    side_effect=[
+                        worker,
+                        web,
+                        [{"name": key, "value": value} for key, value in settings.items()],
+                        config | {"healthCheckPath": None},
+                    ],
+                ) as az,
+            ):
+                with self.assertRaises(delivery.DeliveryError) as caught:
+                    delivery.worker_target(configure_host=True)
+                self.assertNotIn("private-key", str(caught.exception))
+                self.assertFalse(
+                    any(call.args[:3] == ("webapp", "config", "set") for call in az.call_args_list)
+                )
+
+    def test_production_and_dispatch_checks_cannot_reconcile_host_settings(self) -> None:
+        with patch.object(delivery, "az") as az:
+            with self.assertRaisesRegex(delivery.DeliveryError, "reviewed dev push"):
+                delivery.worker_target("prod", configure_host=True)
+            with self.assertRaisesRegex(delivery.DeliveryError, "reviewed dev push"):
+                delivery.worker_target(allow_dispatch=True, configure_host=True)
+            az.assert_not_called()
 
     def test_package_uses_committed_worker_and_has_correct_zip_root(self) -> None:
         source = io.BytesIO()
@@ -329,7 +436,7 @@ class FunctionsDeliveryTests(unittest.TestCase):
                         "current_dev_commit",
                         return_value="b" * 40 if mode == "stale" else SHA,
                     ),
-                    patch.object(delivery, "worker_target"),
+                    patch.object(delivery, "worker_target") as target,
                     patch.object(
                         delivery, "worker_package", side_effect=lambda *args: args[1].touch()
                     ) as package,
@@ -344,6 +451,7 @@ class FunctionsDeliveryTests(unittest.TestCase):
                 ):
                     if mode == "valid":
                         delivery.worker_deploy()
+                        target.assert_called_once_with(configure_host=True)
                         self.assertEqual(az.call_count, 2)
                         self.assertEqual(az.call_args.kwargs, {"expect_json": False})
                         self.assertIn("synthetic-worker", az.call_args_list[0].args)
