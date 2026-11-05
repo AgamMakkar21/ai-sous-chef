@@ -16,6 +16,7 @@ from pydantic import (
 from pydantic.alias_generators import to_camel
 
 from sous_chef.domain.cosmos import MAX_PAGE_SIZE
+from sous_chef.domain.recipes import StructuredRecipe
 
 MAX_CURSOR_LENGTH = 24 * 1024
 
@@ -85,6 +86,8 @@ class ConversationTurn(ConversationModel):
     messages: tuple[TurnMessage, ...] = Field(min_length=1, max_length=2, repr=False)
     created_at: AwareDatetime
     updated_at: AwareDatetime
+    generated_recipe_id: UUID4 | None = None
+    recipe: StructuredRecipe | None = Field(default=None, repr=False)
 
     @model_validator(mode="after")
     def validate_exchange(self) -> Self:
@@ -92,6 +95,10 @@ class ConversationTurn(ConversationModel):
         expected = ("user", "assistant") if self.status == "completed" else ("user",)
         if roles != expected:
             raise ValueError("A turn must contain only its public exchange in status order.")
+        if (self.recipe is None) != (self.generated_recipe_id is None) or (
+            self.recipe is not None and self.status != "completed"
+        ):
+            raise ValueError("Only a completed recipe exchange can expose a recipe and reference.")
         return self
 
 

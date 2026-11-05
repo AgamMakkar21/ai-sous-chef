@@ -3,9 +3,9 @@
 This slice implements the coordinator policy with mocked specialist/tools.
 [ASC-26's Recipe + Nutrition specialist](recipe-specialist.md) now implements its
 typed seam with a full structured recipe and explicitly injected tool interfaces.
-Neither slice activates live recipe chat, attaches live grounding/nutrition tools,
-persists a recipe, or approves a final recipe for display. ASC-38 / #39 composes
-the live request.
+ASC-38 / #39's [recipe-chat executor](conversations.md#executor-setup) attaches the
+live grounding/nutrition tools and composes this service with durable chat
+persistence and the final display gate. Release activation remains separately reviewed.
 
 ## Source and execution contract
 
@@ -108,11 +108,14 @@ every full structured candidate after enrichment and every revision, including
 ingredient-bearing instructions and cooking policy. It rejects a projection
 that does not match the full recipe. One rejection can use the existing single
 revision, never a separate model budget; exhausted safety attempts return a fixed
-`unable` response without a recipe. ASC-38 must compose the full recipe into the
+`unable` response without a recipe. ASC-38 passes the full recipe into the
 chat completion hook, which rereads the current owned profile before rendering
-and persistence. It must not treat a projection-only result as `ValidatedReply`.
+and persistence. Its executor rejects projection-only results rather than
+turning them into a successful `ValidatedReply`.
 
-Specialist failures are not retried. Deadline/cancellation cancels local awaiting
+Specialist failures are not retried. The executor preserves uncertain specialist
+transport outcomes when the Orchestrator wraps them, instead of marking them
+known retryable failures. Deadline/cancellation cancels local awaiting
 work and starts no replacement run; it does not prove a remote operation stopped.
 The existing chat outcome-unknown/reconciliation rules still apply. Safe errors
 carry only an allowlisted code and opaque operation ID. Operational events never

@@ -21,6 +21,7 @@ from test_cosmos_repository import SyntheticCredential, Transport
 from test_cosmos_repository import harness as harness
 from test_grocery_api import GROCERIES, add
 from test_profile_api import ME, onboard, preferences, signed_token
+from test_recipe_safety import full_recipe
 
 
 @dataclass(frozen=True)
@@ -230,6 +231,39 @@ def test_every_product_operation_has_a_matrix_case_or_reviewable_exemption(
     local_settings: Settings,
 ) -> None:
     assert_route_inventory(create_app(local_settings))
+
+
+def test_structured_recipe_and_reference_stay_in_the_authenticated_partition(
+    two_user_api: TwoUserApi,
+) -> None:
+    api = two_user_api
+    alice, bob = api.users
+    api.executor.recipe = full_recipe()
+    before = len(api.transport.item_calls())
+    generated = api.request(SEND_CASE, alice, headers=bob.hints())
+    assert generated.status_code == 200, generated.text
+    api.assert_partition(alice, before)
+    turn = generated.json()["data"]
+    assert turn["recipe"] and turn["generatedRecipeId"] == str(api.executor.recipe_id)
+    calls = len(api.executor.calls)
+    denied = api.request(SEND_CASE, bob, target=alice, headers=alice.hints())
+    assert_problem(denied, 404, "not_found")
+    history_case = next(
+        case
+        for case in CASES
+        if case.path.endswith("/{conversation_id}/turns") and case.method == "GET"
+    )
+    before = len(api.transport.item_calls())
+    history = api.request(history_case, bob, headers=alice.hints())
+    assert history.status_code == 200
+    api.assert_partition(bob, before)
+    assert turn["generatedRecipeId"] not in history.text
+    assert all(item["recipe"] is None for item in history.json()["items"])
+    alice.assert_private(history)
+    inspected = api.client.get(generated.headers["location"], headers=bob.headers)
+    assert_problem(inspected, 404, "not_found")
+    assert turn["generatedRecipeId"] not in denied.text + inspected.text
+    assert len(api.executor.calls) == calls
 
 
 @pytest.mark.parametrize("include_in_schema", [True, False])

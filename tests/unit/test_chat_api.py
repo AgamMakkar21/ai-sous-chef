@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from threading import Barrier, Event
+from time import monotonic
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -13,7 +14,7 @@ from fastapi.testclient import TestClient
 from sous_chef.adapters.cosmos import CosmosRepository, open_cosmos
 from sous_chef.app import create_app
 from sous_chef.domain.authorization import AuthenticatedUser, OwnedResourceNotFound
-from sous_chef.domain.chat import ChatExecution, ExecutionFailed, ValidatedReply
+from sous_chef.domain.chat import CLARIFICATIONS, ChatExecution, ExecutionFailed, ValidatedReply
 from sous_chef.domain.cosmos import (
     CosmosError,
     CosmosFailure,
@@ -22,15 +23,18 @@ from sous_chef.domain.cosmos import (
     RecordPatch,
     StoredRecord,
 )
-from sous_chef.domain.recipe_safety import RecipeSafetyError
+from sous_chef.domain.recipe_safety import UNABLE, RecipeSafetyError
 from sous_chef.domain.recipes import StructuredRecipe
 from sous_chef.services import chat
+from sous_chef.services.orchestrator import OrchestratorService
+from sous_chef.services.recipe_chat import RecipeChatExecutor
 from sous_chef.services.recipe_safety import prepare_recipe_save
 from sous_chef.settings import Settings
 from test_conversation_api import BASE, CHAT, OWNER, create
 from test_conversation_api import conversation_settings as conversation_settings
 from test_cosmos_repository import SyntheticCredential, Transport
 from test_cosmos_repository import harness as harness
+from test_orchestrator import Coordinator, Specialist, answer, call, candidate, context
 from test_profile_api import onboard, signed_token
 from test_recipe_safety import full_recipe
 
@@ -764,3 +768,29 @@ def test_missing_onboarding_and_executor_fail_without_creating_turns(
         assert response.json()["code"] == "configuration_unavailable"
     assert not executor.calls
     assert not documents(harness[0], "turn")
+
+
+@pytest.mark.parametrize("outcome", ["candidate", "clarification", "unable"])
+def test_managed_executor_rejects_projection_only_results_and_uses_fixed_control_text(
+    outcome: str,
+) -> None:
+    coordinator = Coordinator(
+        *(
+            (call(), answer())
+            if outcome == "candidate"
+            else (answer(outcome, explanation="Private model-authored prose"),)
+        )
+    )
+    executor = RecipeChatExecutor(
+        OrchestratorService(coordinator, Specialist(candidate())), "orchestrator-agent"
+    )
+    request = ChatExecution(OWNER, uuid4(), uuid4(), uuid4(), context(), deadline=monotonic() + 30)
+    if outcome == "candidate":
+        with pytest.raises(ExecutionFailed, match="complete structured recipe"):
+            asyncio.run(executor.execute(request))
+    else:
+        reply = asyncio.run(executor.execute(request))
+        assert reply.kind == outcome and reply.recipe is None
+        assert reply.content == (UNABLE if outcome == "unable" else CLARIFICATIONS["request"])
+    assert coordinator.requests[0].request.prompt == request.context.prompt
+    assert coordinator.requests[0].request.operation_id == request.operation_id

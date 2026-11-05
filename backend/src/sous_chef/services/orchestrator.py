@@ -16,7 +16,7 @@ from sous_chef.domain.food_safety import (
     Verdict,
     validate_ingredients,
 )
-from sous_chef.domain.foundry import FoundryGatewayError
+from sous_chef.domain.foundry import FoundryFailure, FoundryGatewayError
 from sous_chef.domain.orchestrator import (
     POLICY,
     CoordinationPrompt,
@@ -256,9 +256,12 @@ class OrchestratorService:
                     max_output_tokens=POLICY.output_tokens_per_call,
                     deadline=deadline,
                 )
-            except FoundryGatewayError:
+            except FoundryGatewayError as error:
                 raise OrchestratorError(
-                    OrchestratorFailure.SPECIALIST_FAILED, budget.operation_id
+                    OrchestratorFailure.SPECIALIST_FAILED,
+                    budget.operation_id,
+                    outcome_unknown=error.code
+                    in {FoundryFailure.TIMEOUT, FoundryFailure.UNAVAILABLE},
                 ) from None
             budget.usage(specialist.usage)
             candidate = specialist.candidate

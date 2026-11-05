@@ -22,6 +22,7 @@ from sous_chef.domain.context import LearnedPreferenceReader
 from sous_chef.domain.readiness import ReadinessProbe
 from sous_chef.services.nutrition import UsdaNutritionTool
 from sous_chef.services.readiness import ReadinessService
+from sous_chef.services.recipe_chat import RecipeChatExecutor
 from sous_chef.settings import ConfigurationError, Settings, load_settings
 from sous_chef.telemetry import configure_safe_telemetry
 
@@ -43,6 +44,13 @@ def create_app(
 ) -> FastAPI:
     configure_safe_telemetry()
     config = settings if settings is not None else load_settings()
+    if (
+        chat_executor is None
+        and config.adapter_mode == "live"
+        and config.agents_enabled
+        and config.usda_enabled
+    ):
+        chat_executor = RecipeChatExecutor.from_settings(config)
     probe = readiness_probe
     if probe is None:
         probe = (

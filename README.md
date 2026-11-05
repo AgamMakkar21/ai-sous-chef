@@ -244,7 +244,8 @@ ASC-25 adds source-versioned Orchestrator instructions, strict New Foundry
 function-call routing, backend-enforced call/revision budgets, and mocked
 specialist/tool contracts. See [Orchestrator policy and source publication](docs/orchestrator.md).
 This does not enable agents in the release manifest or complete live recipe chat.
-Specialist instructions and user chat integration remain separate deliverables.
+ASC-38 adds the [runtime composition](docs/conversations.md#executor-setup);
+reviewed release activation and live dev acceptance remain separate.
 
 ## User-scoped Cosmos access
 
@@ -262,9 +263,13 @@ encrypted cursors preserve user scope, ordering and the first-page upper bound.
 Set the protected `ASC_PAGINATION_KEY` alongside the existing live Cosmos/auth
 configuration. See [conversation setup and HTTP contracts](docs/conversations.md).
 ASC-22 adds durable chat sends, operation inspection and explicit failed-turn
-retries behind an injected execution boundary. No production executor or fake
-success fallback is installed: new sends return a safe 503 until the real
-pipeline is wired in ASC-38. Completed sends remain replayable without an executor.
+retries. ASC-38 connects live sends to the pinned Orchestrator and Recipe + Nutrition
+agents, Foundry IQ, USDA nutrition and conditional Web IQ. Completed turns return
+the safety-checked structured recipe and its generated reference. Runtime composition
+requires live adapters, enabled agents and enabled USDA with complete reviewed
+configuration; otherwise new sends still fail safely before admission.
+The dev agent release manifest remains disabled. No fake success fallback is
+installed, and completed sends remain replayable without an executor.
 See the [send/retry contract](docs/conversations.md#durable-chat-sends-asc-22).
 
 ## Recipe corpus ingestion
