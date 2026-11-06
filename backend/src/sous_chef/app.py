@@ -17,6 +17,7 @@ from sous_chef.api.nutrition import create_nutrition_router
 from sous_chef.api.observability import RequestLoggingMiddleware
 from sous_chef.api.problems import problem_response, register_problem_handlers
 from sous_chef.api.profiles import create_profile_router
+from sous_chef.api.recipes import create_recipe_router
 from sous_chef.domain.chat import ChatExecutor
 from sous_chef.domain.context import LearnedPreferenceReader
 from sous_chef.domain.readiness import ReadinessProbe
@@ -87,6 +88,7 @@ def create_app(
     app.include_router(create_grocery_router(config))
     app.include_router(create_nutrition_router())
     app.include_router(create_profile_router(config))
+    app.include_router(create_recipe_router(config, chat_executor, learned_preference_reader))
     app.include_router(
         create_health_router(ReadinessService(probe, config.readiness_timeout_seconds))
     )

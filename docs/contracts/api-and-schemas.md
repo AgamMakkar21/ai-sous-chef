@@ -213,7 +213,8 @@ All stored records include `id`, `userId`, `schemaVersion`, and `createdAt`.
 Mutable records include `updatedAt` and concurrency metadata.
 The three product containers use `/userId`; internal leases are separate.
 Persist the unprefixed record-kind discriminator as `recordKind` (`profile`,
-`conversation`, `turn`, `sendOperation`, `recipe`, `behavior`, `feedbackRevision`,
+`conversation`, `conversationCreation`, `turn`, `sendOperation`, `recipe`,
+`recipeOperation`, `behavior`, `feedbackRevision`,
 or `processing`). Feedback/processing provenance uses `sourceId` for its owned
 source-record reference. The [Cosmos storage contract](../../infra/cosmos.md)
 defines the immutable lease key, scalar/composite indexes, and deployment checks.
@@ -236,9 +237,14 @@ Transactions are limited to one container and logical partition; sharing
 | `ChatHistory.sendOperation` | `conversationId`, `turnId`, idempotency identity/hash, attempt state, `providerResponseId?`, turn/result references, safe failure code |
 | Generated recipe snapshot | `generatedRecipeId`, `occasionId`, `supersedesRecipeId?`, title, servings, minutes, skill, concise fit reasons, ingredients, instructions, shopping items, nutrition, sources, safety profile revision |
 | `RecipeHistory.recipe` | `historyId`, `occasionId`, `generatedRecipeId`, immutable full snapshot, `accepted`, `savedAt`, `cookedAt: timestamp or null`, current rating/note, feedback revision, processing status |
+| `RecipeHistory.recipeOperation` | Private operation-scoped request hash, action and result reference; committed atomically with the lifecycle effect |
 | `RecipeHistory.behavior` | `occasionId`, owned generated/history reference, `kind: saved/rejected/revisionRequested`, bounded reason, behavior revision, provenance |
 | `RecipeHistory.feedbackRevision` | History/occasion reference, feedback revision, current rating/note at that revision, superseded revision reference, processing provenance |
 | `RecipeHistory.processing` | Owned source/revision, policy version, status/attempts, validated evidence references, result/receipt and safe failure classification |
+
+The [ASC-42 lifecycle guide](../recipe-lifecycle.md) documents the implemented
+save, cooking, rejection and revision mutations, including their replay and
+ETag rules. History GETs and feedback remain separate deliverables.
 
 Provider response and optional provider conversation IDs are internal references
 to New Foundry Responses/Conversations, not classic Threads/Runs. Map them

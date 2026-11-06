@@ -20,6 +20,7 @@ from sous_chef.domain.context import (
     ContextPreference,
     LearnedCandidate,
     LearnedPreferenceReader,
+    RecipeRevisionContext,
     RequestContext,
     ResolvedPreference,
 )
@@ -168,6 +169,7 @@ class ContextService:
         content: str,
         *,
         deadline: float,
+        revision: RecipeRevisionContext | None = None,
     ) -> RequestContext:
         user.require_owned(profile.body)
         explicit = require_onboarding(profile_view(profile))
@@ -238,5 +240,6 @@ class ContextService:
             history=tuple(reversed(exchanges)),
             learned_preferences=learned,
             current_request=content,
+            revision=revision,
         )
         return bound_context(context)

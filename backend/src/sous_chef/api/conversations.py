@@ -10,6 +10,7 @@ from sous_chef.api.problems import problem_response
 from sous_chef.domain.chat import (
     ChatExecutor,
     OperationEnvelope,
+    OperationView,
     SendMessage,
     TurnEnvelope,
 )
@@ -30,6 +31,33 @@ from sous_chef.settings import Settings
 def _query(request: Request) -> None:
     if len(request.query_params.multi_items()) != len(request.query_params):
         raise RequestValidationError([{"type": "extra_forbidden", "loc": ("query",)}])
+
+
+def operation_response(
+    operation: OperationView, response: Response
+) -> TurnEnvelope | OperationEnvelope | JSONResponse:
+    location = (
+        f"/api/v1/conversations/{operation.conversation_id}/operations/{operation.operation_id}"
+    )
+    response.headers["Location"] = location
+    response.headers["Cache-Control"] = "no-store"
+    if operation.status == "completed":
+        return TurnEnvelope(data=operation.turn)
+    if operation.status == "pending":
+        response.status_code = 202
+        response.headers["Retry-After"] = "2"
+        return OperationEnvelope(data=operation)
+    unknown = operation.status == "outcomeUnknown"
+    failure = problem_response(
+        504 if unknown else 502,
+        operation.failure_code or "execution_failed",
+        "Chat outcome unknown" if unknown else "Chat execution failed",
+        "Inspect the operation before taking any further action."
+        if unknown
+        else "Inspect the failed turn; explicitly retry it with a new key.",
+    )
+    failure.headers["Location"] = location
+    return failure
 
 
 def create_conversation_router(
@@ -96,26 +124,7 @@ def create_conversation_router(
         operation = await ChatService(settings, executor, learned_reader).send(
             user, conversation_id, payload, idempotency_key
         )
-        location = f"/api/v1/conversations/{conversation_id}/operations/{operation.operation_id}"
-        response.headers["Location"] = location
-        response.headers["Cache-Control"] = "no-store"
-        if operation.status == "completed":
-            return TurnEnvelope(data=operation.turn)
-        if operation.status == "pending":
-            response.status_code = 202
-            response.headers["Retry-After"] = "2"
-            return OperationEnvelope(data=operation)
-        unknown = operation.status == "outcomeUnknown"
-        failure = problem_response(
-            504 if unknown else 502,
-            operation.failure_code or "execution_failed",
-            "Chat outcome unknown" if unknown else "Chat execution failed",
-            "Inspect the operation before taking any further action."
-            if unknown
-            else "Inspect the failed turn; explicitly retry it with a new key.",
-        )
-        failure.headers["Location"] = location
-        return failure
+        return operation_response(operation, response)
 
     @router.get("/{conversation_id}/operations/{operation_id}")
     async def inspect_operation(

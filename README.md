@@ -103,6 +103,10 @@ See [CI setup and required-check wiring](docs/ci.md) for exact check names,
 local commands, safety boundaries, and the administrator's enforcement checklist.
 This workflow validates code only; it does not deploy to Azure.
 
+The [recipe lifecycle APIs](docs/recipe-lifecycle.md) support explicit save/cook,
+rejection and safety-checked revision actions. Generated suggestions alone do
+not create cooking history or feedback evidence.
+
 Reviewed merges into `dev` have a separate, dev-only OIDC deployment workflow.
 See [dev delivery setup](docs/dev-delivery.md) for owner bootstrap, scoped roles,
 versioned agent release pins, smoke checks and recovery.

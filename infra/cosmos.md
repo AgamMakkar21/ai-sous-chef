@@ -65,7 +65,7 @@ and cannot enforce learned-state-only JSON-property writes.
 | --- | --- | --- |
 | `Users` | `/userId`, Hash v2 | One bounded `profile`; point read with `id=userId` |
 | `ChatHistory` | `/userId`, Hash v2 | `conversation`, `conversationCreation`, `turn`, `sendOperation` |
-| `RecipeHistory` | `/userId`, Hash v2 | `recipe`, `behavior`, `feedbackRevision`, `processing` |
+| `RecipeHistory` | `/userId`, Hash v2 | `recipe`, `recipeOperation`, `behavior`, `feedbackRevision`, `processing` |
 | `leases` | `/id`, Hash v2 | Future change-feed processor checkpoint/coordination documents only |
 
 Database: `sous-chef`. The discriminator is `recordKind`, containing the unprefixed
@@ -81,6 +81,11 @@ Unbounded history means many bounded records, not infinite capacity in one
 logical partition (20 GB). Monitor per-user growth/throttling; review a
 hierarchical-partition migration before approaching capacity.
 Transactions apply only within one container and user partition.
+
+The [lifecycle APIs](../docs/recipe-lifecycle.md) atomically persist their
+`recipeOperation` receipt and effects in `RecipeHistory`. Generated source lookup
+uses the existing scalar indexes and authenticated partition, with `TOP 2` to
+reject duplicate source references. It never queries across users.
 
 No container sets `defaultTtl`: chat metadata/turns/deduplication remain until
 user-requested deletion, independently of profile and saved-recipe retention.

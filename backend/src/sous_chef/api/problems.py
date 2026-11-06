@@ -13,6 +13,8 @@ from sous_chef.domain.conversations import IdempotencyConflict, InvalidCursor
 from sous_chef.domain.cosmos import CosmosError, CosmosFailure
 from sous_chef.domain.groceries import GROCERY_FIELDS, DuplicateGrocery, GroceryLimitReached
 from sous_chef.domain.profiles import PREFERENCE_FIELDS, OnboardingRequired
+from sous_chef.domain.recipe_lifecycle import RecipeLifecycleConflict
+from sous_chef.domain.recipe_safety import RecipeSafetyError
 from sous_chef.settings import ConfigurationError
 from sous_chef.telemetry import ErrorCategory, error_category, new_trace_id, trace_id
 
@@ -42,6 +44,24 @@ def problem_response(
 
 
 def register_problem_handlers(app: FastAPI) -> None:
+    @app.exception_handler(RecipeSafetyError)
+    async def recipe_safety(_request: Request, _exc: RecipeSafetyError) -> JSONResponse:
+        return problem_response(
+            422,
+            "recipe_safety_rejected",
+            "Recipe cannot be accepted",
+            "Request a new recipe that meets the current ingredient and cooking-safety checks.",
+        )
+
+    @app.exception_handler(RecipeLifecycleConflict)
+    async def recipe_lifecycle(_request: Request, _exc: RecipeLifecycleConflict) -> JSONResponse:
+        return problem_response(
+            409,
+            "recipe_lifecycle_conflict",
+            "Recipe is already planned",
+            "Confirm cooking with the existing history ID and its current ETag.",
+        )
+
     @app.exception_handler(ContextLimitExceeded)
     async def context_limit(_request: Request, _exc: ContextLimitExceeded) -> JSONResponse:
         return problem_response(
@@ -179,7 +199,9 @@ def register_problem_handlers(app: FastAPI) -> None:
             "/api/v1/groceries/"
         )
         if (
-            grocery or _request.url.path in {"/api/v1/me/onboarding", "/api/v1/me/preferences"}
+            grocery
+            or _request.url.path in {"/api/v1/me/onboarding", "/api/v1/me/preferences"}
+            or _request.url.path.startswith("/api/v1/recipes/")
         ) and any(
             error["type"] == "missing" and error["loc"] == ("header", "If-Match")
             for error in exc.errors()
@@ -188,7 +210,7 @@ def register_problem_handlers(app: FastAPI) -> None:
                 428,
                 "precondition_required",
                 "A current revision is required",
-                "Retrieve the profile or grocery list and send its ETag in If-Match.",
+                "Send the current resource ETag in If-Match.",
             )
         malformed_json = any(error["type"] == "json_invalid" for error in exc.errors())
         fields: list[dict[str, str]] = []
