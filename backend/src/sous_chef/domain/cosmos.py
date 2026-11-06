@@ -90,6 +90,7 @@ class HistoryQuery(StorageInput):
     conversation_id: UUID4 | None = None
     created_before: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC), repr=False)
     completed_only: bool = False
+    recipe_filter: Literal["all", "awaitingFeedback", "rated"] = "all"
 
     @model_validator(mode="after")
     def validate_conversation(self) -> Self:
@@ -97,6 +98,8 @@ class HistoryQuery(StorageInput):
             raise ValueError("Only a turn query requires a conversation ID.")
         if self.completed_only and self.kind != "turn":
             raise ValueError("Only turn context can request completed exchanges.")
+        if self.recipe_filter != "all" and self.kind != "recipe":
+            raise ValueError("Only recipe history supports recipe filters.")
         return self
 
 

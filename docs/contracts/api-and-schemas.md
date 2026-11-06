@@ -149,7 +149,7 @@ none accepts a `userId` route/body field.
 | `POST /recipes/{historyId}/cooked` | Confirm cooking; set cooked timestamp once |
 | `POST /generated-recipes/{generatedRecipeId}/rejections` | Record an explicit rejection and optional reason, not abandonment |
 | `POST /generated-recipes/{generatedRecipeId}/revisions` | Request a bounded, safety-checked revision in the source conversation; preserves lineage |
-| `GET /recipes` | Paginated saved/cooked history; optional `awaitingFeedback=true` |
+| `GET /recipes` | Paginated saved/cooked history; optional `awaitingFeedback=true` or `rated=true`, never both |
 | `GET /recipes/{historyId}` | Snapshot, lifecycle, current feedback and safe processing status |
 | `PUT /recipes/{historyId}/feedback` | Cooked-only `liked`/`fine`/`disliked` and optional note; persist the full note as primary specific-preference evidence and atomically create a genuine feedback revision |
 

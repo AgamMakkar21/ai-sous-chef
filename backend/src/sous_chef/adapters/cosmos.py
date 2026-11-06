@@ -656,6 +656,16 @@ class CosmosRepository:
             {"name": "@kind", "value": query.kind},
             {"name": "@upper", "value": _timestamp(query.created_before)},
         ]
+        if query.recipe_filter != "all":
+            sql += " AND IS_DEFINED(c.cookedAt) AND NOT IS_NULL(c.cookedAt)"
+            if query.recipe_filter == "awaitingFeedback":
+                sql += " AND IS_NULL(c.rating)"
+            else:
+                sql += " AND c.rating IN (@liked, @fine, @disliked)"
+                parameters.extend(
+                    {"name": "@" + rating, "value": rating}
+                    for rating in ("liked", "fine", "disliked")
+                )
         if query.conversation_id is not None:
             sql += " AND c.conversationId = @conversation"
             parameters.append({"name": "@conversation", "value": str(query.conversation_id)})
@@ -696,6 +706,22 @@ class CosmosRepository:
                         and record.body.get("conversationId") != str(query.conversation_id)
                     )
                     or (query.completed_only and record.body.get("status") != "completed")
+                    or (
+                        query.recipe_filter != "all"
+                        and (
+                            record.body.get("cookedAt") is None
+                            or (
+                                query.recipe_filter == "awaitingFeedback"
+                                and (
+                                    "rating" not in record.body or record.body["rating"] is not None
+                                )
+                            )
+                            or (
+                                query.recipe_filter == "rated"
+                                and record.body.get("rating") not in ("liked", "fine", "disliked")
+                            )
+                        )
+                    )
                 ):
                     raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4())
                 records.append(record)

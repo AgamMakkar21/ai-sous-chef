@@ -21,6 +21,7 @@ from test_cosmos_repository import SyntheticCredential, Transport
 from test_cosmos_repository import harness as harness
 from test_grocery_api import GROCERIES, add
 from test_profile_api import ME, onboard, preferences, signed_token
+from test_recipe_queries import seed_history
 from test_recipe_safety import full_recipe
 
 
@@ -91,6 +92,8 @@ CASES = (
     COOK_CASE,
     REJECT_CASE,
     REVISE_CASE,
+    EndpointCase("GET", "/api/v1/recipes", guarded_record="recipe"),
+    EndpointCase("GET", "/api/v1/recipes/{history_id}", guarded_record="recipe"),
 )
 FOREIGN_ID_CASES = tuple(case for case in CASES if "{" in case.path or case == SAVE_CASE)
 NON_USER_DATA = {
@@ -515,6 +518,91 @@ def test_every_page_is_owned_and_another_users_cursor_is_rejected_before_storage
     )
     assert len(identifiers) == len(expected)
     assert set(identifiers) == set(expected)
+    two_user_api.assert_partition(actor, since)
+
+
+@pytest.mark.parametrize("view", ["all", "awaitingFeedback", "rated"])
+@pytest.mark.parametrize("actor_index", [0, 1])
+def test_recipe_pages_and_filter_cursors_are_owned_in_both_directions(
+    two_user_api: TwoUserApi, view: str, actor_index: int
+) -> None:
+    actor, other = two_user_api.users[actor_index], two_user_api.users[1 - actor_index]
+    case = EndpointCase("GET", "/api/v1/recipes")
+    expected = []
+    for owner in two_user_api.users:
+        template = two_user_api.transport.documents[
+            ("RecipeHistory", owner.user.user_id, owner.history_id)
+        ]
+        seeded = [
+            seed_history(
+                two_user_api.transport, template, rating="liked" if view == "rated" else None
+            )
+            for _ in range(2)
+        ]
+        if owner == actor:
+            expected = [record["id"] for record in seeded]
+            if view == "all":
+                expected.append(owner.history_id)
+    before = deepcopy(two_user_api.transport.documents)
+    executions = len(two_user_api.executor.calls)
+    since = len(two_user_api.transport.item_calls())
+    params = {} if view == "all" else {view: "true"}
+    cursor = None
+    identifiers = []
+    for _ in range(4):
+        response = two_user_api.request(
+            case,
+            actor,
+            headers=other.hints(),
+            params={**params, **({"cursor": cursor} if cursor else {"limit": "1"})},
+        )
+        assert response.status_code == 200, response.text
+        other.assert_private(response)
+        assert response.headers["cache-control"] == "no-store"
+        page = response.json()
+        assert len(page["items"]) == 1
+        identifiers.append(page["items"][0]["historyId"])
+        cursor = page["nextCursor"]
+        if cursor is None:
+            break
+        calls = len(two_user_api.transport.calls)
+        stolen = two_user_api.request(case, other, params={**params, "cursor": cursor})
+        assert_problem(stolen, 400, "invalid_cursor")
+        actor.assert_private(stolen)
+        assert cursor not in stolen.text and len(two_user_api.transport.calls) == calls
+    else:
+        pytest.fail("Recipe pagination did not terminate.")
+    assert len(identifiers) == len(set(identifiers)) == len(expected)
+    assert set(identifiers) == set(expected)
+    assert two_user_api.transport.documents == before
+    assert len(two_user_api.executor.calls) == executions
+    two_user_api.assert_partition(actor, since)
+
+
+@pytest.mark.parametrize("view", ["awaitingFeedback", "rated"])
+@pytest.mark.parametrize("actor_index", [0, 1])
+def test_filtered_recipe_queries_reject_wrong_owner_records_in_the_callers_partition(
+    two_user_api: TwoUserApi, view: str, actor_index: int
+) -> None:
+    actor, other = two_user_api.users[actor_index], two_user_api.users[1 - actor_index]
+    template = two_user_api.transport.documents[
+        ("RecipeHistory", actor.user.user_id, actor.history_id)
+    ]
+    record = seed_history(
+        two_user_api.transport, template, rating="liked" if view == "rated" else None
+    )
+    record["userId"] = other.user.user_id
+    before = deepcopy(two_user_api.transport.documents)
+    executions = len(two_user_api.executor.calls)
+    since = len(two_user_api.transport.item_calls())
+    response = two_user_api.request(
+        EndpointCase("GET", "/api/v1/recipes"), actor, params={view: "true"}
+    )
+    assert_problem(response, 404, "not_found")
+    other.assert_private(response)
+    assert record["id"] not in response.text and record["_etag"] not in response.text
+    assert two_user_api.transport.documents == before
+    assert len(two_user_api.executor.calls) == executions
     two_user_api.assert_partition(actor, since)
 
 
