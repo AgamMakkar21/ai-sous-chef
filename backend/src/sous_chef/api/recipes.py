@@ -1,12 +1,12 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Header, Request, Response
+from fastapi import APIRouter, Header, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import UUID4
 
 from sous_chef.api.authentication import CurrentUser
-from sous_chef.api.conversations import operation_response
+from sous_chef.api.conversations import _query, operation_response
 from sous_chef.api.revisions import (
     Revision,
     require_no_query,
@@ -15,6 +15,7 @@ from sous_chef.api.revisions import (
 )
 from sous_chef.domain.chat import ChatExecutor, OperationEnvelope, TurnEnvelope
 from sous_chef.domain.context import LearnedPreferenceReader
+from sous_chef.domain.conversations import HistoryPage
 from sous_chef.domain.recipe_lifecycle import (
     BehaviorEnvelope,
     ConfirmCooking,
@@ -23,7 +24,9 @@ from sous_chef.domain.recipe_lifecycle import (
     ReviseRecipe,
     SaveRecipe,
 )
+from sous_chef.domain.recipe_queries import RecipeHistoryParameters, RecipeSummary
 from sous_chef.services.recipe_lifecycle import RecipeLifecycleService
+from sous_chef.services.recipe_queries import RecipeQueryService
 from sous_chef.settings import Settings
 
 IdempotencyKey = Annotated[str, Header(min_length=1, max_length=128, pattern=r"^[\x21-\x7e]+$")]
@@ -42,6 +45,30 @@ def create_recipe_router(
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1", tags=["recipes"])
     service = RecipeLifecycleService(settings, executor, learned_reader)
+    queries = RecipeQueryService(settings)
+
+    @router.get("/recipes")
+    async def list_recipes(
+        user: CurrentUser,
+        parameters: Annotated[RecipeHistoryParameters, Query()],
+        request: Request,
+        response: Response,
+    ) -> HistoryPage[RecipeSummary]:
+        _query(request)
+        response.headers["Cache-Control"] = "no-store"
+        return await queries.list(user, parameters)
+
+    @router.get("/recipes/{history_id}")
+    async def recipe_detail(
+        history_id: UUID4,
+        user: CurrentUser,
+        request: Request,
+        response: Response,
+    ) -> RecipeEnvelope:
+        require_no_query(request)
+        result, etag = await queries.detail(user, history_id)
+        set_revision_headers(response, etag)
+        return RecipeEnvelope(data=result)
 
     @router.post("/recipes", status_code=201)
     async def save(

@@ -24,7 +24,7 @@ from sous_chef.domain.cosmos import (
     ProductContainer,
     RecordKind,
 )
-from sous_chef.services import conversations
+from sous_chef.services import conversations, pagination
 from sous_chef.settings import ConfigurationError, Settings
 from test_cosmos_repository import SyntheticCredential, Transport
 from test_cosmos_repository import harness as harness
@@ -405,7 +405,7 @@ def test_cursors_are_authenticated_bound_and_expire_without_refreshing(
     seed_turns(conversation_settings, OWNER, ids[0], (0, 1, 2))
     seed_turns(conversation_settings, OWNER, ids[1], (0, 1))
     now = int(time())
-    monkeypatch.setattr(conversations, "time", lambda: now)
+    monkeypatch.setattr(pagination, "time", lambda: now)
     cursor = api.get(BASE, params={"limit": 1}).json()["nextCursor"]
     turns_cursor = api.get(f"{BASE}/{ids[0]}/turns", params={"limit": 1}).json()["nextCursor"]
     assert conversation_settings.pagination_key is not None

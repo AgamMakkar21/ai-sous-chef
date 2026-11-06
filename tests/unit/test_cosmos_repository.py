@@ -291,6 +291,19 @@ class Transport(AsyncHttpTransport[HttpRequest, AsyncHttpResponse]):
                     "@recipe" not in parameters
                     or document.get("generatedRecipeId") == parameters["@recipe"]
                 )
+                and (
+                    "NOT IS_NULL(c.cookedAt)" not in body["query"]
+                    or document.get("cookedAt") is not None
+                )
+                and (
+                    "AND IS_NULL(c.rating)" not in body["query"]
+                    or ("rating" in document and document["rating"] is None)
+                )
+                and (
+                    "@liked" not in parameters
+                    or document.get("rating")
+                    in (parameters["@liked"], parameters["@fine"], parameters["@disliked"])
+                )
             ]
             if parameters["@kind"] == "turn":
                 items.sort(
@@ -301,12 +314,27 @@ class Transport(AsyncHttpTransport[HttpRequest, AsyncHttpResponse]):
                 items.sort(key=lambda item: (item["createdAt"], item["id"]), reverse=True)
             if "@recipe" in parameters:
                 items = items[:2]
-            offset = int(headers.get("x-ms-continuation", "0"))
             limit = int(headers["x-ms-max-item-count"])
-            page = items[offset : offset + limit]
-            continuation = (
-                {"x-ms-continuation": str(offset + limit)} if offset + limit < len(items) else {}
-            )
+            token = headers.get("x-ms-continuation", "0")
+            if parameters["@kind"] == "recipe" and "@recipe" not in parameters:
+                # Model ORDER BY continuation keys, not offsets into a changing filtered list.
+                if token != "0":
+                    upper = tuple(json.loads(token))
+                    items = [item for item in items if (item["createdAt"], item["id"]) < upper]
+                page = items[:limit]
+                continuation = (
+                    {"x-ms-continuation": json.dumps([page[-1]["createdAt"], page[-1]["id"]])}
+                    if len(items) > limit
+                    else {}
+                )
+            else:
+                offset = int(token)
+                page = items[offset : offset + limit]
+                continuation = (
+                    {"x-ms-continuation": str(offset + limit)}
+                    if offset + limit < len(items)
+                    else {}
+                )
             if self.query_continuation is not None:
                 continuation["x-ms-continuation"] = self.query_continuation
             return reply(200, {"Documents": page, "_count": len(page)}, **continuation)

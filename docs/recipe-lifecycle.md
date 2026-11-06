@@ -1,12 +1,13 @@
-# Recipe lifecycle APIs (ASC-42 / #49)
+# Recipe lifecycle and history APIs (ASC-42 / #49, ASC-43 / #45)
 
 Generated suggestions do not create cooking history or preference evidence.
 These four authenticated mutation APIs record deliberate acceptance, cooking,
-rejection and revision. History reads, feedback, learning and UI are separate work.
+rejection and revision. Two read APIs return history lists and stored detail.
+Feedback writes, learning and UI remain separate work.
 
 ## Requests and responses
 
-Every request requires `Idempotency-Key`: 1-128 printable, non-space ASCII
+Every mutation requires `Idempotency-Key`: 1-128 printable, non-space ASCII
 characters. Keep the same key and body when reconciling an interrupted request.
 All responses use `Cache-Control: no-store`. Existing authentication, same-origin
 cookie/CSRF checks and the 128-KiB body limit apply. Unknown body/query fields,
@@ -35,8 +36,48 @@ The recipe envelope contains `historyId`, `generatedRecipeId`, `occasionId`,
 and `processingStatus`. Before feedback, rating/note are null, revision is zero
 and processing is `notEligible`. `state` is `planned` or `cooked`;
 `awaitingFeedback` means cooked and unrated, not saved.
-History `Location` identifies the resource reserved for ASC-43's detail API;
-this issue does not implement that GET route.
+History `Location` identifies the implemented detail API below.
+
+## History reads (ASC-43)
+
+| Route | Success |
+| --- | --- |
+| `GET /api/v1/recipes` | 200 `{ "items": [...], "nextCursor": null }` |
+| `GET /api/v1/recipes/{historyId}` | 200 full recipe envelope and current `ETag` |
+
+Both require authentication and return `Cache-Control: no-store`; neither
+requires an idempotency key, completed onboarding, CSRF token or `If-Match`.
+No read writes data, invokes agents, or checks an old snapshot against today's
+profile. Detail returns the stored recipe, including its original nutrition,
+dates, current rating/note and safe processing status. Reading history does not
+reapprove that recipe for cooking under changed restrictions; `/cooked` still
+checks current safety. It does not depend on the source conversation remaining.
+
+Lists return only `historyId`, `title`, `savedAt`, `cookedAt`, `state`,
+`awaitingFeedback` and `rating`. By default they include all saved snapshots,
+including planned items. `awaitingFeedback=true` selects cooked, unrated items;
+`rated=true` selects cooked items rated `liked`, `fine` or `disliked`. Planned
+items appear in neither filtered view. False flags mean no filter; both flags
+true is invalid. Unknown, duplicate or invalid parameters return safe 422
+errors. Behavior, operation, feedback-revision and processing records are not
+recipe list entries.
+
+`limit` defaults to 20 and is bounded to 1-50. Pass the opaque `nextCursor` as
+`cursor`, repeat the original true filter on every continuation, and either
+omit `limit` or repeat its original value. Omit `cursor` to start or refresh;
+an empty, modified, expired, wrong-user, wrong-view or wrong-limit cursor
+returns safe 400 `invalid_cursor` before storage access. Cursors preserve
+the original first-page cutoff and 24-hour expiry, with descending
+`(createdAt, id)` ordering. New saves appear on refresh; cooking/feedback changes
+remain live, so filtered membership is not a frozen cross-request snapshot.
+Equal timestamps do not create duplicate page entries.
+
+Missing and foreign IDs share the no-store 404 response. Owned internal record
+IDs are not recipe detail resources. Malformed stored snapshots and unexpected
+provider results fail explicitly without returning private content or ETags.
+Every query/read passes the authenticated `/userId` partition and checks returned
+ownership. Existing scalar and composite indexes support these queries; no
+profile arrays, index changes or cross-partition lookup are introduced.
 
 ## Persistence, safety and replay
 
@@ -111,7 +152,7 @@ index or environment setting is required. Existing `generatedRecipeId` scalar
 indexing supports source lookup. Only revisions invoke agents; save, cooking
 and rejection remain available when agent execution is disabled.
 
-Run the lifecycle tests and required two-user authorization matrix, plus the
+Run the lifecycle/history tests and required two-user authorization matrix, plus the
 existing chat/context/Cosmos suites, Ruff and strict mypy. Tests exercise the
 production services and pinned Cosmos SDK over the offline transport, including
 duplicate acceptance, cooking timestamps, stale ETags, altered ingredients,
