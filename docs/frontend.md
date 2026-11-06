@@ -140,12 +140,68 @@ from completed assistant replies.
 The sidebar collapses on phones and supports native keyboard buttons, selection
 highlighting and focus on the selected transcript. Loading, empty, unavailable
 and failed reads have separate visible states. No raw service error is displayed.
-Sending/retrying messages and structured recipe rendering belong to ASC-40 and
-later work; there is no active message composer in this slice.
 
 Hosted use still requires the live Cosmos/authentication setup and shared
 `ASC_PAGINATION_KEY` described in [conversation setup](conversations.md#setup).
 Local readiness doubles do not fabricate conversations or history.
+
+## Chat composition and recovery (ASC-40)
+
+Select a chat to send a recipe request. Enter submits, Shift+Enter adds a line,
+and input-method composition does not submit. The client trims text and enforces
+the API's 1-4,000 Unicode-code-point limit. A synchronous guard prevents duplicate
+submissions. Each deliberate new send has a UUID idempotency key and a freshly
+verified same-account session/CSRF token.
+
+The send request has a 75-second browser deadline to accommodate the server's
+60-second total deadline. Other API requests retain their 15-second deadline.
+The composer labels in-flight work accessibly and keeps its input readable.
+Navigation and competing mutations are disabled while a foreground request is
+being sent or checked. There is no remote cancellation control: closing,
+refreshing or aborting a browser request does not prove execution stopped.
+
+Only validated, owned complete-turn responses are displayed. Failed, pending and
+unknown turns stay user-only; no partial assistant text, recipe draft, raw
+exception, provider response or injected HTML is rendered. Structured recipe
+cards remain ASC-41 work. Up to 20 recently updated turns can appear beside the
+bounded history page, deduplicated by turn ID. Sending does not scan lifetime
+history, and successive sends do not replace earlier visible requests.
+
+Failures show **I couldn't complete that recipe request** with explicit recovery:
+
+- **Check this request** reconciles an ambiguous send using its original body
+  and key. It is not a new generation attempt. CSRF renewal never auto-replays.
+- **Check saved status** reads a known owned operation. Pending operations are
+  polled with GET every two seconds, stopping on a terminal result, failed read,
+  view departure or the local polling budget. Operation links must be exact
+  relative paths for the selected conversation; arbitrary server URLs are not followed.
+- **Retry saved request** is available only for a known failed turn. It sends a
+  new key with `retryOfTurnId` and the original unchanged text, preserving the
+  saved turn and user-message identities. Editing the input instead starts a new turn.
+- An unknown outcome blocks new sends and retries for that chat. A local timeout
+  never invents a failed/cancelled result or releases the server's concurrency guard.
+  Concurrent-send conflicts preserve input and reload bounded saved history for review.
+
+Session storage keeps at most 20 opaque conversation/operation-ID pairs under the
+hashed owner scope, in addition to the existing navigation metadata. It stores no
+message text, idempotency payload, profile or token. Reloading a remembered
+operation only reads its status; it never sends a mutation. Without an operation
+reference, history still shows persisted pending/failed/unknown state and offers
+explicit history refresh or a known-failure retry, not a guessed operation or
+an automatic generation.
+
+Drafts and unresolved request bodies/keys stay in memory. Navigation warns before
+discarding them, and ordinary validation, transport, timeout and service failures
+retain the input. **Session expiry or account change intentionally clears private
+drafts**, following the existing privacy policy; requests already admitted remain
+in server history after sign-in. A reload before an operation URL is received can
+lose the in-memory reconciliation body/key. The UI shows the persisted turn
+truthfully but cannot reconstruct an unknown admission or promise remote recovery.
+
+No new environment settings are required. Real recipe generation still needs
+the live executor, reviewed agents and FoodData Central setup described in
+[conversation setup](conversations.md#setup); this UI does not enable them or
+substitute a demo recipe when a dependency fails.
 
 ## Checks and packaging
 
@@ -165,6 +221,10 @@ identity/session expiry, keyboard tabs, escaping, themes and narrow layouts.
 Conversation cases also cover independent creation, reload/tab restoration,
 bounded pages, context-derived titles, malicious markup, interrupted creation,
 CSRF, cross-account isolation and late responses after switching chats.
+Composer cases cover keyboard/double-click submission, Unicode limits, slow and
+successful replies, same-turn explicit retries, lost-response/deadline
+reconciliation, pending polling/reload, unknown-outcome fences, malformed/foreign
+responses, operation-link rejection, draft navigation and session expiry.
 API responses use synthetic test-only route doubles. These checks do not claim
 live OAuth, live Cosmos or deployed-browser verification.
 

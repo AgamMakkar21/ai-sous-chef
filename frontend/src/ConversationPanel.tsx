@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "./api";
+import ChatComposer from "./ChatComposer";
 import {
   createConversation,
   listConversations,
@@ -77,14 +78,14 @@ function usePage<T>(load: Loader<T>, onExpired: () => void) {
     }
   }
 
-  function refresh(restart = false) {
+  const refresh = useCallback((restart = false) => {
     setState({ kind: "loading" });
     setNavigation((current) => ({
       cursors: restart ? [null] : current.cursors,
       index: restart ? 0 : current.index,
       revision: current.revision + 1,
     }));
-  }
+  }, []);
 
   return { state, index: navigation.index, move, refresh };
 }
@@ -136,12 +137,18 @@ function Transcript({
   session,
   onExpired,
   onTitle,
+  owner,
+  onBusy,
+  onDirty,
 }: {
   id: string;
   title: string;
   session: Session;
   onExpired: () => void;
   onTitle: (id: string, title: string) => void;
+  owner: string;
+  onBusy: (busy: boolean) => void;
+  onDirty: (dirty: boolean) => void;
 }) {
   const load = useCallback(
     (cursor: string | null, signal: AbortSignal) =>
@@ -149,6 +156,31 @@ function Transcript({
     [id, session],
   );
   const history = usePage(load, onExpired);
+  const [updates, setUpdates] = useState<Turn[]>([]);
+  const recordTurn = useCallback(
+    (turn: Turn) => {
+      setUpdates((previous) =>
+        [...previous.filter((item) => item.turnId !== turn.turnId), turn].slice(
+          -20,
+        ),
+      );
+      if (turn.turnIndex === 0 && turn.messages[0])
+        onTitle(id, safeTitle(turn.messages[0].content));
+    },
+    [id, onTitle],
+  );
+  const loaded = history.state.kind === "ready" ? history.state.page.items : [];
+  const byId = new Map(updates.map((turn) => [turn.turnId, turn]));
+  const currentPage = loaded.map((turn) => byId.get(turn.turnId) ?? turn);
+  const separate = updates
+    .filter((turn) => !loaded.some((item) => item.turnId === turn.turnId))
+    .sort((left, right) => left.turnIndex - right.turnIndex);
+  const visible = [...currentPage, ...separate];
+  const refreshHistory = history.refresh;
+  const refresh = useCallback(() => {
+    setUpdates([]);
+    refreshHistory(true);
+  }, [refreshHistory]);
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => heading.current?.focus(), []);
   useEffect(() => {
@@ -167,7 +199,7 @@ function Transcript({
         <h2 id="transcript-title" ref={heading} tabIndex={-1}>
           {title}
         </h2>
-        <button className="text-button" onClick={() => history.refresh(true)}>
+        <button className="text-button" onClick={refresh}>
           Refresh history
         </button>
       </div>
@@ -203,7 +235,7 @@ function Transcript({
             className="conversation-turns"
             aria-label="Conversation transcript"
           >
-            {history.state.page.items.map((turn) => (
+            {currentPage.map((turn) => (
               <li key={turn.turnId}>
                 {turn.messages.map((message) => (
                   <article
@@ -238,10 +270,45 @@ function Transcript({
         noun="messages"
         move={history.move}
       />
-      <p className="privacy-note">
-        History and navigation only. Sending messages will be available in a
-        later update.
-      </p>
+      {separate.length > 0 && (
+        <section className="current-request" aria-label="Recent requests">
+          <h3>Recent requests</h3>
+          <p className="privacy-note">
+            Up to 20 recently updated requests outside the history page above.
+            Older requests remain in saved, paginated history.
+          </p>
+          {separate.map((turn) => (
+            <div key={turn.turnId}>
+              {turn.messages.map((message) => (
+                <article
+                  className={`conversation-message ${message.role}`}
+                  key={message.messageId}
+                >
+                  <strong>
+                    {message.role === "user" ? "You" : "Sous Chef"}
+                  </strong>
+                  <p>{message.content}</p>
+                </article>
+              ))}
+              {turn.status !== "completed" && (
+                <p className="turn-status">{turnStatus[turn.status]}</p>
+              )}
+            </div>
+          ))}
+        </section>
+      )}
+      <ChatComposer
+        id={id}
+        owner={owner}
+        session={session}
+        turns={visible}
+        historyReady={history.state.kind === "ready"}
+        onTurn={recordTurn}
+        onRefresh={refresh}
+        onExpired={onExpired}
+        onBusy={onBusy}
+        onDirty={onDirty}
+      />
     </section>
   );
 }
@@ -249,9 +316,13 @@ function Transcript({
 export default function ConversationPanel({
   session,
   onExpired,
+  onBusy,
+  onDirty,
 }: {
   session: Session;
   onExpired: () => void;
+  onBusy: (busy: boolean) => void;
+  onDirty: (dirty: boolean) => void;
 }) {
   const [navigation, setNavigation] = useState<Navigation | null>(null);
   const current = useRef<Navigation | null>(null);
@@ -261,6 +332,20 @@ export default function ConversationPanel({
   const [notice, setNotice] = useState("");
   const [creating, setCreating] = useState(false);
   const creatingRef = useRef(false);
+  const [sending, setSending] = useState(false);
+  const chatDirty = useRef(false);
+  const trackDirty = useCallback(
+    (value: boolean) => {
+      chatDirty.current = value;
+      onDirty(value);
+    },
+    [onDirty],
+  );
+  const trackBusy = useCallback((value: boolean) => setSending(value), []);
+  useEffect(() => {
+    onBusy(creating || sending);
+    return () => onBusy(false);
+  }, [creating, sending, onBusy]);
   const lifetime = useRef<AbortController | null>(null);
   const [titles, setTitles] = useState<Record<string, string>>({});
   const [sidebarOpen, setSidebarOpen] = useState(
@@ -319,7 +404,15 @@ export default function ConversationPanel({
   }, []);
 
   function select(id: string) {
-    if (!current.current || creatingRef.current) return;
+    if (!current.current || creatingRef.current || sending) return;
+    if (
+      id !== current.current.selectedId &&
+      chatDirty.current &&
+      !window.confirm(
+        "Leave this recipe request? Unsaved input will be discarded; accepted requests are not cancelled.",
+      )
+    )
+      return;
     remember({ ...current.current, selectedId: id });
     setNotice("");
     if (window.matchMedia("(max-width: 720px)").matches) setSidebarOpen(false);
@@ -328,7 +421,14 @@ export default function ConversationPanel({
   async function create() {
     const previous = current.current;
     const controller = lifetime.current;
-    if (!previous || !controller || creatingRef.current) return;
+    if (!previous || !controller || creatingRef.current || sending) return;
+    if (
+      chatDirty.current &&
+      !window.confirm(
+        "Leave this recipe request? Unsaved input will be discarded; accepted requests are not cancelled.",
+      )
+    )
+      return;
     creatingRef.current = true;
     setCreating(true);
     setNotice("");
@@ -395,7 +495,7 @@ export default function ConversationPanel({
         </div>
         <button
           className="button primary"
-          disabled={!navigation || creating}
+          disabled={!navigation || creating || sending}
           onClick={() => void create()}
         >
           {creating
@@ -449,7 +549,7 @@ export default function ConversationPanel({
             <h2>Chats</h2>
             <button
               className="text-button"
-              disabled={creating}
+              disabled={creating || sending}
               onClick={() => chats.refresh(true)}
             >
               Refresh chats
@@ -480,7 +580,7 @@ export default function ConversationPanel({
             <button
               className="conversation-choice"
               aria-current="true"
-              disabled={creating}
+              disabled={creating || sending}
               onClick={() => select(selected)}
             >
               <span>{title}</span>
@@ -499,7 +599,7 @@ export default function ConversationPanel({
                     aria-current={
                       item.conversationId === selected ? "true" : undefined
                     }
-                    disabled={!navigation || creating}
+                    disabled={!navigation || creating || sending}
                     onClick={() => select(item.conversationId)}
                   >
                     <span>{titleFor(item)}</span>
@@ -530,6 +630,9 @@ export default function ConversationPanel({
             session={session}
             onExpired={onExpired}
             onTitle={recordTitle}
+            owner={navigation!.owner}
+            onBusy={trackBusy}
+            onDirty={trackDirty}
           />
         ) : (
           <section
@@ -542,7 +645,7 @@ export default function ConversationPanel({
               own message history.
             </p>
             <p className="privacy-note">
-              Sending messages is coming in a later update.
+              Send a recipe request after selecting a chat.
             </p>
           </section>
         )}

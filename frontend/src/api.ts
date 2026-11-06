@@ -12,12 +12,19 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly fields: FieldErrors;
+  readonly location: string | null;
 
-  constructor(status: number, code = "", fields: FieldErrors = {}) {
+  constructor(
+    status: number,
+    code = "",
+    fields: FieldErrors = {},
+    location: string | null = null,
+  ) {
     super("The request could not be completed.");
     this.status = status;
     this.code = code;
     this.fields = fields;
+    this.location = location;
   }
 }
 
@@ -39,8 +46,9 @@ function fieldErrors(problem: unknown): FieldErrors {
 export async function request(
   path: string,
   init: RequestInit = {},
+  timeoutMs = 15_000,
 ): Promise<Response> {
-  const deadline = AbortSignal.timeout(15_000);
+  const deadline = AbortSignal.timeout(timeoutMs);
   const signal = init.signal
     ? AbortSignal.any([init.signal, deadline])
     : deadline;
@@ -66,17 +74,31 @@ export async function request(
     try {
       problem = await response.json();
     } catch {
-      throw new ApiError(response.status);
+      throw new ApiError(
+        response.status,
+        "",
+        {},
+        response.headers.get("Location"),
+      );
     }
     const code =
       isRecord(problem) &&
       typeof problem.code === "string" &&
-      ["csrf_failed", "duplicate_grocery", "grocery_limit_reached"].includes(
-        problem.code,
-      )
+      [
+        "csrf_failed",
+        "duplicate_grocery",
+        "grocery_limit_reached",
+        "send_conflict",
+        "idempotency_conflict",
+      ].includes(problem.code)
         ? problem.code
         : "";
-    throw new ApiError(response.status, code, fieldErrors(problem));
+    throw new ApiError(
+      response.status,
+      code,
+      fieldErrors(problem),
+      response.headers.get("Location"),
+    );
   }
   return response;
 }

@@ -645,6 +645,34 @@ input[type="checkbox"] {
 .conversation-empty {
   padding: 24px 0;
 }
+.chat-composer {
+  border-top: 1px solid var(--cp-border);
+  margin-top: 24px;
+  padding-top: 24px;
+}
+.chat-composer textarea {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+  margin-top: 8px;
+}
+.chat-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.current-request,
+.request-recovery {
+  margin-top: 24px;
+}
+.saved-request {
+  padding: 16px;
+  margin-bottom: 12px;
+  border: 1px solid var(--cp-border);
+  border-radius: 0.625rem;
+  overflow-wrap: anywhere;
+}
 @media (max-width: 720px) {
   .grocery-entry {
     grid-template-columns: 1fr;
