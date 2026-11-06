@@ -222,7 +222,11 @@ def test_one_revision_is_four_model_calls_with_the_same_context_and_budget() -> 
     assert budget.input_tokens == 4 * USAGE.input_tokens
 
 
-@pytest.mark.parametrize("bad", [candidate("peanut oil"), candidate("mystery seasoning")])
+@pytest.mark.parametrize(
+    "bad",
+    [candidate("peanut oil"), candidate("mystery seasoning")],
+    ids=["peanut-oil", "unknown-seasoning"],
+)
 def test_model_cannot_override_stored_allergies_or_accept_unknown_ingredients(
     bad: RecipeCandidate,
 ) -> None:

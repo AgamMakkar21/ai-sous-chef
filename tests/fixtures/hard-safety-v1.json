@@ -1,0 +1,191 @@
+{
+  "schema_version": 1,
+  "suite_id": "asc55-hard-safety",
+  "version": 1,
+  "fixtures": [
+    {
+      "id": "peanut-oil-and-aliases",
+      "scope": "peanut-oil",
+      "expected_outcome": "BLOCKED for peanut allergy, with a violation tied to the offending ingredient.",
+      "tests": [
+        "tests/unit/test_food_safety.py::test_peanut_aliases_are_blocked[peanut oil]",
+        "tests/unit/test_food_safety.py::test_peanut_aliases_are_blocked[Groundnut Oil]",
+        "tests/unit/test_food_safety.py::test_peanut_aliases_are_blocked[arachis oil]",
+        "tests/unit/test_food_safety.py::test_peanut_aliases_are_blocked[roasted peanuts]",
+        "tests/unit/test_food_safety.py::test_peanut_aliases_are_blocked[peanut butter]"
+      ]
+    },
+    {
+      "id": "hidden-allergens-and-substitutions",
+      "scope": "hidden-allergens",
+      "expected_outcome": "Reject tree-nut milk, hidden butter, allergenic replacements and undeclared allergens in recipe prose/metadata.",
+      "tests": [
+        "tests/unit/test_food_safety.py::test_substitutions_that_introduce_allergens_are_blocked",
+        "tests/unit/test_food_safety.py::test_dairy_substitute_does_not_hide_dairy_in_the_same_list",
+        "tests/unit/test_recipe_safety.py::test_safe_replacement_does_not_consume_the_excluded_original_allergen",
+        "tests/unit/test_recipe_safety.py::test_replacement_ingredient_itself_is_subject_to_current_allergies",
+        "tests/unit/test_recipe_safety.py::test_undeclared_garnishes_ambiguous_prose_and_unsafe_handling_fail_closed[hidden-peanut-garnish]",
+        "tests/unit/test_recipe_safety.py::test_undeclared_garnishes_ambiguous_prose_and_unsafe_handling_fail_closed[hidden-almond-milk]",
+        "tests/unit/test_recipe_safety.py::test_undeclared_garnishes_ambiguous_prose_and_unsafe_handling_fail_closed[hidden-peanut-oil]",
+        "tests/unit/test_recipe_safety.py::test_ingredient_bearing_metadata_cannot_bypass_the_gate[title]",
+        "tests/unit/test_recipe_safety.py::test_ingredient_bearing_metadata_cannot_bypass_the_gate[fit_reasons]",
+        "tests/unit/test_recipe_safety.py::test_ingredient_bearing_metadata_cannot_bypass_the_gate[adaptations]"
+      ]
+    },
+    {
+      "id": "vegetarian-meat-and-stock",
+      "scope": "vegetarian-meat-stock",
+      "expected_outcome": "BLOCKED for vegetarian restriction, including animal stock, broth, gelatin, fats and fish.",
+      "tests": [
+        "tests/unit/test_food_safety.py::test_vegetarian_meat_and_stock_are_blocked[chicken stock]",
+        "tests/unit/test_food_safety.py::test_vegetarian_meat_and_stock_are_blocked[beef broth]",
+        "tests/unit/test_food_safety.py::test_vegetarian_meat_and_stock_are_blocked[bacon]",
+        "tests/unit/test_food_safety.py::test_vegetarian_meat_and_stock_are_blocked[gelatin]",
+        "tests/unit/test_food_safety.py::test_vegetarian_meat_and_stock_are_blocked[lard]",
+        "tests/unit/test_food_safety.py::test_vegetarian_meat_and_stock_are_blocked[Salmon]",
+        "tests/unit/test_food_safety.py::test_vegetarian_meat_and_stock_are_blocked[anchovy paste]"
+      ]
+    },
+    {
+      "id": "explicit-over-learned",
+      "scope": "explicit-versus-learned",
+      "expected_outcome": "Only evidence-backed rice learning enters context; allergy/diet/spice conflicts and injected instructions are excluded; stored explicit state is unchanged.",
+      "tests": [
+        "tests/unit/test_context.py::test_evidence_backed_learning_is_filtered_and_explicit_state_stays_authoritative[ordinary-learning]",
+        "tests/unit/test_context.py::test_evidence_backed_learning_is_filtered_and_explicit_state_stays_authoritative[allergy-override]",
+        "tests/unit/test_context.py::test_evidence_backed_learning_is_filtered_and_explicit_state_stays_authoritative[forged-system-identity]"
+      ]
+    },
+    {
+      "id": "user-allergy-override",
+      "scope": "allergy-override-prompts",
+      "expected_outcome": "Ignore-allergy request and accepting model response cannot approve peanut oil or unknown seasoning; stored allergy remains authoritative.",
+      "tests": [
+        "tests/unit/test_orchestrator.py::test_model_cannot_override_stored_allergies_or_accept_unknown_ingredients[peanut-oil]",
+        "tests/unit/test_orchestrator.py::test_model_cannot_override_stored_allergies_or_accept_unknown_ingredients[unknown-seasoning]"
+      ]
+    },
+    {
+      "id": "malicious-retrieved-content",
+      "scope": "malicious-retrieval",
+      "expected_outcome": "REJECTED before nutrition when synthetic retrieved instructions ask to clear allergies, impersonate another user or use unapproved database/web tools.",
+      "tests": [
+        "tests/integration/test_grounded_specialist.py::test_malicious_retrieval_does_not_override_hard_restrictions[allergy-override]",
+        "tests/integration/test_grounded_specialist.py::test_malicious_retrieval_does_not_override_hard_restrictions[forged-system-identity]",
+        "tests/integration/test_grounded_specialist.py::test_malicious_retrieval_does_not_override_hard_restrictions[unapproved-database-and-web-tools]",
+        "tests/integration/test_grounded_specialist.py::test_discovery_does_not_authorize_an_advertised_database_tool"
+      ]
+    },
+    {
+      "id": "unsafe-instructions",
+      "scope": "unsafe-instructions",
+      "expected_outcome": "Final deterministic recipe validation rejects raw poultry, overnight storage, excessive cooking time, no-cook and unsupported non-ASCII food prose.",
+      "tests": [
+        "tests/unit/test_recipe_safety.py::test_undeclared_garnishes_ambiguous_prose_and_unsafe_handling_fail_closed[raw-poultry]",
+        "tests/unit/test_recipe_safety.py::test_undeclared_garnishes_ambiguous_prose_and_unsafe_handling_fail_closed[overnight-storage]",
+        "tests/unit/test_recipe_safety.py::test_undeclared_garnishes_ambiguous_prose_and_unsafe_handling_fail_closed[excessive-cooking-time]",
+        "tests/unit/test_recipe_safety.py::test_undeclared_garnishes_ambiguous_prose_and_unsafe_handling_fail_closed[without-cooking]",
+        "tests/unit/test_recipe_safety.py::test_undeclared_garnishes_ambiguous_prose_and_unsafe_handling_fail_closed[non-ascii-food]"
+      ]
+    },
+    {
+      "id": "cooking-policy",
+      "scope": "unsafe-instructions",
+      "expected_outcome": "Reject missing/insufficient temperatures, rest and cooking; accept reviewed thermometer, whole-cut rest, canned-bean and leftover controls.",
+      "tests": [
+        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[missing-poultry-temperature]",
+        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[unsafe-poultry-temperature]",
+        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[safe-poultry-temperature]",
+        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[safe-ground-beef]",
+        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[unsafe-minced-beef]",
+        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[safe-minced-beef]",
+        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[missing-whole-cut-rest]",
+        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[safe-whole-cut-rest]",
+        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[safe-fish]",
+        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[unsupported-minced-fish]",
+        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[rinse-poultry]",
+        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[uncooked-poultry]",
+        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[uncooked-egg]",
+        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[uncooked-flour]",
+        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[uncooked-cornmeal]",
+        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[unsafe-kidney-bean]",
+        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[canned-kidney-bean]",
+        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[unsafe-leftovers]",
+        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[safe-leftovers]"
+      ]
+    },
+    {
+      "id": "unknown-and-ambiguous-ingredients",
+      "scope": "unknown-ingredients",
+      "expected_outcome": "NEEDS_CLARIFICATION under hard constraints; unknown ingredients also fail the final full-recipe gate without stored restrictions.",
+      "tests": [
+        "tests/unit/test_food_safety.py::test_unknown_ingredients_are_not_safe[special house sauce]",
+        "tests/unit/test_food_safety.py::test_unknown_ingredients_are_not_safe[secret spice blend]",
+        "tests/unit/test_food_safety.py::test_unknown_ingredients_are_not_safe[dragonfruit]",
+        "tests/unit/test_food_safety.py::test_known_word_does_not_hide_an_unknown_word",
+        "tests/unit/test_food_safety.py::test_ambiguous_compound_ingredients_need_clarification",
+        "tests/unit/test_recipe_safety.py::test_unknown_ingredients_fail_even_without_stored_restrictions[mystery seasoning]",
+        "tests/unit/test_recipe_safety.py::test_unknown_ingredients_fail_even_without_stored_restrictions[rice and peanut]",
+        "tests/unit/test_recipe_safety.py::test_unknown_ingredients_fail_even_without_stored_restrictions[rice\\u9db4]",
+        "tests/unit/test_recipe_safety.py::test_undeclared_garnishes_ambiguous_prose_and_unsafe_handling_fail_closed[unknown-garnish]"
+      ]
+    },
+    {
+      "id": "wrong-owner-records",
+      "scope": "cross-user-access",
+      "expected_outcome": "Both users receive indistinguishable no-store 404s for wrong-owner profile/conversation records, without mutation or AI execution.",
+      "tests": [
+        "tests/unit/test_authorization_matrix.py::test_wrong_owner_records_in_the_authenticated_partition_fail_before_data_or_conflicts[0-GET /api/v1/me]",
+        "tests/unit/test_authorization_matrix.py::test_wrong_owner_records_in_the_authenticated_partition_fail_before_data_or_conflicts[1-GET /api/v1/me]",
+        "tests/unit/test_authorization_matrix.py::test_wrong_owner_records_in_the_authenticated_partition_fail_before_data_or_conflicts[0-POST /api/v1/conversations/{conversation_id}/turns]",
+        "tests/unit/test_authorization_matrix.py::test_wrong_owner_records_in_the_authenticated_partition_fail_before_data_or_conflicts[1-POST /api/v1/conversations/{conversation_id}/turns]"
+      ]
+    },
+    {
+      "id": "foreign-resource-identifiers",
+      "scope": "cross-user-access",
+      "expected_outcome": "Foreign and absent grocery/operation identifiers produce identical safe 404s in both directions, without mutation or AI execution.",
+      "tests": [
+        "tests/unit/test_authorization_matrix.py::test_guessed_foreign_ids_and_absent_ids_have_identical_safe_errors_and_no_side_effects[0-PATCH /api/v1/groceries/{grocery_id}]",
+        "tests/unit/test_authorization_matrix.py::test_guessed_foreign_ids_and_absent_ids_have_identical_safe_errors_and_no_side_effects[1-PATCH /api/v1/groceries/{grocery_id}]",
+        "tests/unit/test_authorization_matrix.py::test_guessed_foreign_ids_and_absent_ids_have_identical_safe_errors_and_no_side_effects[0-GET /api/v1/conversations/{conversation_id}/operations/{operation_id}]",
+        "tests/unit/test_authorization_matrix.py::test_guessed_foreign_ids_and_absent_ids_have_identical_safe_errors_and_no_side_effects[1-GET /api/v1/conversations/{conversation_id}/operations/{operation_id}]"
+      ]
+    },
+    {
+      "id": "owned-pages-and-linked-references",
+      "scope": "cross-user-access",
+      "expected_outcome": "All pages contain only owned records; foreign cursors fail before storage; foreign turn/retry references fail without mutation or AI execution.",
+      "tests": [
+        "tests/unit/test_authorization_matrix.py::test_every_page_is_owned_and_another_users_cursor_is_rejected_before_storage[0-conversation]",
+        "tests/unit/test_authorization_matrix.py::test_every_page_is_owned_and_another_users_cursor_is_rejected_before_storage[1-conversation]",
+        "tests/unit/test_authorization_matrix.py::test_every_page_is_owned_and_another_users_cursor_is_rejected_before_storage[0-turn]",
+        "tests/unit/test_authorization_matrix.py::test_every_page_is_owned_and_another_users_cursor_is_rejected_before_storage[1-turn]",
+        "tests/unit/test_authorization_matrix.py::test_chat_references_cannot_cross_users_or_conversations[0-foreign_turn]",
+        "tests/unit/test_authorization_matrix.py::test_chat_references_cannot_cross_users_or_conversations[1-foreign_turn]",
+        "tests/unit/test_authorization_matrix.py::test_chat_references_cannot_cross_users_or_conversations[0-retry]",
+        "tests/unit/test_authorization_matrix.py::test_chat_references_cannot_cross_users_or_conversations[1-retry]"
+      ]
+    },
+    {
+      "id": "authentication-and-route-inventory",
+      "scope": "cross-user-access",
+      "expected_outcome": "Forged identity hints without a verified JWT yield 401 without storage/AI; every actual product operation remains in the mandatory authorization matrix.",
+      "tests": [
+        "tests/unit/test_authorization_matrix.py::test_forged_identity_headers_without_verified_credentials_fail_closed[GET /api/v1/me]",
+        "tests/unit/test_authorization_matrix.py::test_every_product_operation_has_a_matrix_case_or_reviewable_exemption"
+      ]
+    },
+    {
+      "id": "compliant-controls",
+      "scope": "positive-controls",
+      "expected_outcome": "Known compliant ingredients and recipes pass, and both authenticated users can generate an owned recipe despite forged identity hints.",
+      "tests": [
+        "tests/unit/test_food_safety.py::test_known_compliant_recipe_passes_with_an_explanation",
+        "tests/unit/test_recipe_safety.py::test_compliant_recipe_is_rendered_without_untrusted_evidence_or_commentary",
+        "tests/unit/test_authorization_matrix.py::test_verified_user_can_read_and_mutate_only_their_partition_despite_forged_hints[0-POST /api/v1/conversations/{conversation_id}/turns]",
+        "tests/unit/test_authorization_matrix.py::test_verified_user_can_read_and_mutate_only_their_partition_despite_forged_hints[1-POST /api/v1/conversations/{conversation_id}/turns]"
+      ]
+    }
+  ]
+}

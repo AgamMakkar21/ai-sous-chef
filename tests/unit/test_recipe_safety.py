@@ -114,6 +114,17 @@ def test_compliant_recipe_is_rendered_without_untrusted_evidence_or_commentary()
         "Cook the rice without cooking.",
         "Cook the rice\u30d4\u30fc\u30ca\u30c3\u30c4.",
     ],
+    ids=[
+        "hidden-peanut-garnish",
+        "unknown-garnish",
+        "hidden-almond-milk",
+        "hidden-peanut-oil",
+        "raw-poultry",
+        "overnight-storage",
+        "excessive-cooking-time",
+        "without-cooking",
+        "non-ascii-food",
+    ],
 )
 def test_undeclared_garnishes_ambiguous_prose_and_unsafe_handling_fail_closed(text: str) -> None:
     with pytest.raises(RecipeSafetyError) as caught:
@@ -250,6 +261,27 @@ def test_ingredient_bearing_metadata_cannot_bypass_the_gate(field: str) -> None:
             "Cook the rice to an internal temperature of 165 F, measured with a food thermometer.",
             True,
         ),
+    ],
+    ids=[
+        "missing-poultry-temperature",
+        "unsafe-poultry-temperature",
+        "safe-poultry-temperature",
+        "safe-ground-beef",
+        "unsafe-minced-beef",
+        "safe-minced-beef",
+        "missing-whole-cut-rest",
+        "safe-whole-cut-rest",
+        "safe-fish",
+        "unsupported-minced-fish",
+        "rinse-poultry",
+        "uncooked-poultry",
+        "uncooked-egg",
+        "uncooked-flour",
+        "uncooked-cornmeal",
+        "unsafe-kidney-bean",
+        "canned-kidney-bean",
+        "unsafe-leftovers",
+        "safe-leftovers",
     ],
 )
 def test_reviewed_cooking_rules(name: str, text: str, accepted: bool) -> None:

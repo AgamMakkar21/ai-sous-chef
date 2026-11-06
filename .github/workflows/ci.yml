@@ -28,7 +28,9 @@ jobs:
           - check: types
             command: python -m mypy
           - check: tests
-            command: python -m pytest
+            command: |
+              python -m scripts.evaluate_safety
+              python -m pytest
           - check: build
             command: |
               python -m build --no-isolation
@@ -81,6 +83,14 @@ jobs:
           npm run build
       - name: Run ${{ matrix.check }}
         run: ${{ matrix.command }}
+      - name: Retain fixed-suite safety evidence even after failure
+        if: always() && matrix.check == 'tests'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hard-safety-evaluation
+          path: artifacts/safety-evaluation/report.json
+          if-no-files-found: error
+          retention-days: 30
 
   frontend:
     name: CI / frontend

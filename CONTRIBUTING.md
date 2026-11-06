@@ -5,6 +5,15 @@ other collaborator to review. New commits require fresh review. Integration into
 `dev` does not, by itself, close an issue or approve production promotion.
 See [CI requirements](docs/ci.md) and [production release policy](docs/production-release.md).
 
+## Required deterministic safety gate
+
+Run `python -m scripts.evaluate_safety` before the ordinary full tests.
+The [versioned hard-safety suite](docs/hard-safety-evaluations.md) requires all
+fixed synthetic cases to execute and pass; skipped/xfail/deselected cases fail
+closed. Review fixture inputs, expected assertions and manifest version together
+when changing this set. This gate supplements all existing allergy/auth tests
+and does not replace the endpoint matrix below.
+
 ## Required user-data authorization matrix
 
 Every new or changed user-data endpoint must join

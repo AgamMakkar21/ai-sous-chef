@@ -17,7 +17,7 @@ they are not added to the web application's deployment package.
 | --- | --- |
 | `CI / lint` | `python -m ruff format --check .` and `python -m ruff check .` |
 | `CI / types` | `python -m mypy` |
-| `CI / tests` | `python -m pytest` (unit and API/contract tests) |
+| `CI / tests` | `python -m scripts.evaluate_safety`, then `python -m pytest` (unit and API/contract tests) |
 | `CI / build` | Build sdist/wheel, install the wheel, and smoke-test its health, readiness, and OpenAPI contracts |
 | `CI / infrastructure` | Pinned Bicep 0.48.1 compilation and offline ARM-template tests |
 | `CI / frontend` | Node 24, `npm ci`, Oxlint/Prettier, strict TypeScript, and Playwright production-bundle desktop/phone checks |
@@ -26,6 +26,13 @@ The frontend job has no Python or cloud dependency. The Python build job also
 runs `npm ci` and `npm run build` in `frontend/` before packaging, so its installed
 wheel contains the browser application. See [frontend setup](frontend.md) for
 browser installation and local commands.
+
+`CI / tests` first runs the [fixed deterministic hard-safety gate](hard-safety-evaluations.md).
+Any failed, skipped or missing required case fails the check. The job retains
+the synthetic-only `hard-safety-evaluation` JSON artifact for 30 days, including
+failed gate runs. It records required IDs, expectations and executed coverage,
+not model-scored grades or universal safety claims. Existing full-suite tests
+and the six required check names remain in place.
 
 `CI / build` also runs the unprivileged ASC-60 promotion check. PRs into `main`
 must originate from this repository's `dev` branch and contain exact-source,

@@ -22,3 +22,4 @@ worker/release.json
 worker/.python_packages/
 .cache/
 backend/src/sous_chef/_usda/
+artifacts/safety-evaluation/
