@@ -87,8 +87,10 @@ def test_native_function_handoff_stateless_result_and_identity_trace(
         "version": "2",
     }
     assert "model" not in first
-    assert first["store"] is False and first["parallel_tool_calls"] is False
-    assert [tool["name"] for tool in first["tools"]] == ["recipe_specialist"]
+    assert first["store"] is False
+    assert (
+        not {"tools", "tool_choice", "parallel_tool_calls", "text", "instructions"} & first.keys()
+    )
     result = json.dumps({"status": "candidate", "candidate": {"title": "Synthetic"}})
     continuation = CoordinationRequest(
         request=initial.request, previous_call=step.call, tool_output=result
@@ -309,16 +311,35 @@ def project() -> Mock:
     return client
 
 
+def publication_settings(**changes: Any) -> Settings:
+    return settings(
+        **{
+            "app_workload_principal_id": APP,
+            "foundry_project_endpoint": "https://synthetic.services.ai.azure.com/api/projects/recipes",
+            "foundry_project_resource_id": (
+                "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/synthetic"
+                "/providers/Microsoft.CognitiveServices/accounts/synthetic/projects/recipes"
+            ),
+        }
+        | changes
+    )
+
+
 def test_publication_creates_reproducible_source_version_under_existing_identity() -> None:
     client = project()
-    config = settings(app_workload_principal_id=APP)
+    config = publication_settings()
     assert publish(config, client) == "7"
     invocation = client.agents.create_version.call_args
     assert invocation.kwargs["agent_name"] == "orchestrator-agent"
     definition = invocation.kwargs["definition"].as_dict()
     assert definition["model"] == config.foundry_orchestrator_deployment
     assert definition["tools"][0]["name"] == "recipe_specialist"
-    assert definition["rai_config"] == {"rai_policy_name": "asc-responsible-ai-v1"}
+    assert definition["rai_config"] == {
+        "rai_policy_name": (
+            "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/synthetic"
+            "/providers/Microsoft.CognitiveServices/accounts/synthetic/raiPolicies/asc-responsible-ai-v1"
+        )
+    }
     assert invocation.kwargs["metadata"]["asc_policy_version"] == "2"
     client.agents.create.assert_not_called()
     assert config.agents_enabled  # No settings or release manifest mutation.
@@ -340,7 +361,7 @@ def test_publication_refuses_shared_or_disabled_identities() -> None:
         state="enabled",
     )
     with pytest.raises(IdentityError):
-        publish(settings(app_workload_principal_id=APP), client)
+        publish(publication_settings(), client)
     client.agents.create_version.assert_not_called()
     client = project()
     client.agents.get.side_effect = lambda name: SimpleNamespace(
@@ -351,5 +372,5 @@ def test_publication_refuses_shared_or_disabled_identities() -> None:
         state="disabled",
     )
     with pytest.raises(IdentityError):
-        publish(settings(app_workload_principal_id=APP), client)
+        publish(publication_settings(), client)
     client.agents.create_version.assert_not_called()

@@ -23,7 +23,10 @@ approved-policy setting; set
 `ASC_FOUNDRY_RECIPE_NUTRITION_RAI_POLICY_NAME=asc-responsible-ai-v1` after an owner
 has applied and verified this policy. An existing approved custom policy name
 remains supported, but its controls require separate review; the name alone does
-not prove equivalence to v1.
+not prove equivalence to v1. Publication resolves that name to the full RAI policy
+ARM resource ID on the configured Foundry account; `rai_config.rai_policy_name`
+must reference the resource ID, not the bare name. The configured project
+resource ID and endpoint must identify the same project.
 
 Use the [foundation validation and owner-approved deployment procedure](../infra/README.md#validate-preview-and-deploy).
 The preview must include the new policy and deployment associations, not a
@@ -35,7 +38,7 @@ After deployment, the owner must read back the policy's filters/mode and each
 deployment's `raiPolicyName`, then
 [publish the reviewed agent definitions](orchestrator.md#reproducible-dev-source-publication).
 Review and pin the returned source versions through the normal disabled-by-default
-release process. Agent-definition fingerprints include the selected policy name,
+release process. Agent-definition fingerprints include the selected policy resource ID,
 not the remote policy body. Azure policies can be edited in place: preserve v1
 and introduce a new reviewed name for control changes; verify remote drift before
 activation. This change does not publish agents, change identities, enable a

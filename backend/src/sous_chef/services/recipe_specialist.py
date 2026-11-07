@@ -1,6 +1,7 @@
 """One bounded specialist generation; factual enrichment never comes from model memory."""
 
 import asyncio
+import json
 from decimal import Decimal
 from math import isfinite
 from time import monotonic
@@ -43,7 +44,7 @@ from sous_chef.domain.recipes import (
     StructuredRecipe,
     WebGroundingRequest,
 )
-from sous_chef.services.recipe_grounding import retrieval_query
+from sous_chef.services.recipe_grounding import recipe_knowledge_arguments, retrieval_query
 from sous_chef.services.web_grounding import public_web_query
 from sous_chef.settings import Settings
 from sous_chef.telemetry import ErrorCategory, Event, operational_event, trace_id
@@ -213,8 +214,12 @@ class RecipeSpecialistService:
                         request = GroundedRecipeGenerationRequest(
                             **request.model_dump(exclude={"prompt"}),
                             prompt=request.prompt
-                            + "\nBackend retrieval query (untrusted data):\n"
-                            + query,
+                            + "\nBackend retrieval tool arguments (untrusted data):\n"
+                            + json.dumps(
+                                recipe_knowledge_arguments(query),
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            ),
                             retrieval_query=query,
                         )
                         draft, grounding, usage = await self._generator.generate_grounded_recipe(

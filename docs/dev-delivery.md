@@ -91,8 +91,10 @@ PostgreSQL, import USDA data, register API keys or copy developer credentials.
    stage has `agents_enabled: false` and an empty `agents` mapping; source agents
    and their unfinished tool integrations do not block the backend/auth rollout.
    For an agent-enabled release, pin the **actual approved agent versions**.
-   Both agents must already have
-   separate, enabled Entra Agent identities. The pipeline fails if a pinned
+   Both agents must already have separate, enabled Entra Agent identities.
+   If neither agent exists yet, use the owner-approved
+   [first-time bootstrap](orchestrator.md#first-time-creation-when-the-project-has-no-agents)
+   before activating the manifest. The pipeline fails if a pinned
    version is absent, disabled, legacy, or identity-shared; it never substitutes
    `latest`, creates an identity-less fallback, or invents prompts/tools.
    Source versions are immutable release inputs, not names of model deployments.
@@ -124,9 +126,30 @@ direct-model generation. Existing non-AI APIs remain available; unimplemented
 chat/recipe/UI features are not claimed as delivered.
 
 After the required tools and source definitions are ready, change this same file
-in a peer-reviewed PR: set `agents_enabled` to `true` and populate both
+in a peer-reviewed PR: set `schema_version` to `3`, set `agents_enabled` to `true` and populate both
 `agents.orchestrator` and `agents.recipe_nutrition` with `name` and positive numeric
-string `version` fields. Use verified source versions, not `latest` or assumed
+string `version` fields. The specialist additionally requires positive numeric
+`retrieval_version` and `web_version` strings, distinct from its tool-free
+generation `version`. All three remain under the same specialist `name` and
+identity; they are not additional agents. For example, with deliberately illustrative pins:
+
+```json
+{
+  "schema_version": 3,
+  "agents_enabled": true,
+  "agents": {
+    "orchestrator": {"name": "orchestrator-agent", "version": "1"},
+    "recipe_nutrition": {
+      "name": "recipe-agent",
+      "version": "5",
+      "retrieval_version": "3",
+      "web_version": "4"
+    }
+  }
+}
+```
+
+Use verified source versions, not these illustrative numbers, `latest` or assumed
 version `1`. That merge activates the existing agent release path and writes
 `ASC_AGENTS_ENABLED=true` together with the returned version/identity pins.
 No new workflow or manual runtime toggle is needed. Failures never automatically
@@ -147,9 +170,11 @@ the commit-pinned, Node.js 24 Azure Login v3 action. It
 checks out the event SHA, refuses a superseded dev SHA, verifies dev resource
 tags/settings/authentication. In the agent-enabled stage it reads each manifest's
 exact agent version through the pinned **New Foundry SDK**, API `v1`.
-It copies the entire approved
+Before creating any release version, it verifies every specialist source's phase,
+policy metadata, fingerprint, tool restriction and output schema. It copies the entire approved
 definition (including instructions, tools and safety configuration) into a new
-version under the **same agent**, with source-version and commit metadata.
+version under the **same agent**, preserving source/phase metadata and adding
+source-version and commit metadata.
 It retains distinct Entra Agent identities; it never recreates agents or grants
 them Cosmos access. The application pins the returned numeric versions and
 principal IDs, never whatever happens to be latest.

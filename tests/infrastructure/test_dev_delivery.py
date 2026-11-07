@@ -32,10 +32,15 @@ ENV = {
 }
 AGENT_PINS = {
     "orchestrator": {"name": "orchestrator", "version": "1"},
-    "recipe_nutrition": {"name": "recipe-nutrition", "version": "1"},
+    "recipe_nutrition": {
+        "name": "recipe-nutrition",
+        "version": "1",
+        "retrieval_version": "2",
+        "web_version": "3",
+    },
 }
 ENABLED_MANIFEST = {
-    "schema_version": 2,
+    "schema_version": 3,
     "agents_enabled": True,
     "agents": AGENT_PINS,
 }
@@ -179,12 +184,18 @@ class DeliveryTests(unittest.TestCase):
             original | {"agents_enabled": 0},
             original | {"agents_enabled": False},
             original | {"agents": {}},
+            original | {"schema_version": 2},
             original | {"agents": {"orchestrator": {}, "recipe_nutrition": []}},
         ]
         for field, value in (("version", "latest"), ("name", "recipe-nutrition")):
             data = json.loads(json.dumps(original))
             data["agents"]["orchestrator"][field] = value
             variants.append(data)
+        for field in ("retrieval_version", "web_version"):
+            for value in ("latest", "1"):
+                data = json.loads(json.dumps(original))
+                data["agents"]["recipe_nutrition"][field] = value
+                variants.append(data)
         for data in variants:
             with patch.object(Path, "read_text", return_value=json.dumps(data)):
                 with self.assertRaises(delivery.DeliveryError):
@@ -501,11 +512,58 @@ class DeliveryTests(unittest.TestCase):
                 self.assertFalse((root / "app.zip").exists())
 
     def test_agent_release_preserves_approved_definition_and_separate_identities(self) -> None:
-        definitions = [
-            SimpleNamespace(kind="prompt", instructions="approved", tools=["approved-tool"]),
-            SimpleNamespace(kind="prompt", instructions="specialist", tools=["approved-tool"]),
-        ]
-        for mode in ("ok", "shared", "workload", "legacy", "disabled"):
+        from azure.ai.projects.models import AgentVersionDetails
+        from sous_chef.recipe_definition import (
+            RecipePhase,
+            build_recipe_definition,
+            recipe_knowledge_tool,
+            recipe_source_metadata,
+        )
+
+        for mode in ("ok", "shared", "workload", "legacy", "disabled", "phase"):
+            sources = [
+                AgentVersionDetails(
+                    {
+                        "name": "orchestrator",
+                        "version": "1",
+                        "status": "active",
+                        "draft": False,
+                        "definition": {
+                            "kind": "prompt",
+                            "model": "orchestrator-model",
+                            "instructions": "approved",
+                        },
+                        "metadata": {},
+                    }
+                )
+            ]
+            for index, phase in enumerate(RecipePhase, 1):
+                definition = build_recipe_definition(
+                    "recipe-model",
+                    "approved-policy",
+                    phase=phase,
+                    knowledge_tool=recipe_knowledge_tool(
+                        "https://synthetic.search.windows.net/knowledgebases/fixture/mcp",
+                        "fixture-mcp",
+                    )
+                    if phase == RecipePhase.RETRIEVAL
+                    else None,
+                )
+                metadata = recipe_source_metadata(definition, phase)
+                if mode == "phase" and phase == RecipePhase.WEB:
+                    metadata["asc_recipe_phase"] = "generation"
+                sources.append(
+                    AgentVersionDetails(
+                        {
+                            "name": "recipe-nutrition",
+                            "version": str(index),
+                            "status": "active",
+                            "draft": False,
+                            "definition": definition.as_dict(),
+                            "metadata": metadata,
+                        }
+                    )
+                )
             project = MagicMock()
             project.agents.get.side_effect = [
                 SimpleNamespace(
@@ -525,12 +583,9 @@ class DeliveryTests(unittest.TestCase):
                     ),
                 ),
             ]
-            project.agents.get_version.side_effect = [
-                SimpleNamespace(definition=definition) for definition in definitions
-            ]
+            project.agents.get_version.side_effect = sources
             project.agents.create_version.side_effect = [
-                SimpleNamespace(version="8"),
-                SimpleNamespace(version="9"),
+                SimpleNamespace(version=str(number)) for number in range(8, 12)
             ]
             with (
                 patch.dict(os.environ, ENV),
@@ -544,12 +599,16 @@ class DeliveryTests(unittest.TestCase):
                 pins = delivery.release_agents(project, AGENT_PINS, "app")
             self.assertEqual(pins["ASC_FOUNDRY_ORCHESTRATOR_AGENT_VERSION"], "8")
             self.assertEqual(pins["ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION"], "9")
-            for call, definition in zip(
-                project.agents.create_version.call_args_list, definitions, strict=True
+            self.assertEqual(pins["ASC_FOUNDRY_RECIPE_NUTRITION_RETRIEVAL_AGENT_VERSION"], "10")
+            self.assertEqual(pins["ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION"], "11")
+            for call, source in zip(
+                project.agents.create_version.call_args_list, sources, strict=True
             ):
-                self.assertIs(call.kwargs["definition"], definition)
+                self.assertIs(call.kwargs["definition"], source.definition)
                 self.assertEqual(call.kwargs["metadata"]["asc_commit"], SHA)
-                self.assertEqual(call.kwargs["metadata"]["asc_source_version"], "1")
+                self.assertEqual(call.kwargs["metadata"]["asc_source_version"], source.version)
+                for key, value in source.metadata.items():
+                    self.assertEqual(call.kwargs["metadata"][key], value)
 
     def test_deploy_supports_app_only_and_strict_agent_release_without_fallback(self) -> None:
         class SyntheticAzureError(Exception):

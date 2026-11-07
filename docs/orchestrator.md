@@ -136,11 +136,127 @@ agents and tools are ready. The same publisher also supports
 `--agent recipe_nutrition`; see the specialist setup notes for its required baseline
 RAI policy and schema.
 
+### First-time creation when the project has no agents
+
+Use `sous_chef.bootstrap_agents` rather than creating placeholder agents or
+reconstructing their tool definitions in the portal. It uses the same definition
+builders and policy/model/fingerprint metadata as the version publisher. In the
+New Foundry object model, first creation provisions each agent's own Entra Agent
+identity; the bootstrap reads both identities back and rejects missing, shared,
+disabled, workload-conflicting or incorrectly pinned identities.
+
+Before running, use the reviewed dev checkout and its locked Python 3.12
+environment. Configure the existing ignored `.env.dev` (never commit it):
+
+- Keep the existing valid dev authentication, live Cosmos and model settings;
+  the command uses the application's settings validator but does not access user data.
+- Set `ASC_FOUNDRY_PROJECT_ENDPOINT` and `ASC_FOUNDRY_PROJECT_RESOURCE_ID` to
+  the same owner-approved dev project. Confirm the target resource is dev before
+  running; naming a local environment `dev` does not prove the Azure target is dev.
+- Choose two distinct runtime names in `ASC_FOUNDRY_ORCHESTRATOR_AGENT_NAME`
+  and `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_NAME`. For example,
+  `sous-chef-orchestrator-dev` and `sous-chef-recipe-nutrition-dev`. The model
+  deployment settings identify the already deployed GPT-5.4-mini and GPT-5.4 models.
+- Set `ASC_APP_WORKLOAD_PRINCIPAL_ID` to the dev App Service workload principal,
+  not its client ID. Initial agent versions/principal pins are not required.
+  Existing principal pins, if supplied, must match the agents; do not remove a
+  verified pin merely to suppress a mismatch.
+- Supply all [Foundry IQ recipe knowledge settings](recipe-specialist.md), including
+  the reviewed MCP connection. Set
+  `ASC_FOUNDRY_RECIPE_NUTRITION_RAI_POLICY_NAME=asc-responsible-ai-v1` only after
+  the owner has applied and verified the account policy. Bootstrap constructs both
+  complete definitions before creating either agent; missing specialist setup
+  must not leave a newly created Orchestrator.
+
+Sign in with the approved project-scoped publisher account using Azure CLI, then
+run this command in the activated Python environment. This administrative
+`AzureCliCredential` is not an application runtime credential. Keep the App
+Service's agent flag and the checked-in manifest disabled:
+
+```powershell
+$previousEnvironment = $env:ASC_ENVIRONMENT
+$previousAgents = $env:ASC_AGENTS_ENABLED
+try {
+    $env:ASC_ENVIRONMENT = "dev"
+    $env:ASC_AGENTS_ENABLED = "true"
+    python -m sous_chef.bootstrap_agents --approve-dev-bootstrap
+} finally {
+    $env:ASC_ENVIRONMENT = $previousEnvironment
+    $env:ASC_AGENTS_ENABLED = $previousAgents
+}
+```
+
+The temporary process flag authorizes this command's configuration only.
+The script creates the missing Orchestrator with its reviewed function declaration,
+and the missing specialist with its tool-free generation configuration, strict
+output schema and RAI references. Publish the specialist's retrieval and web
+phase versions separately before enabling chat; see
+[specialist source publication](recipe-specialist.md#source-publication-and-setup).
+Publication
+resolves each approved policy name to its full ARM resource ID on the account
+identified by `ASC_FOUNDRY_PROJECT_RESOURCE_ID`, and requires that project ID to
+match `ASC_FOUNDRY_PROJECT_ENDPOINT`. Keep the short policy name in
+`ASC_FOUNDRY_RECIPE_NUTRITION_RAI_POLICY_NAME`; the command constructs the reference.
+It does not
+deploy models, grant RBAC, configure Search connections, invoke models/tools,
+delete agents, change endpoint routing or update App Service/manifest settings.
+The returned source agents should appear in the same Foundry project's agent
+list after refresh. The portal cannot add/edit function declarations; they are
+installed by the SDK definition, not by selecting A2A or Connected agents.
+
+On success, retain the printed exact names/numeric generation source versions.
+Publish and verify the two additional specialist phase versions, then include all pins in a
+peer-reviewed agent-enabled manifest change as described in
+[dev delivery](dev-delivery.md#release-stages); do not treat the displayed JSON
+as an already activated release. The printed principal IDs let the owner assign
+required downstream access. In particular, grant Search Index Data Reader to
+the Recipe + Nutrition identity only and retain the connection's
+`AgenticIdentityToken` authentication. Verify the required permitted/denied tool
+access and a signed-in recipe request after the reviewed deployment. Source and
+identity read-back alone are not proof of live model/tool execution.
+
+Creation is not an atomic two-agent transaction and it is not protected against
+concurrent publishers. Coordinate one owner run at a time. A failed or lost create
+response can leave an agent behind; no automatic create retry or cleanup occurs.
+Failures report the local request step, agent role, SDK exception type and HTTP
+status when available, without printing provider messages or response bodies.
+Use those diagnostics to distinguish request rejection, authentication/access
+failure and transport failure; do not assume every failure is a permissions issue.
+Inspect the project before rerunning. A later explicit run reuses an existing
+active source version only if its actual definition and metadata exactly match
+the current reviewed source, its numeric version is read back explicitly, and its
+identity passes validation. It creates only the remaining missing agent and does
+not append duplicate versions. An unrelated, changed, draft or disabled agent
+fails before new creation; use the reviewed version publisher for intentional
+updates rather than weakening bootstrap checks.
+
+For a read-only comparison, use `python -m sous_chef.bootstrap_agents --inspect`
+with the same temporary dev process settings. This reads each named agent and
+its latest numeric version, then reports status, metadata mismatch keys and
+definition difference paths without printing definition values. It never creates
+or updates versions. Investigate any returned differences before retrying;
+server normalization must not hide a missing policy, tool or instruction.
+
+The curated recipe MCP allowlist uses the explicit filter object
+`{"tool_names":["knowledge_base_retrieve"]}` rather than its array shorthand.
+Foundry normalizes the shorthand on read-back, which would otherwise make the
+stored definition differ from its submitted-source fingerprint. If an initial
+specialist version was published with the old shorthand, retain the agent and
+its identity, confirm the retrieval-only filter with `--inspect`, and have the
+owner intentionally publish the corrected retrieval source with
+`python -m sous_chef.publish_orchestrator --approve-dev-publication --agent recipe_nutrition --phase retrieval`.
+Verify its exact version with `--phase retrieval --verify-version <source-version>`.
+The default bootstrap inspection compares the latest version with the generation source;
+use `--inspect --phase retrieval` only when inspecting a latest retrieval version.
+Do not ignore fingerprint
+drift or append replacement versions automatically during bootstrap.
+
 An authorized owner can publish this source to an **existing**, enabled dev
 Orchestrator without recreating/rebinding its Entra identity:
 
 1. Use the reviewed dev checkout and locked Python dependencies. Configure the
-   approved dev project, both existing agent names, the Orchestrator's GPT-5.4-mini
+   approved dev project endpoint and `ASC_FOUNDRY_PROJECT_RESOURCE_ID`, both
+   existing agent names, the Orchestrator's GPT-5.4-mini
    deployment name and the App Service workload principal through the existing
    `.env.dev`/environment settings. Both agent identities must be distinct from
    each other and the app; configured principal pins, when present, must match.

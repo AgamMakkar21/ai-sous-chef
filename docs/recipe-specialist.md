@@ -1,6 +1,6 @@
 # Recipe + Nutrition structured output and grounding (ASC-26 / ASC-30 / ASC-34)
 
-This slice implements the GPT-5.4 specialist's version-4 instructions, strict
+This slice implements the GPT-5.4 specialist's version-5 source policy, strict
 draft/full-recipe schemas, one-call New Foundry generation, backend enrichment,
 identity-bound Foundry IQ recipe retrieval and conditional Web IQ. It does not activate chat
 or an Azure release, save/cook a recipe, or replace
@@ -23,6 +23,103 @@ implementation, fixture mode selected in dev/prod, API-key fallback, or Cosmos a
 Fixtures and offline doubles live only in `tests/fixtures/recipe-specialist.json`
 and `tests/unit/test_recipe_specialist.py`. All fixture recipes, nutrition amounts
 and food identifiers are synthetic, not real USDA facts.
+
+### Owner-approved dev retrieval check
+
+After source/identity verification, the specialist's Search Index Data Reader
+grant and corpus indexing, an owner can run
+`python -m sous_chef.check_recipe_knowledge --approve-dev-check --version <verified-source-version> --principal-id <verified-specialist-principal-id>`
+with the temporary dev/agents-enabled process settings used for bootstrap.
+It uses `AzureCliCredential` explicitly as an administrative test initiator,
+checks the selected source and distinct identities, and reads connection metadata
+without requesting secrets. The connection must use agentic identity and the
+configured knowledge-base MCP target.
+The version must be a newly verified **retrieval** phase source, not an older
+combined-tools source or a generation/web source. Phase, complete definition and
+fingerprint checks fail before any Responses call when that pin is wrong.
+
+The check makes one non-retried Responses request to the exact specialist
+name/version, inherits its published retrieval-only capabilities, permits at most one
+`knowledge_base_retrieve` call and uses only the fixed public query `rice dinner`.
+Its exact arguments are `{"query_variants":["rice dinner"]}`, matching the
+Search MCP input schema. The array must contain that one unchanged string;
+extra variants, additional fields and the legacy `query` field are rejected.
+No Web or USDA call, source publication, role assignment, resource configuration
+or runtime activation occurs. Provider storage is disabled. The response must
+complete within the configured SDK timeout and token limits, use the expected
+query/tool, and return nonempty recipe grounding that passes the existing
+bounded provenance parser. The published strict draft format remains in force;
+the resulting draft is not displayed, accepted as a recipe or saved.
+Only a source count and correlation ID are printed.
+Model and Search usage charges can apply; do not automatically replay a failed
+or ambiguously completed invocation.
+
+On provider failure, the check reports the exception class and HTTP status,
+plus only allowlisted error-code and rejected-parameter identifiers when available.
+Provider messages, response bodies and unknown identifiers remain withheld.
+
+If the tool-argument check fails, do not weaken the fixed-query comparison or
+blindly rerun the model. `python -m sous_chef.check_recipe_knowledge --inspect-tool-schema`
+performs a bounded administrative MCP initialization and `tools/list` inspection,
+with no model invocation, recipe retrieval or resource configuration change.
+It uses the operator's `AzureCliCredential` directly for Search metadata, not
+the specialist identity. It reports only bounded input field/type metadata,
+never tokens, schema descriptions, examples or default values. A denial does
+not prove that the specialist lacks access; do not grant wider permissions
+based on it. Live query rejection diagnostics expose only presence/equality/extra-field
+booleans, never argument values. Exact query equality remains required.
+Correcting this local argument envelope does not change published source
+instructions or their fingerprint; an already verified retrieval source
+does not need republishing solely for that correction.
+
+Grounding rejection reports a fixed stage such as `chunk_schema`, `recipe_schema`,
+`provenance` or `context_tokens`, without raw provider data. The API failure code
+and production acceptance limits remain unchanged. Dev recipe MCP retrieval uses
+the larger full-envelope profile described below. Do not relax provenance or
+treat administrator-side acceptance as workload or end-to-end chat acceptance.
+`python -m sous_chef.check_recipe_knowledge --inspect-grounding-config` reads only
+the configured index, knowledge source and knowledge-base definitions using the
+operator's Azure CLI identity. It reports boolean comparisons for the dedicated
+`grounding` field/semantic configuration, source binding, minimal/extractive mode
+and bounded defaults. It performs no document query, MCP tool call, model invocation,
+publication or configuration change. Metadata matching does not prove that the
+indexed documents contain valid grounding or that the workload can retrieve them.
+
+After explicit approval, `python -m sous_chef.check_recipe_knowledge --approve-dev-search-diagnostic`
+rechecks that configuration and lists the actual MCP input contract before one
+non-retried `knowledge_base_retrieve` call with `{"query_variants":["rice dinner"]}`.
+It uses the operator's Search identity, not a Foundry agent or the workload.
+No Foundry/GPT call, Web/USDA call, publication or configuration change occurs;
+Search charges may apply. Configuration/schema drift blocks retrieval.
+Redirects are disabled at both the HTTP-client and MCP-transport boundaries.
+Only output counts, bounded type/presence metadata and allowlisted validation
+codes/stages are printed. No recipe text, unknown field names, provider messages,
+source IDs or URLs are displayed or saved. Rejected/empty grounding exits nonzero
+after reporting that safe diagnostic; do not replay it. A pass establishes only
+administrator-initiated MCP data compatibility, not agent or workload acceptance.
+The diagnostic captures the native protocol result before the SDK's automatic
+output-schema validation, which can embed provider values in exceptions. The
+application's strict grounding parser still determines schema/provenance acceptance;
+server output-schema and structured-content presence are reported only as booleans.
+This Search-only dev diagnostic uses 65,536 characters and 16,000 tokens.
+Its `runtime_acceptance` object reports the configured environment's recipe MCP
+profile separately. The dev runtime and pinned-agent check now use that same
+larger profile; local/production retain 16,000 characters and the configured
+256-4,000-token limit. No hosted setting, source definition or model request
+allowance changes. This local code change does not publish or activate chat.
+For oversized or multi-block results, it also inspects at most four native content
+blocks with a combined 65,536-character inspection budget. Only fixed known-field
+shapes, lengths/counts and isolated block validation stages are shown; unknown keys
+and all values remain withheld. Each structural summary is capped at 4,096 characters.
+Isolated block checks never select, trim or merge evidence for acceptance: each
+profile checks the complete response, and source count/schema/provenance limits
+remain authoritative.
+A previous diagnostic approval is consumed by its attempt; another retrieval,
+including one that prints only block metadata, requires new explicit approval.
+
+A pass from `--approve-dev-check` proves the administrator-initiated pinned-agent/agentic-MCP retrieval
+path. It does **not** prove App Service managed-identity invocation, USDA
+enrichment, recipe quality/final safety, or signed-in end-to-end chat.
 
 ## USDA nutrition (ASC-32)
 
@@ -297,15 +394,18 @@ The ordinary non-web path uses one specialist model invocation:
    untrusted grounding to the pinned Recipe + Nutrition managed agent. The
    gateway requires the distinct agent/workload identity pins. It uses Responses
    v1, `agent_reference`, `store=false` and strict JSON Schema. Live retrieval
-   attaches only `knowledge_base_retrieve` on the configured MCP connection,
-   requires a tool call, disables parallel calls and sets `max_tool_calls=1`.
+   selects the retrieval source pin, which declares only `knowledge_base_retrieve`
+   on the configured MCP connection and requires a tool call. The request sets
+   `max_tool_calls=1` without overriding the source's tools or selection policy.
    Foundry authenticates Search with the specialist's `AgenticIdentityToken`,
    not the web workload, Orchestrator or a shared project identity. Retrieval
    and generation share one Responses invocation and its provider-counted usage;
    there is no separate hidden retrieval model call. The fixture seam retains
-   `tools=[]` and `tool_choice=none`.
-3. Validate exactly one completed, approved MCP call with the unchanged backend
-   query and no argument overrides. Validate retrieved evidence and the draft,
+   a generation source with `tools=[]` and `tool_choice=none`.
+3. Supply exactly `{"query_variants":[<unchanged backend query>]}` as untrusted
+   tool-argument data, then validate one completed, approved MCP call with that
+   exact object. No splitting, rewriting, extra variants, resource selectors
+   or retrieval-limit overrides are accepted. Validate retrieved evidence and the draft,
    its actual cited source IDs, exact source quotes, time budget, declared skill
    ceiling and ingredient restrictions. Hard allergies/restrictions take priority
    over current requests, taste and nutrition goals. Explicit preferences outrank
@@ -338,9 +438,14 @@ is valid and explicit, not zero nutrition; an actual tool failure stops the requ
 The supplied finite deadline covers retrieval, generation and nutrition together,
 with a 60-second ceiling. Cancellation starts no replacement invocation. The
 gateway preflights instructions, schema, full context, requirements and grounding
-against the remaining per-call input allowance; grounding also must fit the
-4,000-token tool acceptance allowance. Azure Search requires a minimum 5,000-token
-output limit, which is higher than that acceptance limit. Live preflight reserves
+against the remaining per-call input allowance. Dev recipe MCP retrieval allows
+up to 65,536 characters and 16,000 tokens for its complete result, including every
+reference record. Local/production retain the 16,000-character and configured
+256-4,000-token result limits. Native MCP call/discovery envelopes are counted in
+full; discovery metadata separately retains its 4,000-token ceiling in every
+environment. All other tool results, supplied generation grounding and model/call
+budgets remain unchanged. Azure Search requires a minimum 5,000-token
+output limit, distinct from these backend acceptance profiles. Live preflight reserves
 the full 5,000-token service allowance in addition to the complete input; oversized
 MCP results fail post-validation rather than being silently truncated. This check
 occurs after the provider's retrieval/generation call, not before the model sees
@@ -369,9 +474,11 @@ of silently deleting words or sending the full request.
 The specialist makes one isolated Responses invocation through its existing pinned
 Recipe + Nutrition identity. Only the minimized query enters that invocation:
 no profile, groceries, history, user key or complete cooking context. The gateway
-overrides the instructions, attaches only the pinned SDK's native `WebSearchTool`
-(`web_search`, external access, low context), requires one unchanged search and
-disables parallel calls and provider storage. No approximate location is inferred.
+selects the separately pinned web source, which stores the isolated web instructions,
+the native `WebSearchTool` (`web_search`, external access, low context),
+required tool selection and strict `WebDraft` schema. The request limits native
+tool calls to one and disables provider storage without overriding source configuration.
+No approximate location is inferred.
 The search stage has a 10-second ceiling inside the shared 60-second deadline.
 
 The backend accepts at most three short claims. Each requires an HTTPS URL present
@@ -553,7 +660,7 @@ guarantee is claimed.
 
 No new environment settings, packages, feature flags or provider adapters are
 required. The gate cannot be disabled by a request. Generation source policy is
-now **4**, with unchanged draft schema **2**; publish/pin that reviewed source
+now **5**, with unchanged draft schema **2**; publish/pin the reviewed phase sources
 before live composition so the specialist knows the supported output grammar.
 No agents, runtime flags, deployment pins or Azure resources change automatically.
 The gate is adapter-independent and applies equally to Web IQ-informed and
@@ -562,10 +669,19 @@ ordinary non-web recipes.
 ## Source publication and setup
 
 `recipe_definition.py` versions the specialist policy and builds the pinned SDK's
-`PromptAgentDefinition` with GPT-5.4's configured deployment, strict draft schema,
-the approved recipe MCP and native Web IQ tools, and an explicit `RaiConfig`.
-The source definition defaults to `tool_choice=none`; only the gateway's
-stage-specific override enables the appropriate tool.
+`PromptAgentDefinition` with GPT-5.4's configured deployment and an explicit
+`RaiConfig`. Each phase persists its entire configuration:
+
+| Phase | Published tools / selection | Output | Runtime pin |
+| --- | --- | --- | --- |
+| `generation` | No tools / `none` | Strict `RecipeDraft` | `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION` |
+| `retrieval` | Only recipe MCP / `required` | Strict `RecipeDraft` | `ASC_FOUNDRY_RECIPE_NUTRITION_RETRIEVAL_AGENT_VERSION` |
+| `web` | Only native Web IQ / `required` | Strict `WebDraft` | `ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION` |
+
+These are three immutable versions of the same agent, not three identities.
+Do not enable all tools on a single source and rely on prompt instructions to
+isolate phases. Pinned Responses calls inherit source configuration; they cannot
+send request-time tool overrides alongside `agent_reference`.
 [ASC-37 versions the platform controls and untrusted-tool guardrails](responsible-ai.md);
 passing platform filters never replaces the deterministic ingredient/cooking gates.
 
@@ -580,18 +696,31 @@ refuses an absent name; an invalid remote policy must fail rather than disable
 safety or substitute another policy. The `.env.dev.example` value is intentionally
 empty because source configuration does not prove that the policy is deployed.
 
-An authorized owner can explicitly publish the specialist source:
+An authorized owner can explicitly publish each specialist phase. Coordinate one
+owner and run one command at a time; do not replay a failed or ambiguously completed
+publication. Publish retrieval and web first, generation last, so default bootstrap
+inspection compares the latest version with the generation source:
 
 ```powershell
+$previousEnvironment = $env:ASC_ENVIRONMENT
 $previous = $env:ASC_AGENTS_ENABLED
 try {
     $env:ASC_ENVIRONMENT = "dev"
     $env:ASC_AGENTS_ENABLED = "true"
-    python -m sous_chef.publish_orchestrator --agent recipe_nutrition --approve-dev-publication
+    # Select exactly one phase per owner-approved run.
+    python -m sous_chef.publish_orchestrator --agent recipe_nutrition --phase retrieval --approve-dev-publication
 } finally {
+    $env:ASC_ENVIRONMENT = $previousEnvironment
     $env:ASC_AGENTS_ENABLED = $previous
 }
 ```
+
+Repeat as separate approved runs with `--phase web` and `--phase generation`.
+Retain each printed numeric version; publication does not assume the next number.
+Read back every selected phase without writing or invoking a model:
+`python -m sous_chef.publish_orchestrator --agent recipe_nutrition --phase <phase> --verify-version <printed-version>`.
+Use the same temporary dev process settings for read-back. It verifies both
+identities and the exact active source definition, phase metadata and fingerprint.
 
 The shared publisher retains its historical module name and default Orchestrator
 behavior. It verifies both distinct, enabled identities, checks configured pins,
@@ -606,7 +735,8 @@ retrying. The command changes no app runtime flags or release manifest.
 Keep `deploy/agents.dev.json` disabled until the remaining live tool adapters and chat/final
 safety composition are ready. Later work must inject those adapters, retain
 budget enforcement and identity separation, and pin the approved source version
-in a peer-reviewed release. No deployment or live grounding was performed by
+in a schema-version-3 peer-reviewed release. Existing combined-tools versions are
+retained but cannot be used as phase pins. No deployment or live grounding was performed by
 implementing this slice.
 
 ## One-time Foundry IQ setup for ASC-30
@@ -617,9 +747,17 @@ to add the `grounding` field and update the dedicated semantic configuration.
 Existing full recipe text remains searchable and the complete normalized record
 remains in `recipe_json`. The semantic grounding field contains only a bounded
 excerpt plus stable source ID, pinned dataset revision and reference URL.
-This is necessary because Search MCP returns extracted semantic fields, not the
-REST retrieval `references/sourceData` envelope. Old, unrefreshed MCP results
-fail explicitly; they are not guessed into valid citations.
+Search MCP can return an overview array in its first text block, using bounded
+nonnegative integer `ref_id` values and generic `content` fields, followed by one
+reference text block per overview entry containing `sourceData`. The decoder also
+retains compatibility with string IDs and named `grounding` fields. Only reference
+IDs are normalized; recipe source IDs, revisions and citations are not rewritten.
+Conflicting aliases are rejected. Every attached reference must uniquely match an
+overview entry and the same validated curated recipe. Supplied document keys,
+source IDs, source URLs and titles are cross-checked; supplied full `recipe_json`
+must reproduce the same indexed excerpt and provenance. The complete envelope,
+including all reference data, counts toward its character and token budget.
+Old or malformed MCP results fail explicitly, rather than becoming guessed citations.
 
 Optional nonsecret bounds, also used by the setup command:
 
@@ -627,6 +765,13 @@ Optional nonsecret bounds, also used by the setup command:
 | --- | --- |
 | `ASC_FOUNDRY_IQ_MAX_RESULTS` | 3 / 1-3 |
 | `ASC_FOUNDRY_IQ_MAX_CONTEXT_TOKENS` | 4,000 / 256-4,000 |
+
+`ASC_ENVIRONMENT=dev` selects a separate recipe-MCP envelope allowance of 65,536
+characters/16,000 tokens. The setting above still controls Search configuration,
+the REST retrieval path and standard local/production MCP acceptance; do not set
+it to 16,000. The dev envelope allowance does not change the stored knowledge
+source/base, published source fingerprint, result count, snippet limits or
+provenance checks. It needs no source republication or Search refresh by itself.
 
 Refresh `--configure` after changing the result count so the knowledge base's MCP
 document limit matches the runtime policy. Its service output-token limit remains
