@@ -80,13 +80,17 @@ def specialist_tool() -> FunctionTool:
     )
 
 
-def build_orchestrator_definition(model_deployment: str) -> PromptAgentDefinition:
+def build_orchestrator_definition(
+    model_deployment: str, rai_policy_id: str
+) -> PromptAgentDefinition:
     """Use the GPT-5.4-mini deployment name, never a runtime model override."""
     if not model_deployment.strip():
         raise ValueError("The GPT-5.4-mini deployment name is required.")
+    if not rai_policy_id.strip():
+        raise ValueError("The approved RAI policy resource ID is required.")
     return PromptAgentDefinition(
         model=model_deployment,
         instructions=ORCHESTRATOR_INSTRUCTIONS,
         tools=[specialist_tool()],
-        rai_config=RaiConfig(rai_policy_name="asc-responsible-ai-v1"),
+        rai_config=RaiConfig(rai_policy_name=rai_policy_id),
     )

@@ -3,8 +3,10 @@ from azure.core.exceptions import AzureError
 from azure.cosmos.aio import CosmosClient
 
 from sous_chef.adapters.credentials import build_async_credential
+from sous_chef.adapters.foundry_iq import RecipeKnowledgeConfig
 from sous_chef.domain.agent_identity import AgentIdentity, AgentRole, IdentityError, verify_distinct
 from sous_chef.domain.readiness import DependencyUnavailable
+from sous_chef.recipe_definition import RecipePhase, recipe_knowledge_tool, verify_recipe_source
 from sous_chef.settings import ConfigurationError, Settings
 
 
@@ -50,7 +52,11 @@ class LiveReadinessProbe:
             or settings.app_workload_principal_id is None
             or (
                 settings.agents_enabled
-                and any(not name or not version for _, name, version, _ in targets)
+                and (
+                    any(not name or not version for _, name, version, _ in targets)
+                    or not settings.foundry_recipe_nutrition_retrieval_agent_version
+                    or not settings.foundry_recipe_nutrition_web_agent_version
+                )
             )
         ):
             raise DependencyUnavailable("Live dependency configuration is incomplete.")
@@ -86,7 +92,39 @@ class LiveReadinessProbe:
                             identities.append(
                                 AgentIdentity(role, name, instance.principal_id, instance.client_id)
                             )
-                            await project.agents.get_version(name, version)
+                            source = await project.agents.get_version(name, version)
+                            if role == AgentRole.RECIPE_NUTRITION:
+                                if source.name != name or source.version != version:
+                                    raise DependencyUnavailable(
+                                        "Specialist phase pin verification failed."
+                                    )
+                                verify_recipe_source(source, RecipePhase.GENERATION)
+                                knowledge = RecipeKnowledgeConfig.from_settings(settings)
+                                for phase, pin in (
+                                    (
+                                        RecipePhase.RETRIEVAL,
+                                        settings.foundry_recipe_nutrition_retrieval_agent_version,
+                                    ),
+                                    (
+                                        RecipePhase.WEB,
+                                        settings.foundry_recipe_nutrition_web_agent_version,
+                                    ),
+                                ):
+                                    assert pin is not None
+                                    phase_source = await project.agents.get_version(name, pin)
+                                    if phase_source.name != name or phase_source.version != pin:
+                                        raise DependencyUnavailable(
+                                            "Specialist phase pin verification failed."
+                                        )
+                                    verify_recipe_source(
+                                        phase_source,
+                                        phase,
+                                        knowledge_tool=recipe_knowledge_tool(
+                                            knowledge.mcp_endpoint, knowledge.connection_name
+                                        )
+                                        if phase == RecipePhase.RETRIEVAL
+                                        else None,
+                                    )
                         verify_distinct(identities, settings.app_workload_principal_id)
         except (AzureError, IdentityError, ConfigurationError):
             raise DependencyUnavailable("Live dependency verification failed.") from None

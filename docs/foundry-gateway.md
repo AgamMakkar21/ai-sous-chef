@@ -14,6 +14,22 @@ or local-success fallback. The existing ASC-10 `FoundryModelClient` and
 `check_foundry` command remain model-deployment wiring diagnostics; they are not
 used by this gateway and must not replace managed-agent invocation.
 
+Pinned-agent requests do not send `tools`, `tool_choice`, `parallel_tool_calls`,
+`instructions` or `text` overrides. Tool declarations, selection policy, instructions
+and strict output schemas belong to immutable prompt-agent source versions.
+The service rejects request-time tool overrides alongside `agent_reference`;
+see [microsoft/agent-framework#5087](https://github.com/microsoft/agent-framework/issues/5087).
+The specialist uses three phase versions under its one existing identity:
+tool-free generation, curated retrieval plus generation, and isolated Web IQ.
+The backend selects the phase pin; user input cannot select an agent or version.
+
+The recipe MCP result allowance follows validated `ASC_ENVIRONMENT`: dev allows
+65,536 characters/16,000 tokens for the full result, while local/production retain
+16,000 characters and the configured 256-4,000-token bound. Native MCP envelopes
+are counted in full; discovery metadata retains its separate 4,000-token limit.
+Source definitions, Search defaults, model usage/call budgets, other tools and
+provenance checks are unchanged. This backend change does not publish or activate agents.
+
 ## Configuration
 
 Use the existing `.env.<environment>` selection and required live app settings.
@@ -26,13 +42,18 @@ Gateway construction requires `ASC_ADAPTER_MODE=live` and these values:
 | `ASC_FOUNDRY_ORCHESTRATOR_AGENT_NAME` | Deployed Orchestrator runtime agent name |
 | `ASC_FOUNDRY_ORCHESTRATOR_AGENT_VERSION` | Explicit positive numeric version, not `latest` |
 | `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_NAME` | Different deployed Recipe + Nutrition runtime name |
-| `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION` | Explicit positive numeric version |
+| `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION` | Explicit tool-free generation version |
+| `ASC_FOUNDRY_RECIPE_NUTRITION_RETRIEVAL_AGENT_VERSION` | Explicit curated-retrieval/generation version |
+| `ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION` | Explicit isolated Web IQ version |
 | `ASC_FOUNDRY_INVOCATION_TIMEOUT_SECONDS` | Positive finite total deadline, at most 120 seconds; default 60 |
 | `AZURE_CLIENT_ID` | Required in dev/prod: App Service user-assigned managed identity client ID |
 
 Names and versions are optional for the application scaffold, but mandatory when
 constructing this gateway. Versions are configuration pins, not discovered or
 silently upgraded at invocation time.
+The three specialist versions must differ. Live readiness reads all three pins
+and verifies their current source fingerprints, policy/phase metadata, exact
+tool configuration and output schemas without invoking a model.
 
 ASC-25 additionally exposes `coordinate()` for the Orchestrator's strict
 `recipe_specialist` function handoff. Unlike the original text-only `invoke()`,

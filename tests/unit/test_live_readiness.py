@@ -2,9 +2,17 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from azure.ai.projects.models import AgentVersionDetails
 from azure.core.exceptions import HttpResponseError
+from sous_chef.adapters.foundry_iq import RecipeKnowledgeConfig
 from sous_chef.adapters.readiness import LiveReadinessProbe
 from sous_chef.domain.readiness import DependencyUnavailable
+from sous_chef.recipe_definition import (
+    RecipePhase,
+    build_recipe_definition,
+    recipe_knowledge_tool,
+    recipe_source_metadata,
+)
 from sous_chef.settings import Settings
 
 
@@ -22,6 +30,18 @@ def settings() -> Settings:
         foundry_orchestrator_agent_version="2",
         foundry_recipe_nutrition_agent_name="recipe",
         foundry_recipe_nutrition_agent_version="3",
+        foundry_recipe_nutrition_retrieval_agent_version="4",
+        foundry_recipe_nutrition_web_agent_version="5",
+        foundry_project_resource_id=(
+            "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/synthetic"
+            "/providers/Microsoft.CognitiveServices/accounts/synthetic/projects/dev"
+        ),
+        foundry_recipe_nutrition_rai_policy_name="approved-policy",
+        foundry_iq_search_endpoint="https://synthetic.search.windows.net",
+        foundry_iq_index_name="fixture-recipes",
+        foundry_iq_knowledge_source_name="fixture-source",
+        foundry_iq_knowledge_base_name="fixture-knowledge",
+        foundry_iq_connection_name="fixture-mcp",
         app_workload_principal_id="11111111-1111-1111-1111-111111111111",
         auth_issuer="https://synthetic.ciamlogin.com/tenant/v2.0",
         auth_jwks_uri="https://synthetic.ciamlogin.com/tenant/discovery/v2.0/keys",
@@ -30,7 +50,9 @@ def settings() -> Settings:
     )
 
 
-@pytest.mark.parametrize("failure", ["none", "cosmos", "foundry", "shared", "disabled", "pinned"])
+@pytest.mark.parametrize(
+    "failure", ["none", "cosmos", "foundry", "shared", "disabled", "pinned", "phase"]
+)
 @pytest.mark.parametrize("session_auth", [False, True])
 def test_live_probe_reads_only_metadata_and_fails_closed(failure: str, session_auth: bool) -> None:
     config = settings()
@@ -69,7 +91,48 @@ def test_live_probe_reads_only_metadata_and_fails_closed(failure: str, session_a
         agent.instance_identity.client_id = role + "-client"
         details.append(agent)
     project.agents.get = AsyncMock(side_effect=details)
-    project.agents.get_version = AsyncMock()
+    sources = [
+        AgentVersionDetails(
+            {
+                "name": "orchestrator",
+                "version": "2",
+                "status": "active",
+                "draft": False,
+                "definition": {
+                    "kind": "prompt",
+                    "model": "orchestrator",
+                    "instructions": "approved",
+                },
+                "metadata": {},
+            }
+        )
+    ]
+    knowledge = RecipeKnowledgeConfig.from_settings(config)
+    for number, phase in zip(("3", "4", "5"), RecipePhase, strict=True):
+        definition = build_recipe_definition(
+            "recipe-nutrition",
+            "approved-policy",
+            phase=phase,
+            knowledge_tool=recipe_knowledge_tool(knowledge.mcp_endpoint, knowledge.connection_name)
+            if phase == RecipePhase.RETRIEVAL
+            else None,
+        )
+        metadata = recipe_source_metadata(definition, phase)
+        if failure == "phase" and phase == RecipePhase.RETRIEVAL:
+            metadata["asc_recipe_phase"] = "generation"
+        sources.append(
+            AgentVersionDetails(
+                {
+                    "name": "recipe",
+                    "version": number,
+                    "status": "active",
+                    "draft": False,
+                    "definition": definition.as_dict(),
+                    "metadata": metadata,
+                }
+            )
+        )
+    project.agents.get_version = AsyncMock(side_effect=sources)
     if failure == "foundry":
         project.agents.get_version.side_effect = HttpResponseError("private-token")
     with (
@@ -88,6 +151,8 @@ def test_live_probe_reads_only_metadata_and_fails_closed(failure: str, session_a
             assert [call.args for call in project.agents.get_version.call_args_list] == [
                 ("orchestrator", "2"),
                 ("recipe", "3"),
+                ("recipe", "4"),
+                ("recipe", "5"),
             ]
         else:
             with pytest.raises(DependencyUnavailable, match="verification failed"):

@@ -91,6 +91,12 @@ class Settings(BaseSettings):
     foundry_recipe_nutrition_agent_version: str | None = Field(
         default=None, pattern=r"^[1-9][0-9]{0,9}$", repr=False
     )
+    foundry_recipe_nutrition_retrieval_agent_version: str | None = Field(
+        default=None, pattern=r"^[1-9][0-9]{0,9}$", repr=False
+    )
+    foundry_recipe_nutrition_web_agent_version: str | None = Field(
+        default=None, pattern=r"^[1-9][0-9]{0,9}$", repr=False
+    )
     foundry_invocation_timeout_seconds: float = Field(default=60, gt=0, le=120, allow_inf_nan=False)
     foundry_orchestrator_agent_principal_id: str | None = Field(
         default=None, pattern=_GUID, repr=False
@@ -227,6 +233,19 @@ class Settings(BaseSettings):
         if len(pinned) != len(set(pinned)):
             raise ConfigurationError(
                 "Orchestrator, Recipe + Nutrition and App Service principal IDs must be distinct."
+            )
+        phases = [
+            value
+            for value in (
+                self.foundry_recipe_nutrition_agent_version,
+                self.foundry_recipe_nutrition_retrieval_agent_version,
+                self.foundry_recipe_nutrition_web_agent_version,
+            )
+            if value is not None
+        ]
+        if len(phases) != len(set(phases)):
+            raise ConfigurationError(
+                "Specialist generation, retrieval and web versions must differ."
             )
         for endpoint in (self.cosmos_endpoint, self.foundry_project_endpoint):
             if endpoint is not None and (

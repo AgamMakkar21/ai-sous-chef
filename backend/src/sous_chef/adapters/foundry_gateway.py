@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -57,6 +57,7 @@ from sous_chef.domain.recipes import (
     WebGrounding,
     WebGroundingRequest,
 )
+from sous_chef.recipe_definition import RecipePhase, build_recipe_definition, recipe_knowledge_tool
 from sous_chef.settings import ConfigurationError, Settings
 from sous_chef.telemetry import ErrorCategory, Event, operational_event, trace_id
 
@@ -66,7 +67,27 @@ MAX_MCP_ENVELOPE_CHARACTERS = 65_536
 Result = TypeVar("Result")
 
 
-def _tool_arguments(value: str) -> dict[str, object]:
+def validate_recipe_mcp_envelopes(
+    listings: Sequence[str],
+    calls: Sequence[str],
+    *,
+    max_tool_result_tokens: int,
+) -> None:
+    from sous_chef.services.context import _encoding
+
+    if sum(map(len, (*listings, *calls))) > MAX_MCP_ENVELOPE_CHARACTERS:
+        raise ValueError("Recipe MCP response exceeds the runtime envelope budget.")
+    encoding = _encoding()
+    listing_tokens = sum(len(encoding.encode(item, disallowed_special=())) for item in listings)
+    call_tokens = sum(len(encoding.encode(item, disallowed_special=())) for item in calls)
+    if (
+        listing_tokens > POLICY.max_tool_result_tokens
+        or listing_tokens + call_tokens > max_tool_result_tokens
+    ):
+        raise ValueError("Recipe MCP response exceeds the runtime envelope budget.")
+
+
+def parse_tool_arguments(value: str) -> dict[str, object]:
     def unique_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
         fields: dict[str, object] = {}
         for key, item in pairs:
@@ -132,6 +153,12 @@ class FoundryGateway:
             "ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION": (
                 settings.foundry_recipe_nutrition_agent_version
             ),
+            "ASC_FOUNDRY_RECIPE_NUTRITION_RETRIEVAL_AGENT_VERSION": (
+                settings.foundry_recipe_nutrition_retrieval_agent_version
+            ),
+            "ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION": (
+                settings.foundry_recipe_nutrition_web_agent_version
+            ),
         }
         missing = [name for name, value in required.items() if value is None]
         if missing:
@@ -140,6 +167,8 @@ class FoundryGateway:
         assert settings.foundry_recipe_nutrition_agent_name is not None
         assert settings.foundry_orchestrator_agent_version is not None
         assert settings.foundry_recipe_nutrition_agent_version is not None
+        assert settings.foundry_recipe_nutrition_retrieval_agent_version is not None
+        assert settings.foundry_recipe_nutrition_web_agent_version is not None
         if settings.foundry_orchestrator_agent_name == settings.foundry_recipe_nutrition_agent_name:
             raise ConfigurationError("Configure different runtime agent names for the two roles.")
         self._targets = {
@@ -150,6 +179,17 @@ class FoundryGateway:
             AgentRole.RECIPE_NUTRITION: AgentTarget(
                 settings.foundry_recipe_nutrition_agent_name,
                 settings.foundry_recipe_nutrition_agent_version,
+            ),
+        }
+        self._recipe_targets = {
+            RecipePhase.GENERATION: self._targets[AgentRole.RECIPE_NUTRITION],
+            RecipePhase.RETRIEVAL: AgentTarget(
+                settings.foundry_recipe_nutrition_agent_name,
+                settings.foundry_recipe_nutrition_retrieval_agent_version,
+            ),
+            RecipePhase.WEB: AgentTarget(
+                settings.foundry_recipe_nutrition_agent_name,
+                settings.foundry_recipe_nutrition_web_agent_version,
             ),
         }
         self._settings = settings
@@ -197,7 +237,13 @@ class FoundryGateway:
         parse: Callable[[FoundryRequest, Response], Result],
         coordination: CoordinationRequest | None = None,
     ) -> Result:
-        target = self._targets[request.role]
+        target = (
+            self._recipe_targets[RecipePhase.WEB]
+            if isinstance(request, WebGroundingRequest)
+            else self._recipe_targets[RecipePhase.RETRIEVAL]
+            if isinstance(request, GroundedRecipeGenerationRequest)
+            else self._targets[request.role]
+        )
         started = monotonic()
         token = trace_id.set(request.operation_id.hex)
         try:
@@ -287,28 +333,22 @@ class FoundryGateway:
 
     @staticmethod
     def _web_body() -> dict[str, object]:
-        from sous_chef.recipe_definition import (
-            WEB_GROUNDING_INSTRUCTIONS,
-            web_output_format,
-            web_search_tool,
-        )
-
         return {
-            "instructions": WEB_GROUNDING_INSTRUCTIONS,
-            "tools": [web_search_tool().as_dict()],
-            "tool_choice": "required",
             "max_tool_calls": 1,
-            "parallel_tool_calls": False,
             "store": False,
             "include": ["web_search_call.action.sources"],
-            "text": {"format": web_output_format().as_dict()},
         }
 
     @staticmethod
     def _check_web_input(request: WebGroundingRequest) -> None:
         from sous_chef.services.context import _encoding
 
-        serialized = request.prompt + json.dumps(FoundryGateway._web_body())
+        definition = build_recipe_definition("budget-model", "budget-policy", phase=RecipePhase.WEB)
+        serialized = (
+            request.prompt
+            + json.dumps(definition.as_dict())
+            + json.dumps(FoundryGateway._web_body())
+        )
         tokens = len(_encoding().encode(serialized, disallowed_special=())) + 64
         if tokens > request.max_input_tokens:
             raise FoundryGatewayError(FoundryFailure.REJECTED, request)
@@ -395,41 +435,44 @@ class FoundryGateway:
 
     @staticmethod
     def _recipe_body() -> dict[str, object]:
-        from sous_chef.recipe_definition import recipe_output_format
-
-        return {
-            "tools": [],
-            "tool_choice": "none",
-            "parallel_tool_calls": False,
-            "store": False,
-            "text": {"format": recipe_output_format().as_dict()},
-        }
+        return {"store": False}
 
     def _grounded_recipe_body(self) -> dict[str, object]:
-        from sous_chef.recipe_definition import recipe_knowledge_tool
-
-        config = RecipeKnowledgeConfig.from_settings(self._settings)
         body = self._recipe_body()
-        body.update(
-            tools=[recipe_knowledge_tool(config.mcp_endpoint, config.connection_name).as_dict()],
-            tool_choice="required",
-            max_tool_calls=1,
-        )
+        body["max_tool_calls"] = 1
         return body
 
-    @staticmethod
     def _check_recipe_input(
+        self,
         request: RecipeGenerationRequest,
         *,
         body: dict[str, object] | None = None,
         reserved_tool_tokens: int = 0,
     ) -> None:
-        from sous_chef.recipe_definition import RECIPE_INSTRUCTIONS
         from sous_chef.services.context import _encoding
 
+        phase = (
+            RecipePhase.RETRIEVAL
+            if isinstance(request, GroundedRecipeGenerationRequest)
+            else RecipePhase.GENERATION
+        )
+        knowledge = (
+            RecipeKnowledgeConfig.from_settings(self._settings)
+            if phase == RecipePhase.RETRIEVAL
+            else None
+        )
+        assert self._settings.foundry_recipe_nutrition_deployment is not None
+        definition = build_recipe_definition(
+            self._settings.foundry_recipe_nutrition_deployment,
+            "budget-policy",
+            phase=phase,
+            knowledge_tool=recipe_knowledge_tool(knowledge.mcp_endpoint, knowledge.connection_name)
+            if knowledge is not None
+            else None,
+        )
         encoding = _encoding()
         serialized = (
-            RECIPE_INSTRUCTIONS
+            json.dumps(definition.as_dict())
             + request.prompt
             + json.dumps(FoundryGateway._recipe_body() if body is None else body)
         )
@@ -468,8 +511,10 @@ class FoundryGateway:
         self, request: FoundryRequest, response: Response
     ) -> tuple[RecipeDraft, RecipeGrounding, TokenUsage]:
         from sous_chef.recipe_definition import RECIPE_KNOWLEDGE_LABEL, RECIPE_KNOWLEDGE_TOOL
-        from sous_chef.services.context import _encoding
-        from sous_chef.services.recipe_grounding import parse_mcp_grounding
+        from sous_chef.services.recipe_grounding import (
+            parse_mcp_grounding,
+            recipe_knowledge_arguments,
+        )
 
         assert isinstance(request, GroundedRecipeGenerationRequest)
         calls = [item for item in response.output if item.type == "mcp_call"]
@@ -485,13 +530,18 @@ class FoundryGateway:
             )
         ):
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
-        envelopes = [item.model_dump_json() for item in (*listings, *calls)]
-        if (
-            sum(map(len, envelopes)) > MAX_MCP_ENVELOPE_CHARACTERS
-            or sum(len(_encoding().encode(item, disallowed_special=())) for item in envelopes)
-            > POLICY.max_tool_result_tokens
-        ):
-            raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
+        knowledge = RecipeKnowledgeConfig.from_settings(self._settings)
+        try:
+            validate_recipe_mcp_envelopes(
+                [item.model_dump_json() for item in listings],
+                [item.model_dump_json() for item in calls],
+                max_tool_result_tokens=max(
+                    POLICY.max_tool_result_tokens,
+                    knowledge.mcp_max_context_tokens,
+                ),
+            )
+        except ValueError:
+            raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request) from None
         call = calls[0]
         if call.server_label != RECIPE_KNOWLEDGE_LABEL or call.name != RECIPE_KNOWLEDGE_TOOL:
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
@@ -503,16 +553,17 @@ class FoundryGateway:
             )
             raise FoundryGatewayError(code, request)
         try:
-            if call.output is None or _tool_arguments(call.arguments) != {
-                "query": request.retrieval_query
-            }:
+            if call.output is None or parse_tool_arguments(call.arguments) != (
+                recipe_knowledge_arguments(request.retrieval_query)
+            ):
                 raise ValueError
         except ValueError:
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request) from None
         grounding = parse_mcp_grounding(
             call.output,
-            max_results=self._settings.foundry_iq_max_results,
-            max_context_tokens=self._settings.foundry_iq_max_context_tokens,
+            max_results=knowledge.max_results,
+            max_context_tokens=knowledge.mcp_max_context_tokens,
+            max_output_characters=knowledge.mcp_max_output_characters,
         )
         if grounding.status == "empty":
             raise FoundryGatewayError(FoundryFailure.NO_RESULTS, request)
@@ -542,11 +593,7 @@ class FoundryGateway:
 
     @staticmethod
     def _coordination_body(request: CoordinationRequest) -> dict[str, object]:
-        from sous_chef.orchestrator_definition import specialist_tool
-
         body: dict[str, object] = {
-            "tools": [specialist_tool().as_dict()],
-            "parallel_tool_calls": False,
             "store": False,
             "include": ["reasoning.encrypted_content"],
         }
@@ -599,7 +646,7 @@ class FoundryGateway:
                     call=SpecialistCall(
                         call_id=action.call_id,
                         arguments=SpecialistArguments.model_validate(
-                            _tool_arguments(action.arguments)
+                            parse_tool_arguments(action.arguments)
                         ),
                         reasoning=tuple(
                             OpaqueReasoning(
