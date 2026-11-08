@@ -1,20 +1,36 @@
 """Reproducible GPT-5.4 specialist policy and strict draft output contract."""
 
+import hashlib
+import json
+from enum import StrEnum
+
 from azure.ai.projects.models import (
+    AgentVersionDetails,
     MCPTool,
+    MCPToolFilter,
     PromptAgentDefinition,
     PromptAgentDefinitionTextOptions,
     RaiConfig,
     TextResponseFormatJsonSchema,
+    Tool,
     WebSearchTool,
 )
 
 from sous_chef.domain.recipes import RecipeDraft, WebDraft
+from sous_chef.settings import ConfigurationError
 
-RECIPE_POLICY_VERSION = 4
+RECIPE_POLICY_VERSION = 5
 RECIPE_MODEL = "gpt-5.4"
 RECIPE_KNOWLEDGE_LABEL = "curated_recipes"
 RECIPE_KNOWLEDGE_TOOL = "knowledge_base_retrieve"
+
+
+class RecipePhase(StrEnum):
+    GENERATION = "generation"
+    RETRIEVAL = "retrieval"
+    WEB = "web"
+
+
 RECIPE_INSTRUCTIONS = """
 You are AI Sous Chef's Recipe + Nutrition specialist, powered by GPT-5.4.
 Produce one practical personalized recipe draft using the provided curated
@@ -131,7 +147,7 @@ def recipe_knowledge_tool(server_url: str, connection_name: str) -> MCPTool:
         server_label=RECIPE_KNOWLEDGE_LABEL,
         server_url=server_url,
         project_connection_id=connection_name,
-        allowed_tools=[RECIPE_KNOWLEDGE_TOOL],
+        allowed_tools=MCPToolFilter(tool_names=[RECIPE_KNOWLEDGE_TOOL]),
         require_approval="never",
     )
 
@@ -140,15 +156,75 @@ def build_recipe_definition(
     model_deployment: str,
     rai_policy_name: str,
     *,
+    phase: RecipePhase = RecipePhase.GENERATION,
     knowledge_tool: MCPTool | None = None,
 ) -> PromptAgentDefinition:
     if not model_deployment.strip() or not rai_policy_name.strip():
         raise ValueError("The GPT-5.4 deployment and reviewed RAI policy names are required.")
+    if (phase == RecipePhase.RETRIEVAL) != (knowledge_tool is not None):
+        raise ValueError("Only the retrieval phase requires a recipe knowledge tool.")
+    tools: list[Tool] = []
+    if knowledge_tool is not None:
+        tools.append(knowledge_tool)
+    elif phase == RecipePhase.WEB:
+        tools.append(web_search_tool())
     return PromptAgentDefinition(
         model=model_deployment,
-        instructions=RECIPE_INSTRUCTIONS,
+        instructions=WEB_GROUNDING_INSTRUCTIONS
+        if phase == RecipePhase.WEB
+        else RECIPE_INSTRUCTIONS,
         rai_config=RaiConfig(rai_policy_name=rai_policy_name),
-        tools=[] if knowledge_tool is None else [knowledge_tool, web_search_tool()],
-        tool_choice="none",
-        text=PromptAgentDefinitionTextOptions(format=recipe_output_format()),
+        tools=tools,
+        tool_choice="none" if phase == RecipePhase.GENERATION else "required",
+        text=PromptAgentDefinitionTextOptions(
+            format=web_output_format() if phase == RecipePhase.WEB else recipe_output_format()
+        ),
     )
+
+
+def definition_fingerprint(definition: PromptAgentDefinition) -> str:
+    return hashlib.sha256(
+        json.dumps(definition.as_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def recipe_source_metadata(definition: PromptAgentDefinition, phase: RecipePhase) -> dict[str, str]:
+    return {
+        "asc_policy_version": str(RECIPE_POLICY_VERSION),
+        "asc_model": RECIPE_MODEL,
+        "asc_recipe_phase": phase.value,
+        "asc_definition_sha256": definition_fingerprint(definition),
+    }
+
+
+def verify_recipe_source(
+    source: AgentVersionDetails,
+    phase: RecipePhase,
+    *,
+    knowledge_tool: MCPTool | None = None,
+) -> None:
+    definition = source.definition
+    if (
+        not isinstance(definition, PromptAgentDefinition)
+        or not isinstance(definition.model, str)
+        or not definition.model.strip()
+        or definition.rai_config is None
+        or not isinstance(definition.rai_config.rai_policy_name, str)
+        or not definition.rai_config.rai_policy_name.strip()
+        or source.status != "active"
+        or source.draft is not False
+    ):
+        raise ConfigurationError("The specialist phase requires an active reviewed prompt source.")
+    expected = build_recipe_definition(
+        definition.model,
+        definition.rai_config.rai_policy_name,
+        phase=phase,
+        knowledge_tool=knowledge_tool,
+    )
+    if definition.as_dict() != expected.as_dict() or any(
+        (source.metadata or {}).get(key) != value
+        for key, value in recipe_source_metadata(expected, phase).items()
+    ):
+        raise ConfigurationError(
+            f"The specialist {phase.value} source does not match its reviewed phase configuration."
+        )

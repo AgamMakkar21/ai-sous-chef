@@ -39,6 +39,8 @@ def settings(**overrides: Any) -> Settings:
         "foundry_recipe_nutrition_agent_name": "recipe-agent",
         "foundry_orchestrator_agent_version": "2",
         "foundry_recipe_nutrition_agent_version": "3",
+        "foundry_recipe_nutrition_retrieval_agent_version": "4",
+        "foundry_recipe_nutrition_web_agent_version": "5",
     }
     values.update(overrides)
     return Settings(**values)
@@ -83,6 +85,14 @@ class Harness:
 
     async def handle(self, request: httpx2.Request) -> httpx2.Response:
         self.requests.append(request)
+        payload = json.loads(request.content)
+        if "agent_reference" in payload and any(
+            key in payload
+            for key in ("tools", "tool_choice", "parallel_tool_calls", "text", "instructions")
+        ):
+            return httpx2.Response(
+                400, json={"error": {"code": "invalid_payload", "param": "tools"}}
+            )
         if self.fault == "timeout":
             raise httpx2.ReadTimeout("private-timeout", request=request)
         if self.fault == "connection":

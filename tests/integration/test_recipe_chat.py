@@ -41,13 +41,13 @@ class RecipeChatHarness(WebHarness):
 
     async def handle(self, request: httpx2.Request) -> httpx2.Response:
         payload = json.loads(request.content)
-        kind = payload["tools"][0]["type"]
+        kind = self.request_kind(payload)
         if kind == "function" and isinstance(payload["input"], str):
             self.data = RequestContext.model_validate_json(payload["input"].split("\n", 1)[1])
             self.contexts.append(self.data)
         if kind == "mcp":
             self.recipe["output"][0]["arguments"] = json.dumps(
-                {"query": retrieval_query(self.data, self.arguments)}
+                {"query_variants": [retrieval_query(self.data, self.arguments)]}
             )
             if self.reject_recipe:
                 draft = json.loads(self.recipe["output"][1]["content"][0]["text"])

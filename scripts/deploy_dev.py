@@ -151,32 +151,44 @@ def manifest() -> dict[str, dict[str, str]]:
         not isinstance(data, dict)
         or set(data) != {"schema_version", "agents_enabled", "agents"}
         or type(data.get("schema_version")) is not int
-        or data.get("schema_version") != 2
+        or data.get("schema_version") not in (2, 3)
         or type(data.get("agents_enabled")) is not bool
         or not isinstance(data.get("agents"), dict)
     ):
-        raise DeliveryError("Use a schema-version-2 manifest with an explicit agents_enabled flag.")
+        raise DeliveryError("Use a version-2 or version-3 manifest with explicit agents_enabled.")
     if data["agents_enabled"] is False:
         if data["agents"]:
             raise DeliveryError("Disabled agent releases must have an empty agents mapping.")
         return {}
+    if data["schema_version"] != 3:
+        raise DeliveryError("Enabled agent releases require version-3 specialist phase pins.")
     if set(data["agents"]) != set(ROLES):
         raise DeliveryError("Enabled agent releases must contain both agent roles.")
     agents = data["agents"]
     validated = {}
     for role in ROLES:
         target = agents[role]
-        if not isinstance(target, dict) or set(target) != {"name", "version"}:
+        version_fields = (
+            ("version",)
+            if role == "orchestrator"
+            else ("version", "retrieval_version", "web_version")
+        )
+        if not isinstance(target, dict) or set(target) != {"name", *version_fields}:
             raise DeliveryError(f"Pin an explicit agent name and numeric version for {role}.")
-        name, version = target["name"], target["version"]
+        name = target["name"]
         if (
             not isinstance(name, str)
             or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", name)
-            or not isinstance(version, str)
-            or not re.fullmatch(r"[1-9][0-9]{0,9}", version)
+            or any(
+                not isinstance(target[field], str)
+                or not re.fullmatch(r"[1-9][0-9]{0,9}", target[field])
+                for field in version_fields
+            )
         ):
             raise DeliveryError(f"Pin an explicit agent name and numeric version for {role}.")
-        validated[role] = {"name": name, "version": version}
+        if len({target[field] for field in version_fields}) != len(version_fields):
+            raise DeliveryError("Pin different specialist source versions for each phase.")
+        validated[role] = {"name": name, **{field: target[field] for field in version_fields}}
     if agents[ROLES[0]]["name"] == agents[ROLES[1]]["name"]:
         raise DeliveryError("The two agents must have different runtime names.")
     return validated
@@ -335,12 +347,19 @@ def release_agents(
     project: "AIProjectClient", agents: dict[str, dict[str, str]], workload_principal: str
 ) -> dict[str, str]:
     """Publish exact approved versions under the same agents; retain their Entra identities."""
+    from azure.ai.projects.models import MCPTool, PromptAgentDefinition
     from sous_chef.domain.agent_identity import (
         AgentIdentity,
         AgentRole,
         IdentityError,
         verify_distinct,
     )
+    from sous_chef.recipe_definition import (
+        RecipePhase,
+        recipe_knowledge_tool,
+        verify_recipe_source,
+    )
+    from sous_chef.settings import ConfigurationError
 
     identities = []
     sources = {}
@@ -352,10 +371,50 @@ def release_agents(
         identities.append(
             AgentIdentity(AgentRole(role), pin["name"], instance.principal_id, instance.client_id)
         )
-        source = project.agents.get_version(pin["name"], pin["version"])
-        if source.definition.kind != "prompt":
-            raise DeliveryError("This release expects New Foundry prompt agents.")
-        sources[role] = source
+        version_fields = (
+            ("version",)
+            if role == "orchestrator"
+            else ("version", "retrieval_version", "web_version")
+        )
+        for field in version_fields:
+            source = project.agents.get_version(pin["name"], pin[field])
+            if (
+                source.name != pin["name"]
+                or source.version != pin[field]
+                or not isinstance(source.definition, PromptAgentDefinition)
+                or source.status != "active"
+                or source.draft is not False
+            ):
+                raise DeliveryError(
+                    "This release expects active pinned New Foundry prompt sources."
+                )
+            if role == "recipe_nutrition":
+                phase = {
+                    "version": RecipePhase.GENERATION,
+                    "retrieval_version": RecipePhase.RETRIEVAL,
+                    "web_version": RecipePhase.WEB,
+                }[field]
+                tool = None
+                if phase == RecipePhase.RETRIEVAL:
+                    tools = source.definition.tools
+                    if (
+                        not tools
+                        or len(tools) != 1
+                        or not isinstance(tools[0], MCPTool)
+                        or not isinstance(tools[0].server_url, str)
+                        or not isinstance(tools[0].project_connection_id, str)
+                    ):
+                        raise DeliveryError(
+                            "The retrieval source requires its sole approved MCP tool."
+                        )
+                    tool = recipe_knowledge_tool(
+                        tools[0].server_url, tools[0].project_connection_id
+                    )
+                try:
+                    verify_recipe_source(source, phase, knowledge_tool=tool)
+                except (ConfigurationError, ValueError):
+                    raise DeliveryError("Specialist source phase verification failed.") from None
+            sources[role, field] = source
     try:
         verify_distinct(identities, workload_principal)
     except IdentityError:
@@ -363,17 +422,23 @@ def release_agents(
             "Agent identities must be distinct from each other and the app."
         ) from None
     settings = {}
-    for role, pin in agents.items():
-        source = sources[role]
+    for (role, field), source in sources.items():
+        pin = agents[role]
         version = project.agents.create_version(
             agent_name=pin["name"],
             definition=source.definition,
-            metadata={"asc_commit": commit(), "asc_source_version": pin["version"]},
+            metadata=(source.metadata or {})
+            | {"asc_commit": commit(), "asc_source_version": pin[field]},
         )
         if not re.fullmatch(r"[1-9][0-9]{0,9}", version.version):
             raise DeliveryError("Foundry returned an invalid release version.")
         settings[f"ASC_FOUNDRY_{role.upper()}_AGENT_NAME"] = pin["name"]
-        settings[f"ASC_FOUNDRY_{role.upper()}_AGENT_VERSION"] = version.version
+        phase_label = {
+            "version": "",
+            "retrieval_version": "_RETRIEVAL",
+            "web_version": "_WEB",
+        }[field]
+        settings[f"ASC_FOUNDRY_{role.upper()}{phase_label}_AGENT_VERSION"] = version.version
     for identity in identities:
         settings[f"ASC_FOUNDRY_{identity.role.value.upper()}_AGENT_PRINCIPAL_ID"] = (
             identity.principal_id

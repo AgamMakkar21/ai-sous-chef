@@ -84,16 +84,36 @@ class WebHarness(Harness):
         self.web = web_response()
         self.recipe = live_setup()[2].body
         self.recipe["output"][0]["arguments"] = json.dumps(
-            {"query": retrieval_query(self.data, self.arguments)}
+            {"query_variants": [retrieval_query(self.data, self.arguments)]}
         )
         self.tools = FixtureTools()
         self.gateway = FoundryGateway(configuration(), client_factory=self.factory)
         self.service = RecipeSpecialistService(self.gateway, None, self.tools)
         self.revision = False
 
+    @staticmethod
+    def request_kind(payload: dict[str, Any]) -> str:
+        config = configuration()
+        reference = payload["agent_reference"]
+        kinds = {
+            (
+                config.foundry_orchestrator_agent_name,
+                config.foundry_orchestrator_agent_version,
+            ): "function",
+            (
+                config.foundry_recipe_nutrition_agent_name,
+                config.foundry_recipe_nutrition_retrieval_agent_version,
+            ): "mcp",
+            (
+                config.foundry_recipe_nutrition_agent_name,
+                config.foundry_recipe_nutrition_web_agent_version,
+            ): "web_search",
+        }
+        return kinds[(reference["name"], reference["version"])]
+
     async def handle(self, request: httpx2.Request) -> httpx2.Response:
         payload = json.loads(request.content)
-        kind = payload["tools"][0]["type"]
+        kind = self.request_kind(payload)
         if kind == "web_search":
             self.body = self.web
         elif kind == "mcp":
@@ -156,7 +176,7 @@ def test_native_routing_preserves_citations_without_exposing_private_context(
     assert budget.input_tokens == 400 * budget.model_calls
     assert budget.output_tokens == 200 * budget.model_calls
     requests = [json.loads(request.content) for request in harness.requests]
-    web_requests = [item for item in requests if item["tools"][0]["type"] == "web_search"]
+    web_requests = [item for item in requests if harness.request_kind(item) == "web_search"]
     if not use_web:
         assert not web_requests and recipe.web_grounding is None
         return
@@ -167,14 +187,20 @@ def test_native_routing_preserves_citations_without_exposing_private_context(
     assert len(web_requests) == 1
     request = web_requests[0]
     assert request["input"] == QUERY
-    assert request["agent_reference"] == requests[2]["agent_reference"]
-    assert request["agent_reference"]["name"] == "recipe-agent"
-    assert request["tools"] == [
-        {"type": "web_search", "external_web_access": True, "search_context_size": "low"}
-    ]
-    assert request["max_tool_calls"] == 1 and request["tool_choice"] == "required"
-    assert request["store"] is False and request["parallel_tool_calls"] is False
-    assert request["text"]["format"]["strict"] is True
+    assert request["agent_reference"] == {
+        "type": "agent_reference",
+        "name": "recipe-agent",
+        "version": "5",
+    }
+    assert requests[2]["agent_reference"] == {
+        "type": "agent_reference",
+        "name": "recipe-agent",
+        "version": "4",
+    }
+    assert (
+        not {"tools", "tool_choice", "parallel_tool_calls", "text", "instructions"} & request.keys()
+    )
+    assert request["max_tool_calls"] == 1 and request["store"] is False
     assert request["include"] == ["web_search_call.action.sources"]
     assert "model" not in request and "conversation" not in request
     assert "previous_response_id" not in request
@@ -293,12 +319,14 @@ def test_web_failures_do_not_fabricate_facts_or_break_the_non_web_path(
 
 
 def test_web_has_a_short_deadline_and_does_not_retry(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(recipe_specialist, "POLICY", replace(POLICY, web_deadline_seconds=0.01))
+    monkeypatch.setattr(recipe_specialist, "POLICY", replace(POLICY, web_deadline_seconds=0.1))
     harness = WebHarness()
     harness.hang = True
+    started = monotonic()
     with pytest.raises(FoundryGatewayError) as caught:
         harness.generate()
     assert caught.value.code == FoundryFailure.TIMEOUT
+    assert monotonic() - started < 1
     assert len(harness.requests) == 1 and harness.cancelled and harness.client_closed
     assert not harness.tools.nutrition_requests
 

@@ -16,6 +16,11 @@ from azure.core.rest import HttpRequest, HttpResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from sous_chef.domain.recipe_corpus import CorpusRecipe
+from sous_chef.services.recipe_grounding import (
+    DEV_MCP_MAX_CONTEXT_TOKENS,
+    DEV_MCP_MAX_OUTPUT_CHARACTERS,
+    MCP_MAX_OUTPUT_CHARACTERS,
+)
 from sous_chef.services.recipe_indexing import (
     RecipeIndexingError,
     RecipeSearchDocument,
@@ -33,6 +38,24 @@ ARM_SCOPE = "https://management.azure.com/.default"
 BATCH_SIZE = 50
 
 
+def validated_project_resource_id(settings: Settings) -> str:
+    resource_id = settings.foundry_project_resource_id
+    endpoint = settings.foundry_project_endpoint
+    if resource_id is None or endpoint is None:
+        raise ConfigurationError(
+            "Set ASC_FOUNDRY_PROJECT_RESOURCE_ID and ASC_FOUNDRY_PROJECT_ENDPOINT."
+        )
+    parts = resource_id.split("/")
+    if (
+        endpoint.host != f"{parts[8]}.services.ai.azure.com"
+        or (endpoint.path or "").rstrip("/") != f"/api/projects/{parts[10]}"
+    ):
+        raise ConfigurationError(
+            "ASC_FOUNDRY_PROJECT_RESOURCE_ID must identify ASC_FOUNDRY_PROJECT_ENDPOINT."
+        )
+    return resource_id
+
+
 @dataclass(frozen=True)
 class RecipeKnowledgeConfig:
     search_endpoint: str
@@ -43,6 +66,19 @@ class RecipeKnowledgeConfig:
     project_resource_id: str
     max_results: int = 3
     max_context_tokens: int = 4000
+    environment: Literal["local", "dev", "prod"] = "prod"
+
+    @property
+    def mcp_max_context_tokens(self) -> int:
+        return DEV_MCP_MAX_CONTEXT_TOKENS if self.environment == "dev" else self.max_context_tokens
+
+    @property
+    def mcp_max_output_characters(self) -> int:
+        return (
+            DEV_MCP_MAX_OUTPUT_CHARACTERS
+            if self.environment == "dev"
+            else MCP_MAX_OUTPUT_CHARACTERS
+        )
 
     @property
     def service_output_tokens(self) -> int:
@@ -70,18 +106,8 @@ class RecipeKnowledgeConfig:
         source = settings.foundry_iq_knowledge_source_name
         base = settings.foundry_iq_knowledge_base_name
         connection = settings.foundry_iq_connection_name
-        resource_id = settings.foundry_project_resource_id
+        resource_id = validated_project_resource_id(settings)
         assert endpoint and index and source and base and connection and resource_id
-        project_endpoint = settings.foundry_project_endpoint
-        assert project_endpoint
-        parts = resource_id.split("/")
-        if (
-            project_endpoint.host != f"{parts[8]}.services.ai.azure.com"
-            or (project_endpoint.path or "").rstrip("/") != f"/api/projects/{parts[10]}"
-        ):
-            raise ConfigurationError(
-                "ASC_FOUNDRY_PROJECT_RESOURCE_ID must identify ASC_FOUNDRY_PROJECT_ENDPOINT."
-            )
         return cls(
             str(endpoint).rstrip("/"),
             index,
@@ -91,6 +117,7 @@ class RecipeKnowledgeConfig:
             resource_id,
             settings.foundry_iq_max_results,
             settings.foundry_iq_max_context_tokens,
+            environment=settings.environment,
         )
 
     @property

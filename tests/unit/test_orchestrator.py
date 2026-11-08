@@ -402,8 +402,15 @@ def test_safe_logging_and_representations(caplog: pytest.LogCaptureFixture) -> N
 
 
 def test_source_definition_is_reproducible_strict_and_does_not_bind_extra_tools() -> None:
-    definition = build_orchestrator_definition("approved-mini-deployment").as_dict()
-    assert definition == build_orchestrator_definition("approved-mini-deployment").as_dict()
+    policy_id = (
+        "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/synthetic"
+        "/providers/Microsoft.CognitiveServices/accounts/synthetic/raiPolicies/asc-responsible-ai-v1"
+    )
+    definition = build_orchestrator_definition("approved-mini-deployment", policy_id).as_dict()
+    assert (
+        definition == build_orchestrator_definition("approved-mini-deployment", policy_id).as_dict()
+    )
+    assert definition["rai_config"] == {"rai_policy_name": policy_id}
     assert definition["model"] == "approved-mini-deployment"
     assert definition["kind"] == "prompt"
     tool = definition["tools"][0]
@@ -423,7 +430,9 @@ def test_source_definition_is_reproducible_strict_and_does_not_bind_extra_tools(
         POLICY.deadline_seconds,
     ) == (4, 2, 1, 8, 1, 60)
     with pytest.raises(ValueError):
-        build_orchestrator_definition(" ")
+        build_orchestrator_definition(" ", policy_id)
+    with pytest.raises(ValueError):
+        build_orchestrator_definition("approved-mini-deployment", " ")
 
 
 def test_invalid_candidate_shape_and_unbounded_function_arguments_are_rejected() -> None:

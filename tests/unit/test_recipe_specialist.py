@@ -196,10 +196,10 @@ def test_single_pinned_stateless_invocation_is_private_and_has_no_callable_tools
         "name": "recipe-agent",
         "version": "3",
     }
-    assert request["tools"] == [] and request["tool_choice"] == "none"
-    assert request["store"] is False and request["parallel_tool_calls"] is False
-    assert request["text"]["format"]["strict"] is True
-    assert request["text"]["format"]["schema"] == RecipeDraft.model_json_schema()
+    assert request["store"] is False
+    assert (
+        not {"tools", "tool_choice", "parallel_tool_calls", "text", "instructions"} & request.keys()
+    )
     assert "model" not in request and "previous_response_id" not in request
     assert "conversation" not in request
     assert request["input"].count(data.current_request) == 1
@@ -478,11 +478,12 @@ def test_aggregate_tool_token_ceiling_accepts_4000_but_rejects_4001() -> None:
         max_input_tokens=16000,
         max_output_tokens=1500,
     )
-    FoundryGateway._check_recipe_input(request)
+    gateway = FoundryGateway(coordination_settings())
+    gateway._check_recipe_input(request)
     larger = json.dumps("\u4e00" * (POLICY.max_tool_result_tokens - 1), ensure_ascii=False)
     assert len(encoding.encode(larger, disallowed_special=())) == 4001
     with pytest.raises(FoundryGatewayError) as caught:
-        FoundryGateway._check_recipe_input(
+        gateway._check_recipe_input(
             request.model_copy(update={"prompt": larger, "grounding_json": larger})
         )
     assert caught.value.code == FoundryFailure.REJECTED
@@ -617,13 +618,15 @@ def test_recipe_publication_versions_the_existing_distinct_identity_without_acti
     invocation = client.agents.create_version.call_args.kwargs
     assert invocation["agent_name"] == "recipe-agent"
     assert invocation["metadata"]["asc_model"] == "gpt-5.4"
-    assert invocation["metadata"]["asc_policy_version"] == "4"
-    assert invocation["definition"].as_dict()["tools"][0]["project_connection_id"] == "fixture-mcp"
-    assert invocation["definition"].as_dict()["tools"][1] == {
-        "type": "web_search",
-        "external_web_access": True,
-        "search_context_size": "low",
+    assert invocation["metadata"]["asc_policy_version"] == "5"
+    assert invocation["metadata"]["asc_recipe_phase"] == "generation"
+    assert invocation["definition"].as_dict()["rai_config"] == {
+        "rai_policy_name": (
+            "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/synthetic"
+            "/providers/Microsoft.CognitiveServices/accounts/synthetic/raiPolicies/approved-mvp-baseline"
+        )
     }
+    assert invocation["definition"].as_dict()["tools"] == []
     assert invocation["definition"].as_dict()["tool_choice"] == "none"
     assert len(invocation["metadata"]["asc_definition_sha256"]) == 64
     client.agents.create.assert_not_called()
