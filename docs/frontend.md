@@ -7,8 +7,41 @@ Issue [#19](https://github.com/AgamMakkar21/ai-sous-chef/issues/19) implements
 the grocery panel using the existing synchronous inventory APIs.
 ASC-39 / [#41](https://github.com/AgamMakkar21/ai-sous-chef/issues/41) adds conversation
 navigation to Sous Chef. ASC-40 adds sending messages and ASC-41 / [#38](https://github.com/AgamMakkar21/ai-sous-chef/issues/38)
-renders structured recipe replies. Recipe-history screens remain separate work. No sample groceries, conversations or recipes are
+renders structured recipe replies. ASC-45 / [#47](https://github.com/AgamMakkar21/ai-sous-chef/issues/47)
+adds recipe save/cook actions, history and feedback. No sample groceries, conversations or recipes are
 presented as account data.
+
+## Recipe History and feedback (ASC-45)
+
+**Save to Cook** stores a planned recipe; **Cook This** explicitly confirms cooking.
+Both use the existing lifecycle APIs with CSRF and idempotency keys. A previously
+planned recipe uses the conditional `/cooked` transition, not a second snapshot.
+Recipe History shows paginated **Needs your rating** and **Saved and cooked**
+lists; planned recipes never acquire a fabricated cooking date or rating.
+Open a recipe to read its original stored snapshot, nutrition, provenance,
+save/cook dates and notes. Pantry labels describe the saved snapshot, not current
+inventory. **I've cooked this** makes a planned recipe eligible for feedback.
+
+Feedback uses required, keyboard-accessible **Liked**, **Fine**, and **Didn't Like**
+radio labels plus an optional note bounded to 2,000 Unicode characters. Saving or
+editing uses the detail API's ETag and a stable idempotency key. Failures retain
+the draft and require loading the saved version before another explicit save;
+an uncertain transport response is never described as a confirmed failure or
+success. Navigation warns before discarding feedback, and writes block shell
+navigation. Success confirms persistence only, never completed learning.
+
+Successful changes invalidate history in the current page and other same-origin
+browser tabs through `BroadcastChannel`; returning focus also refetches (including
+browsers without that API). Only a fixed invalidation signal crosses tabs, not
+recipe content, account IDs, tokens or feedback. Open drafts are not overwritten.
+Data stays on the server/in memory, and reload re-reads the backend. No new
+configuration, services or AI calls are required. The existing owned history,
+detail, lifecycle and feedback endpoints must be deployed together.
+
+Run `cd frontend && npm test -- history.spec.ts recipes.spec.ts conversations.spec.ts`
+for synthetic desktop/phone acceptance coverage, and `npm run lint` /
+`npm run typecheck` for source checks. Fixtures are not real user history;
+live acceptance still requires hosted sign-in and the configured Cosmos backend.
 
 ## Build and run
 

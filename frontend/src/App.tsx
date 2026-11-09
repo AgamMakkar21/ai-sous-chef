@@ -5,6 +5,7 @@ import ProfileForm from "./ProfileForm";
 import Groceries from "./Groceries";
 import IngredientLookup from "./IngredientLookup";
 import ConversationPanel from "./ConversationPanel";
+import RecipeHistory from "./RecipeHistory";
 import type { Session, Snapshot } from "./profile";
 
 type State =
@@ -32,7 +33,7 @@ const tabs = [
     id: "recipe-history",
     name: "Recipe History",
     title: "Make room for your next favorite.",
-    text: "Saved recipes, cooking history, and feedback will live here when the history screen is available.",
+    text: "",
     symbol: "03",
   },
 ];
@@ -94,7 +95,11 @@ export default function App() {
     const warn = (event: BeforeUnloadEvent) => {
       if (!leaving.current) event.preventDefault();
     };
-    if (!editing && selected === "sous-chef" && (dirty || busy))
+    if (
+      !editing &&
+      (selected === "sous-chef" || selected === "recipe-history") &&
+      (dirty || busy)
+    )
       window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty, busy, editing, selected]);
@@ -113,7 +118,9 @@ export default function App() {
       window.confirm(
         editing
           ? "Discard your unsaved profile changes?"
-          : "Leave this recipe request? Unsaved input will be discarded; accepted requests are not cancelled.",
+          : selected === "recipe-history"
+            ? "Discard your unsaved recipe feedback?"
+            : "Leave this recipe request? Unsaved input will be discarded; accepted requests are not cancelled.",
       )
     );
   }
@@ -306,6 +313,14 @@ export default function App() {
                 >
                   {tab.id === "sous-chef" ? (
                     <ConversationPanel
+                      key={ready.session.userId}
+                      session={ready.session}
+                      onExpired={expire}
+                      onBusy={setBusy}
+                      onDirty={setDirty}
+                    />
+                  ) : tab.id === "recipe-history" ? (
+                    <RecipeHistory
                       key={ready.session.userId}
                       session={ready.session}
                       onExpired={expire}

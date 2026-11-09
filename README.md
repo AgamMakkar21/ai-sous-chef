@@ -15,7 +15,8 @@ persistence APIs, shared Cosmos access and the managed-agent gateway are availab
 The React frontend adds the authenticated three-tab shell, onboarding/profile
 editing, and conversation creation, selection and paginated transcripts.
 Chat message sending uses the bounded Orchestrator and recipe specialist.
-Grocery controls and recipe-history screens remain follow-on work.
+Grocery controls, recipe save/cook actions, paginated recipe history, and editable
+ratings/notes use the existing synchronous persistence APIs.
 Live chat requires explicit agent activation and verified published sources;
 offline readiness alone does not enable it.
 The [Recipe + Nutrition specialist](docs/recipe-specialist.md) supplies versioned

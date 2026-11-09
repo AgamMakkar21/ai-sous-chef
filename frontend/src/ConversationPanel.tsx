@@ -11,85 +11,12 @@ import {
   safeTitle,
   type Conversation,
   type Navigation,
-  type Page,
   type Turn,
 } from "./conversations";
 import type { Session } from "./profile";
 import RecipeCard from "./RecipeCard";
-
-type Loader<T> = (
-  cursor: string | null,
-  signal: AbortSignal,
-) => Promise<Page<T>>;
-type LoadState<T> =
-  | { kind: "loading" }
-  | { kind: "failed"; status: number }
-  | { kind: "ready"; page: Page<T> };
-
-function usePage<T>(load: Loader<T>, onExpired: () => void) {
-  const [state, setState] = useState<LoadState<T>>({ kind: "loading" });
-  const [navigation, setNavigation] = useState<{
-    cursors: (string | null)[];
-    index: number;
-    revision: number;
-  }>({ cursors: [null], index: 0, revision: 0 });
-  const cursor = navigation.cursors[navigation.index] ?? null;
-
-  useEffect(() => {
-    const controller = new AbortController();
-    async function read() {
-      try {
-        const page = await load(cursor, controller.signal);
-        if (controller.signal.aborted) return;
-        if (
-          page.nextCursor !== null &&
-          navigation.cursors
-            .slice(0, navigation.index + 1)
-            .includes(page.nextCursor)
-        )
-          throw new ApiError(502, "invalid_response");
-        setState({ kind: "ready", page });
-      } catch (error) {
-        if (controller.signal.aborted) return;
-        if (error instanceof ApiError && error.status === 401) onExpired();
-        else
-          setState({
-            kind: "failed",
-            status: error instanceof ApiError ? error.status : 0,
-          });
-      }
-    }
-    void read();
-    return () => controller.abort();
-  }, [load, cursor, navigation, onExpired]);
-
-  function move(forward: boolean) {
-    if (state.kind !== "ready") return;
-    const next = state.page.nextCursor;
-    if (forward && next !== null) {
-      setState({ kind: "loading" });
-      setNavigation((current) => ({
-        ...current,
-        cursors: [...current.cursors.slice(0, current.index + 1), next],
-        index: current.index + 1,
-      }));
-    } else if (!forward && navigation.index > 0) {
-      setState({ kind: "loading" });
-      setNavigation((current) => ({ ...current, index: current.index - 1 }));
-    }
-  }
-
-  const refresh = useCallback((restart = false) => {
-    setState({ kind: "loading" });
-    setNavigation((current) => ({
-      cursors: restart ? [null] : current.cursors,
-      index: restart ? 0 : current.index,
-      revision: current.revision + 1,
-    }));
-  }, []);
-
-  return { state, index: navigation.index, move, refresh };
-}
+import RecipeActions from "./RecipeActions";
+import usePage from "./usePage";
 
 function Pager({
   index,
@@ -157,6 +84,12 @@ function Transcript({
     [id, session],
   );
   const history = usePage(load, onExpired);
+  const [recipeBusy, setRecipeBusy] = useState(false);
+  const [chatBusy, setChatBusy] = useState(false);
+  useEffect(() => {
+    onBusy(recipeBusy || chatBusy);
+    return () => onBusy(false);
+  }, [recipeBusy, chatBusy, onBusy]);
   const [updates, setUpdates] = useState<Turn[]>([]);
   const recordTurn = useCallback(
     (turn: Turn) => {
@@ -200,7 +133,11 @@ function Transcript({
         <h2 id="transcript-title" ref={heading} tabIndex={-1}>
           {title}
         </h2>
-        <button className="text-button" onClick={refresh}>
+        <button
+          className="text-button"
+          disabled={recipeBusy || chatBusy}
+          onClick={refresh}
+        >
           Refresh history
         </button>
       </div>
@@ -252,7 +189,20 @@ function Transcript({
                       </time>
                     </div>
                     {message.role === "assistant" && turn.recipe ? (
-                      <RecipeCard recipe={turn.recipe} />
+                      <RecipeCard
+                        recipe={turn.recipe}
+                        actions={
+                          turn.generatedRecipeId && (
+                            <RecipeActions
+                              generatedRecipeId={turn.generatedRecipeId}
+                              session={session}
+                              onExpired={onExpired}
+                              onBusy={setRecipeBusy}
+                              disabled={recipeBusy || chatBusy}
+                            />
+                          )
+                        }
+                      />
                     ) : (
                       <p>{message.content}</p>
                     )}
@@ -293,7 +243,20 @@ function Transcript({
                     {message.role === "user" ? "You" : "Sous Chef"}
                   </strong>
                   {message.role === "assistant" && turn.recipe ? (
-                    <RecipeCard recipe={turn.recipe} />
+                    <RecipeCard
+                      recipe={turn.recipe}
+                      actions={
+                        turn.generatedRecipeId && (
+                          <RecipeActions
+                            generatedRecipeId={turn.generatedRecipeId}
+                            session={session}
+                            onExpired={onExpired}
+                            onBusy={setRecipeBusy}
+                            disabled={recipeBusy || chatBusy}
+                          />
+                        )
+                      }
+                    />
                   ) : (
                     <p>{message.content}</p>
                   )}
@@ -315,7 +278,8 @@ function Transcript({
         onTurn={recordTurn}
         onRefresh={refresh}
         onExpired={onExpired}
-        onBusy={onBusy}
+        onBusy={setChatBusy}
+        blocked={recipeBusy}
         onDirty={onDirty}
       />
     </section>
