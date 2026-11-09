@@ -5,6 +5,7 @@ import sys
 from collections.abc import Iterator
 from copy import deepcopy
 from typing import Any
+from unittest.mock import patch
 
 import httpx2
 import pytest
@@ -14,6 +15,7 @@ from sous_chef.adapters import foundry_gateway
 from sous_chef.app import create_app
 from sous_chef.domain.context import RequestContext, ResolvedPreference
 from sous_chef.domain.recipe_safety import UNABLE
+from sous_chef.services.recipe_chat import RecipeChatExecutor
 from sous_chef.services.recipe_grounding import retrieval_query
 from sous_chef.settings import ConfigurationError, Settings
 from test_chat_api import documents, send
@@ -23,7 +25,7 @@ from test_conversation_api import conversation_settings as conversation_settings
 from test_cosmos_repository import SyntheticCredential, Transport
 from test_cosmos_repository import harness as harness
 from test_grocery_api import add
-from test_grounded_specialist import configuration
+from test_grounded_specialist import configuration, native_mcp_result
 from test_profile_api import document, onboard
 from test_usda_nutrition import SERVER
 from test_web_grounding import CombinedHarness, WebHarness
@@ -43,7 +45,7 @@ class RecipeChatHarness(WebHarness):
         payload = json.loads(request.content)
         kind = self.request_kind(payload)
         if kind == "function" and isinstance(payload["input"], str):
-            self.data = RequestContext.model_validate_json(payload["input"].split("\n", 1)[1])
+            self.data = RequestContext.model_validate_json(payload["input"])
             self.contexts.append(self.data)
         if kind == "mcp":
             self.recipe["output"][0]["arguments"] = json.dumps(
@@ -102,21 +104,25 @@ def recipe_api(
 
 
 @pytest.mark.parametrize("use_web", [False, True])
+@pytest.mark.parametrize("native_documents", [False, True])
 def test_combined_app_composition_returns_and_persists_a_grounded_recipe(
     use_web: bool,
+    native_documents: bool,
     recipe_settings: Settings,
     auth_headers: dict[str, str],
     harness: tuple[Transport, SyntheticCredential],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     transport = CombinedHarness(use_web=use_web)
+    if native_documents:
+        transport.combined["output"][0]["output"] = json.dumps(native_mcp_result())
     original_handle = transport.handle
 
     async def handle(request: httpx2.Request) -> httpx2.Response:
         payload = json.loads(request.content)
         kind = transport.request_kind(payload)
         if kind == "function" and isinstance(payload["input"], str):
-            transport.data = RequestContext.model_validate_json(payload["input"].split("\n", 1)[1])
+            transport.data = RequestContext.model_validate_json(payload["input"])
         elif kind == "combined":
             transport.combined["output"][0]["arguments"] = json.dumps(
                 {"query_variants": [retrieval_query(transport.data, transport.arguments)]}
@@ -163,6 +169,21 @@ def test_combined_app_composition_returns_and_persists_a_grounded_recipe(
     with TestClient(create_app(settings), headers=auth_headers) as restarted:
         assert restarted.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
     assert len(transport.requests) == 3
+
+
+def test_chat_uses_the_startup_checked_nutrition_client(
+    recipe_settings: Settings, auth_headers: dict[str, str]
+) -> None:
+    with patch.object(
+        RecipeChatExecutor, "from_settings", wraps=RecipeChatExecutor.from_settings
+    ) as factory:
+        app = create_app(recipe_settings)
+        with TestClient(app, headers=auth_headers):
+            nutrition = app.state.nutrition
+            assert factory.call_count == 1
+            assert factory.call_args.kwargs["nutrition"] is nutrition
+            assert nutrition._client is not None
+        assert nutrition._client is None
 
 
 @pytest.mark.parametrize("use_web", [False, True])
