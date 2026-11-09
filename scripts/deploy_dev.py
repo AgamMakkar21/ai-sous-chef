@@ -492,6 +492,26 @@ def deploy() -> None:
             "Source ZIP delivery requires SCM_DO_BUILD_DURING_DEPLOYMENT=true "
             "and no WEBSITE_RUN_FROM_PACKAGE mount; ask the foundation owner to configure them."
         )
+    if agents:
+        missing = [
+            name
+            for name in (
+                "ASC_FOUNDRY_PROJECT_ENDPOINT",
+                "ASC_FOUNDRY_PROJECT_RESOURCE_ID",
+                "ASC_FOUNDRY_IQ_SEARCH_ENDPOINT",
+                "ASC_FOUNDRY_IQ_INDEX_NAME",
+                "ASC_FOUNDRY_IQ_KNOWLEDGE_SOURCE_NAME",
+                "ASC_FOUNDRY_IQ_KNOWLEDGE_BASE_NAME",
+                "ASC_FOUNDRY_IQ_CONNECTION_NAME",
+            )
+            if not settings.get(name, "").strip()
+        ]
+        if missing:
+            raise DeliveryError(
+                "Set required recipe knowledge settings on App Service before enabling agents: "
+                + ", ".join(missing)
+                + "."
+            )
     identity = app["identity"]["userAssignedIdentities"]
     app_principals = [
         value["principalId"]

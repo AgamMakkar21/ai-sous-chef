@@ -736,9 +736,19 @@ class DeliveryTests(unittest.TestCase):
         settings = {
             "AZURE_CLIENT_ID": "workload-client",
             "ASC_FOUNDRY_PROJECT_ENDPOINT": "https://synthetic.services.ai.azure.com/api/projects/dev",
+            "ASC_FOUNDRY_PROJECT_RESOURCE_ID": "/synthetic/project",
+            "ASC_FOUNDRY_IQ_SEARCH_ENDPOINT": "https://synthetic.search.windows.net",
+            "ASC_FOUNDRY_IQ_INDEX_NAME": "recipes",
+            "ASC_FOUNDRY_IQ_KNOWLEDGE_SOURCE_NAME": "recipes-source",
+            "ASC_FOUNDRY_IQ_KNOWLEDGE_BASE_NAME": "recipes-knowledge",
+            "ASC_FOUNDRY_IQ_CONNECTION_NAME": "recipes-mcp",
             "SCM_DO_BUILD_DURING_DEPLOYMENT": "true",
             "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET": "private-token",
         }
+        recipe_failures = {
+            f"missing_{name}": {name: ""} for name in settings if name.startswith("ASC_FOUNDRY_")
+        }
+        recipe_failures["blank_recipe_setting"] = {"ASC_FOUNDRY_PROJECT_RESOURCE_ID": " "}
         failures: dict[str, list[object]] = {
             "build_error": [delivery.DeliveryError("synthetic build error")],
             "build_pending": [{"status": 1}],
@@ -761,6 +771,7 @@ class DeliveryTests(unittest.TestCase):
             "agent_failure",
             "no_build",
             "package_mount",
+            *recipe_failures,
             *failures,
         ):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
@@ -803,7 +814,7 @@ class DeliveryTests(unittest.TestCase):
                                 if mode == "no_build"
                                 else {"WEBSITE_RUN_FROM_PACKAGE": "1"}
                                 if mode == "package_mount"
-                                else {}
+                                else recipe_failures.get(mode, {})
                             ),
                         ),
                     ),
@@ -827,12 +838,24 @@ class DeliveryTests(unittest.TestCase):
                         else None,
                     ) as release,
                 ):
-                    if mode in {"agent_failure", "no_build", "package_mount"}:
+                    if (
+                        mode
+                        in {
+                            "agent_failure",
+                            "no_build",
+                            "package_mount",
+                        }
+                        or mode in recipe_failures
+                    ):
                         with self.assertRaises(delivery.DeliveryError) as failure:
                             delivery.deploy()
                         self.assertNotIn("private-token", str(failure.exception))
                         cli.assert_not_called()
                         package.assert_not_called()
+                        if mode in recipe_failures:
+                            release.assert_not_called()
+                            credential.assert_not_called()
+                            self.assertIn("recipe knowledge settings", str(failure.exception))
                         continue
                     if mode in failures:
                         cli.side_effect = failures[mode]
