@@ -23,3 +23,4 @@ worker/.python_packages/
 .cache/
 backend/src/sous_chef/_usda/
 artifacts/safety-evaluation/
+artifacts/quality-evaluation/
