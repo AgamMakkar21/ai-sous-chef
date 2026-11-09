@@ -201,7 +201,10 @@ def test_contract_fixtures(fixture: dict[str, Any]) -> None:
         prompt = router.requests[0].request.prompt
         assert '"spicePreference":"mild"' in prompt
         assert '"value":"hot"' in prompt
-        assert "Current explicitPreferences override conflicting learnedPreferences" in prompt
+        assert json.loads(prompt) == data.model_dump(mode="json", by_alias=True)
+        assert (
+            "Current explicit direction overrides learned preferences" in ORCHESTRATOR_INSTRUCTIONS
+        )
 
 
 def test_one_revision_is_four_model_calls_with_the_same_context_and_budget() -> None:

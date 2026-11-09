@@ -20,7 +20,9 @@ class RecipeChatExecutor:
         self._entity_id = entity_id
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> "RecipeChatExecutor":
+    def from_settings(
+        cls, settings: Settings, *, nutrition: UsdaNutritionTool | None = None
+    ) -> "RecipeChatExecutor":
         gateway = FoundryGateway(settings)
         if any(
             principal is None
@@ -32,7 +34,8 @@ class RecipeChatExecutor:
         ):
             raise ConfigurationError("Recipe chat requires distinct workload and agent pins.")
         RecipeKnowledgeConfig.from_settings(settings)
-        nutrition = UsdaNutritionTool.from_settings(settings)
+        if nutrition is None:
+            nutrition = UsdaNutritionTool.from_settings(settings)
         specialist = RecipeSpecialistService(
             gateway,
             None,

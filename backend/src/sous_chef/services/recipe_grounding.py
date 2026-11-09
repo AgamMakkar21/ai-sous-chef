@@ -58,6 +58,8 @@ GroundingStage = Literal[
     "output_size",
     "output_json",
     "mcp_envelope",
+    "document_schema",
+    "document_source",
     "mcp_tool_error",
     "chunk_json",
     "chunk_list",
@@ -149,6 +151,18 @@ class _McpResult(BaseModel):
     isError: bool = False
 
 
+class _McpDocument(BaseModel):
+    model_config = ConfigDict(strict=True)
+    id: str = Field(min_length=1, max_length=128)
+    content: str
+    url: str
+
+
+class _DocumentResult(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    documents: list[_McpDocument] = Field(max_length=3)
+
+
 def parse_mcp_grounding(
     output: str,
     *,
@@ -164,6 +178,40 @@ def parse_mcp_grounding(
         chunks = json.loads(output)
         envelope: _McpResult | None = None
         if isinstance(chunks, dict):
+            if "documents" in chunks:
+                stage = "document_schema"
+                documents = _DocumentResult.model_validate(chunks).documents
+                overview = []
+                attachments = []
+                for entry in documents:
+                    data = _ReferenceData.model_validate_json(entry.content)
+                    stage = "document_source"
+                    if any(
+                        value is None
+                        for value in (
+                            data.source_id,
+                            data.title,
+                            data.source_url,
+                            data.recipe_json,
+                        )
+                    ):
+                        raise ValueError
+                    overview.append(
+                        {"ref_id": entry.id, "title": data.title, "grounding": data.grounding}
+                    )
+                    attachments.append(
+                        _TextContent(
+                            type="text",
+                            text=_McpReference(
+                                ref_id=entry.id, sourceData=data, doc_key=data.source_id
+                            ).model_dump_json(by_alias=True),
+                        )
+                    )
+                    stage = "document_schema"
+                envelope = _McpResult(
+                    content=[_TextContent(type="text", text=json.dumps(overview)), *attachments]
+                )
+                chunks = envelope.model_dump()
             stage = "mcp_envelope"
             envelope = _McpResult.model_validate(chunks.get("result", chunks))
             if envelope.isError:

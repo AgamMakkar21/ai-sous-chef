@@ -817,6 +817,15 @@ overview entry and the same validated curated recipe. Supplied document keys,
 source IDs, source URLs and titles are cross-checked; supplied full `recipe_json`
 must reproduce the same indexed excerpt and provenance. The complete envelope,
 including all reference data, counts toward its character and token budget.
+Native Foundry invocation can instead normalize the same response into
+`documents`, each containing an opaque `id`, a `url`, and JSON `content` with
+the indexed grounding and source fields. This shape is normalized into the same
+overview/reference validation path. Each document must include its complete source
+metadata and corpus JSON. Transport URLs and display titles are opaque provider
+metadata, not recipe titles or citations; provenance comes only from the validated
+indexed content. Duplicate IDs/sources, conflicting source fields,
+ambiguous envelopes and excessive results still fail. Budgets count the original
+complete response, including transport metadata, not just the normalized excerpt.
 Old or malformed MCP results fail explicitly, rather than becoming guessed citations.
 
 Optional nonsecret bounds, also used by the setup command:

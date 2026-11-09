@@ -79,6 +79,28 @@ def observed_mcp_result(*numbers: int) -> dict[str, Any]:
     }
 
 
+def native_mcp_result(*numbers: int) -> dict[str, Any]:
+    documents = [search_document(recipe_fixture(number)) for number in numbers or (1,)]
+    return {
+        "documents": [
+            {
+                "id": f"native-reference-{index}",
+                "content": json.dumps(
+                    {
+                        name: document[name]
+                        for name in ("grounding", "source_id", "title", "source_url", "recipe_json")
+                    }
+                ),
+                "title": document["source_url"],
+                "url": document["source_url"],
+                "metadata": json.dumps({"ref_id": index}),
+                "knowledgeSourceIndex": 0,
+            }
+            for index, document in enumerate(documents)
+        ]
+    }
+
+
 def query() -> str:
     return retrieval_query(
         cooking_context(),
@@ -366,6 +388,94 @@ def test_observed_mcp_format_preserves_provenance_and_existing_live_flow() -> No
     assert result.recipe is not None
     assert result.recipe.sources[0] == curated_excerpt(recipe_fixture()).source
     assert len(tools.nutrition_requests) == 1 and len(harness.requests) == 1
+
+
+def test_native_documents_preserve_provenance_and_existing_live_flow() -> None:
+    output = native_mcp_result()
+    output["documents"][0]["url"] = "https://transport.example/opaque-reference"
+    output["documents"][0]["title"] = "Untrusted transport display title"
+    service, tools, harness = live_setup(result=output)
+    result = run(service)
+    assert result.recipe is not None
+    assert result.recipe.sources[0] == curated_excerpt(recipe_fixture()).source
+    assert len(tools.nutrition_requests) == 1 and len(harness.requests) == 1
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "count",
+        "duplicate_id",
+        "duplicate_source",
+        "missing_grounding",
+        "missing_source",
+        "source_id",
+        "source_url",
+        "title",
+        "recipe_json",
+        "error",
+        "ambiguous",
+    ],
+)
+def test_native_documents_reject_unbound_or_ambiguous_evidence(change: str) -> None:
+    result = native_mcp_result(1, 2, 3, 4) if change == "count" else native_mcp_result()
+    document = result["documents"][0]
+    data = json.loads(document["content"])
+    if change in {"duplicate_id", "duplicate_source"}:
+        duplicate = copy.deepcopy(document)
+        if change == "duplicate_source":
+            duplicate["id"] = "different-reference"
+        result["documents"].append(duplicate)
+    elif change == "missing_grounding":
+        del data["grounding"]
+    elif change == "missing_source":
+        del data["source_id"]
+    elif change in {"source_id", "source_url", "title"}:
+        data[change] = "private foreign source"
+        if change == "source_url":
+            document["url"] = data[change]
+    elif change == "recipe_json":
+        data["recipe_json"] = recipe_fixture(2).model_dump_json()
+    elif change == "error":
+        result["isError"] = True
+    elif change == "ambiguous":
+        result["content"] = observed_mcp_result()["content"]
+    document["content"] = json.dumps(data)
+    service, tools, _ = live_setup(result=result)
+    with pytest.raises(FoundryGatewayError) as caught:
+        run(service)
+    assert caught.value.code == FoundryFailure.INVALID_RESULT
+    assert not tools.nutrition_requests
+    assert "private" not in str(caught.value)
+
+
+def test_native_document_budgets_count_the_complete_original_output() -> None:
+    from sous_chef.services.context import _encoding
+
+    output = json.dumps(native_mcp_result())
+    tokens = len(_encoding().encode(output, disallowed_special=()))
+    assert (
+        parse_mcp_grounding(
+            output, max_results=1, max_context_tokens=tokens, max_output_characters=len(output)
+        ).status
+        == "available"
+    )
+    for token_limit, character_limit in ((tokens - 1, len(output)), (tokens, len(output) - 1)):
+        with pytest.raises(McpGroundingError):
+            parse_mcp_grounding(
+                output,
+                max_results=1,
+                max_context_tokens=token_limit,
+                max_output_characters=character_limit,
+            )
+    with pytest.raises(McpGroundingError):
+        parse_mcp_grounding(
+            json.dumps(native_mcp_result(1, 2)), max_results=1, max_context_tokens=4000
+        )
+    assert (
+        parse_mcp_grounding('{"documents":[]}', max_results=1, max_context_tokens=4000).status
+        == "empty"
+    )
 
 
 @pytest.mark.parametrize("environment", ["dev", "prod", "local"])

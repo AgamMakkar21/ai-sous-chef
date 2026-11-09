@@ -6,6 +6,10 @@ failed-turn retries. Cosmos `ChatHistory` remains the durable history authority.
 ASC-38 / #39 composes the managed-agent recipe pipeline behind those sends.
 There is no transcript copy, automatic title generation or deployment in these changes.
 
+The chat executor shares the application's startup-checked USDA nutrition tool and
+its lifespan-managed MCP client with the nutrition API. It does not cold-start a
+separate USDA process for each recipe inside the existing 10-second lookup budget.
+
 ## Bounded request context (ASC-23 / #24)
 
 New sends and explicit failed-turn retries read the current owned `Users` profile
@@ -26,9 +30,15 @@ Public UI history remains chronological and includes unsuccessful turns as befor
 
 ### Budget and tokenizer setup
 
-The complete `context.prompt`, including its fixed trust/precedence instructions,
-is counted using pinned `tiktoken==0.12.0` and `o200k_base`, the GPT-5 deployment
-family encoding. Counting adds a 64-token framing allowance. The context ceiling
+The complete `context.prompt` is the JSON-serialized context, counted using pinned
+`tiktoken==0.12.0` and `o200k_base`, the GPT-5 deployment family encoding.
+Trust and precedence policy belongs in the published Orchestrator and Recipe +
+Nutrition definitions, not as duplicated instructions in the user-role input.
+Duplicating policy prose there can trigger a content-filter rejection even for an
+ordinary cooking request. The source policies, blocking content filters and
+deterministic safety checks remain unchanged; user-controlled text stays untrusted
+JSON data, not a policy override.
+Counting adds a 64-token framing allowance. The context ceiling
 is **11,000 input tokens**, leaving **1,000** for executor/agent instructions and
 **4,000** for bounded tools within the ADR's **16,000 input-token** per-call ceiling.
 The managed-agent executor uses the Orchestrator's *complete* provider-request

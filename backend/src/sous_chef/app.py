@@ -45,13 +45,14 @@ def create_app(
 ) -> FastAPI:
     configure_safe_telemetry()
     config = settings if settings is not None else load_settings()
+    nutrition = UsdaNutritionTool.from_settings(config) if config.usda_enabled else None
     if (
         chat_executor is None
         and config.adapter_mode == "live"
         and config.agents_enabled
         and config.usda_enabled
     ):
-        chat_executor = RecipeChatExecutor.from_settings(config)
+        chat_executor = RecipeChatExecutor.from_settings(config, nutrition=nutrition)
     probe = readiness_probe
     if probe is None:
         probe = (
@@ -64,8 +65,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        if config.usda_enabled:
-            nutrition = UsdaNutritionTool.from_settings(config)
+        if nutrition is not None:
             async with nutrition.lifespan():
                 app.state.nutrition = nutrition
                 yield
