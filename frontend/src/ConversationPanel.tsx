@@ -15,6 +15,7 @@ import {
   type Turn,
 } from "./conversations";
 import type { Session } from "./profile";
+import RecipeCard from "./RecipeCard";
 
 type Loader<T> = (
   cursor: string | null,
@@ -250,7 +251,11 @@ function Transcript({
                         {new Date(message.timestamp).toLocaleString()}
                       </time>
                     </div>
-                    <p>{message.content}</p>
+                    {message.role === "assistant" && turn.recipe ? (
+                      <RecipeCard recipe={turn.recipe} />
+                    ) : (
+                      <p>{message.content}</p>
+                    )}
                   </article>
                 ))}
                 {turn.status !== "completed" && (
@@ -287,7 +292,11 @@ function Transcript({
                   <strong>
                     {message.role === "user" ? "You" : "Sous Chef"}
                   </strong>
-                  <p>{message.content}</p>
+                  {message.role === "assistant" && turn.recipe ? (
+                    <RecipeCard recipe={turn.recipe} />
+                  ) : (
+                    <p>{message.content}</p>
+                  )}
                 </article>
               ))}
               {turn.status !== "completed" && (

@@ -1,5 +1,6 @@
 import { ApiError, getSession, json, request } from "./api.ts";
 import { isRecord, type Session } from "./profile.ts";
+import { isStructuredRecipe, type StructuredRecipe } from "./recipes.ts";
 
 export type Conversation = {
   conversationId: string;
@@ -19,6 +20,8 @@ export type Turn = {
   turnIndex: number;
   status: "pending" | "completed" | "failed" | "outcomeUnknown";
   messages: Message[];
+  generatedRecipeId?: string | null;
+  recipe?: StructuredRecipe | null;
 };
 export type Page<T> = { items: T[]; nextCursor: string | null };
 export type Navigation = {
@@ -83,6 +86,17 @@ function isTurn(value: unknown, conversationId: string): value is Turn {
       value.status !== "outcomeUnknown") ||
     !Array.isArray(value.messages) ||
     !value.messages.every(isMessage)
+  )
+    return false;
+  const hasRecipe = value.recipe !== undefined && value.recipe !== null;
+  const hasRecipeId =
+    value.generatedRecipeId !== undefined && value.generatedRecipeId !== null;
+  if (
+    hasRecipe !== hasRecipeId ||
+    (hasRecipe &&
+      (value.status !== "completed" ||
+        !isConversationId(value.generatedRecipeId) ||
+        !isStructuredRecipe(value.recipe)))
   )
     return false;
   const messages = value.messages;

@@ -6,8 +6,8 @@ editing. The persistent tabs are **Groceries**, **Sous Chef**, and **Recipe Hist
 Issue [#19](https://github.com/AgamMakkar21/ai-sous-chef/issues/19) implements
 the grocery panel using the existing synchronous inventory APIs.
 ASC-39 / [#41](https://github.com/AgamMakkar21/ai-sous-chef/issues/41) adds conversation
-navigation to Sous Chef. Sending messages and recipe-history
-screens remain separate work. No sample groceries, conversations or recipes are
+navigation to Sous Chef. ASC-40 adds sending messages and ASC-41 / [#38](https://github.com/AgamMakkar21/ai-sous-chef/issues/38)
+renders structured recipe replies. Recipe-history screens remain separate work. No sample groceries, conversations or recipes are
 presented as account data.
 
 ## Build and run
@@ -162,8 +162,7 @@ refreshing or aborting a browser request does not prove execution stopped.
 
 Only validated, owned complete-turn responses are displayed. Failed, pending and
 unknown turns stay user-only; no partial assistant text, recipe draft, raw
-exception, provider response or injected HTML is rendered. Structured recipe
-cards remain ASC-41 work. Up to 20 recently updated turns can appear beside the
+exception, provider response or injected HTML is rendered. Up to 20 recently updated turns can appear beside the
 bounded history page, deduplicated by turn ID. Sending does not scan lifetime
 history, and successive sends do not replace earlier visible requests.
 
@@ -203,6 +202,45 @@ the live executor, reviewed agents and FoodData Central setup described in
 [conversation setup](conversations.md#setup); this UI does not enable them or
 substitute a demo recipe when a dependency fails.
 
+## Structured recipe cards (ASC-41)
+
+Completed turns with a structured recipe and matching generated-recipe UUID render
+the card instead of the assistant's free-text summary, both after sending/polling
+and in reloaded, paginated history. The client checks the versioned display
+contract, bounds, ingredient/shopping/step/source references and nutrition states.
+Malformed or incomplete payloads use the existing history/composer error recovery;
+pending, failed and unknown turns cannot carry a renderable candidate. These
+checks do not replace backend ownership, deterministic safety or current-profile
+revalidation.
+
+Cards show time, skill, servings, concise fit reasons, ordered steps and ingredient
+quantities. **Need to buy** uses `shoppingItems` (the purchase shortfall), with the
+recipe's total quantity shown when different. **Already have** means confirmed
+inventory; unknown availability gets a separate **Check your pantry** group.
+Missing quantities/units are explicitly unavailable, never inferred.
+
+Nutrition preserves its supplied per-serving/whole-recipe basis and real zeroes.
+All six supported nutrients remain visible: absent values say **Unavailable**,
+partial amounts are labelled **Partial**, and detailed coverage names unknown
+ingredients when supplied. Legacy partial evidence without detailed coverage is
+conservatively labelled partial. USDA source versions/food mappings and the
+informational-estimate disclaimer remain visible. Exact grounded source quotes,
+creative adaptations/substitutions and additional Web IQ context have distinct
+sections; citations do not imply that creative changes are source-verified.
+
+Model/source text is escaped React text, not HTML or Markdown. Citation links
+accept only credential-free HTTPS on the default port, open with no opener or
+referrer, and label new-tab behavior. Other references display **link unavailable**.
+The card inherits shell theme tokens, wraps long text, uses semantic headings and
+lists, and introduces no entrance animations to delay reading or keyboard use.
+
+**Cook This** and **Save to Cook** are deliberately disabled native buttons with
+an accessible explanation. Card rendering never sends a lifecycle mutation or
+claims a save/cooked result. Wiring the existing ASC-42 API and verifying it in
+ASC-45/ASC-61 remains separate work; any later action must use the owned
+generated-recipe ID, not trust a browser-supplied recipe or old safety decision.
+No new environment variables, packages or backend setup are required.
+
 ## Checks and packaging
 
 ```bash
@@ -227,6 +265,13 @@ reconciliation, pending polling/reload, unknown-outcome fences, malformed/foreig
 responses, operation-link rejection, draft navigation and session expiry.
 API responses use synthetic test-only route doubles. These checks do not claim
 live OAuth, live Cosmos or deployed-browser verification.
+
+`tests/recipes.spec.ts` reuses the backend specialist contract fixture and covers
+all card fields, purchase shortfalls, unknown inventory/quantities, partial and
+unavailable nutrition, actual zero values, grounded versus creative content,
+live/polled/reloaded rendering, disabled actions, malformed/failed candidates,
+escaped text, inert unsafe links, keyboard link activation and 320-pixel wrapping
+in both desktop and phone Chromium projects.
 
 `tests/groceries.spec.ts` additionally covers keyboard CRUD/reload persistence,
 zero-removal cancellation/confirmation, unknown and fractional quantities, limits,
