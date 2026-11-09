@@ -1,9 +1,10 @@
-# Recipe lifecycle and history APIs (ASC-42 / #49, ASC-43 / #45)
+# Recipe lifecycle, history and feedback APIs (ASC-42 / #49, ASC-43 / #45, ASC-44 / #44)
 
 Generated suggestions do not create cooking history or preference evidence.
 These four authenticated mutation APIs record deliberate acceptance, cooking,
 rejection and revision. Two read APIs return history lists and stored detail.
-Feedback writes, learning and UI remain separate work.
+Feedback writes persist synchronously as described below; learning and UI remain
+separate work.
 
 ## Requests and responses
 
@@ -19,6 +20,7 @@ duplicate headers, client ownership, snapshots and timestamps are rejected.
 | `POST /api/v1/recipes/{historyId}/cooked` | `{}`; also requires `If-Match` | 200 recipe envelope and `ETag` |
 | `POST /api/v1/generated-recipes/{generatedRecipeId}/rejections` | `{}` or `{"reason":"Not what I wanted."}` | 201 explicit behavior envelope |
 | `POST /api/v1/generated-recipes/{generatedRecipeId}/revisions` | `{"reason":"Use less rice."}` | Existing chat turn/operation response and operation `Location` |
+| `PUT /api/v1/recipes/{historyId}/feedback` | `{"rating":"liked","note":"Use less salt."}`; also requires `If-Match` | 200 recipe envelope and `ETag`; learning remains pending |
 
 `cooked` defaults to `false` and must be a JSON boolean. Save to Cook creates a
 planned snapshot with `cookedAt=null`. Use `cooked=true` only when the user
@@ -78,6 +80,94 @@ provider results fail explicitly without returning private content or ETags.
 Every query/read passes the authenticated `/userId` partition and checks returned
 ownership. Existing scalar and composite indexes support these queries; no
 profile arrays, index changes or cross-partition lookup are introduced.
+
+## Versioned feedback (ASC-44)
+
+Feedback requires an owned, explicitly cooked history snapshot; planned recipes
+return 409 `feedback_requires_cooking`. Ratings are exactly `liked`, `fine` or
+`disliked` (UI labels: Liked, Fine, Didn't Like). Notes are optional: omitted or
+`null` clears the previous note because this is a full PUT, not a partial edit.
+A supplied note is trimmed, must be nonblank and has a 2,000-character limit.
+Unknown properties, invalid ratings, non-string notes and oversized notes return
+422 without storage access. Ownership is derived from the verified principal;
+missing/foreign/internal record IDs return the same no-store 404.
+
+The initial submission atomically commits three operations in the caller's
+`RecipeHistory` partition: patch the recipe's rating/note, `feedbackRevision=1`
+and `processingStatus=pending`; create an immutable `feedbackRevision` event;
+create a private `recipeOperation` receipt with `action=feedback`, canonical
+request hash and history result reference. A genuine rating **or note** edit
+increments the semantic revision once and creates a new event. The immutable
+recipe, cooking timestamp, profile and explicit preferences are not modified.
+
+The event uses stored `schemaVersion=1` and `recordKind=feedbackRevision`, with:
+
+| Field | Meaning |
+| --- | --- |
+| `id`, `feedbackId` | Same deterministic user/history/revision-bound UUIDv4 |
+| `sourceId`, `historyId` | Owned recipe history snapshot reference |
+| `occasionId`, `generatedRecipeId` | Original cooking occasion and recipe lineage |
+| `sourceConversationId`, `sourceTurnId` | Source provenance; not authority to cross user partitions |
+| `feedbackRevision`, `supersedesFeedbackId` | Positive semantic version and previous event ID, or null for revision 1 |
+| `rating`, `note` | Exact normalized feedback at this revision; full note retained as private evidence |
+| `provenance`, `observedAt` | `explicit_user_action` and server UTC observation time |
+| `processingStatus`, `traceId` | Initial `pending` marker and opaque request correlation ID |
+
+Events are outbox inputs, not learning results. A future worker must filter
+`recordKind=feedbackRevision`, deduplicate by owned source/revision, verify the
+current recipe revision before applying evidence, supersede old contributions,
+and keep mutable processing receipts separate. Never count the current recipe,
+receipt, rating and note as independent meals. Separate immutable events avoid
+depending on the latest-version change feed retaining every intermediate edit.
+No event expiry is introduced; retain events and retry receipts until history
+deletion. Notes, request hashes and user IDs must not enter operational telemetry.
+
+A matching `Idempotency-Key` replay returns the **current** persisted recipe
+before checking the original ETag, even after restart or later edits; it never
+reapplies the old payload. Reusing the key with a different normalized payload or
+history reference returns 409. Identical current feedback under a new key creates
+only a receipt, no revision/event, and preserves processing status, including
+`failed` or `completed`. It still conditionally patches the same feedback fields
+to atomically guard its receipt against concurrent edits; its ETag may change
+without a new semantic revision. Missing `If-Match` returns 428, malformed/wildcard
+revisions 422 and stale new-key writes 412. A conflict preserves the caller's
+draft; reload before an explicit retry. Competing first submissions cannot
+produce two events for the same revision.
+
+Success means **feedback durably saved**, not personalization updated. There is
+no Foundry, extraction, queue-send or learning call in this request path. Learning
+outages do not block persistence; database write failures do return failure, and
+the transaction cannot leave an event without its rating or vice versa. A lost
+batch response is reconciled from its receipt, not blindly replayed. If a durable
+outcome cannot be confirmed, return the existing safe dependency error and
+reconcile with the same key/body.
+
+### Azure setup for feedback persistence
+
+No new Azure resource, app setting, model deployment, secret or role grant is
+required **when the existing web/Cosmos foundation is already configured**.
+Deploy the peer-reviewed web application change through the existing `dev`
+delivery workflow. Verify the web managed identity has its existing Cosmos
+metadata-read grant and container-scoped Data Contributor on
+`sous-chef/RecipeHistory`, with `/userId` partitioning, existing scalar/composite
+indexes and no product TTL. Keep the existing private-network access path;
+do not enable keys or public/all-IP access as a workaround. See
+[Cosmos setup](cosmos-access.md) if that foundation is not provisioned yet.
+
+The [Functions host](feedback-host.md) currently has **no change-feed trigger or
+learning implementation**. Deploying this API, provisioning the host, or checking
+host health does not complete asynchronous-learning MVP acceptance. Worker
+implementation, its narrowly scoped product-write/Foundry grants and its
+deployment belong to the separate worker deliverable. Do not manually mark
+pending feedback completed or broaden worker permissions for this API.
+
+Focused offline checks:
+`python -m pytest tests/unit/test_feedback.py tests/unit/test_authorization_matrix.py tests/unit/test_recipe_lifecycle.py tests/unit/test_recipe_queries.py`.
+These use the real pinned SDK with a synthetic transport, not live Cosmos/RBAC
+acceptance. After deployment, manually confirm a cooked recipe's rating/note
+round-trip, same-key retry, note edit and safe stale-ETag failure using an
+authenticated session. Confirm learning remains honestly pending until a worker
+actually processes that revision.
 
 ## Persistence, safety and replay
 

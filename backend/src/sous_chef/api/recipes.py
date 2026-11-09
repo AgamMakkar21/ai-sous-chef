@@ -16,6 +16,7 @@ from sous_chef.api.revisions import (
 from sous_chef.domain.chat import ChatExecutor, OperationEnvelope, TurnEnvelope
 from sous_chef.domain.context import LearnedPreferenceReader
 from sous_chef.domain.conversations import HistoryPage
+from sous_chef.domain.feedback import SubmitFeedback
 from sous_chef.domain.recipe_lifecycle import (
     BehaviorEnvelope,
     ConfirmCooking,
@@ -25,6 +26,7 @@ from sous_chef.domain.recipe_lifecycle import (
     SaveRecipe,
 )
 from sous_chef.domain.recipe_queries import RecipeHistoryParameters, RecipeSummary
+from sous_chef.services.feedback import FeedbackService
 from sous_chef.services.recipe_lifecycle import RecipeLifecycleService
 from sous_chef.services.recipe_queries import RecipeQueryService
 from sous_chef.settings import Settings
@@ -46,6 +48,7 @@ def create_recipe_router(
     router = APIRouter(prefix="/api/v1", tags=["recipes"])
     service = RecipeLifecycleService(settings, executor, learned_reader)
     queries = RecipeQueryService(settings)
+    feedback = FeedbackService(settings)
 
     @router.get("/recipes")
     async def list_recipes(
@@ -97,6 +100,22 @@ def create_recipe_router(
         _mutation(request)
         etag = require_revision(request, if_match)
         result, etag = await service.cooked(user, history_id, idempotency_key, etag)
+        set_revision_headers(response, etag)
+        return RecipeEnvelope(data=result)
+
+    @router.put("/recipes/{history_id}/feedback")
+    async def submit_feedback(
+        history_id: UUID4,
+        payload: SubmitFeedback,
+        user: CurrentUser,
+        request: Request,
+        response: Response,
+        idempotency_key: IdempotencyKey,
+        if_match: Revision,
+    ) -> RecipeEnvelope:
+        _mutation(request)
+        etag = require_revision(request, if_match)
+        result, etag = await feedback.submit(user, history_id, payload, idempotency_key, etag)
         set_revision_headers(response, etag)
         return RecipeEnvelope(data=result)
 

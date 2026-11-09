@@ -42,7 +42,7 @@ from sous_chef.services.recipe_safety import check_current_recipe, prepare_recip
 from sous_chef.settings import Settings
 
 HISTORY = ProductContainer.RECIPE_HISTORY
-Action = Literal["save", "cooked", "rejected", "revisionRequested"]
+Action = Literal["save", "cooked", "rejected", "revisionRequested", "feedback"]
 
 
 class _StoredHistory(RecipeHistory):

@@ -62,6 +62,12 @@ COOK_CASE = EndpointCase(
     body={},
     guarded_record="recipe",
 )
+FEEDBACK_CASE = EndpointCase(
+    "PUT",
+    "/api/v1/recipes/{history_id}/feedback",
+    body={"rating": "liked", "note": "matrix private cooking note"},
+    guarded_record="recipe",
+)
 REJECT_CASE = EndpointCase(
     "POST",
     "/api/v1/generated-recipes/{generated_recipe_id}/rejections",
@@ -90,6 +96,7 @@ CASES = (
     INSPECT_CASE,
     SAVE_CASE,
     COOK_CASE,
+    FEEDBACK_CASE,
     REJECT_CASE,
     REVISE_CASE,
     EndpointCase("GET", "/api/v1/recipes", guarded_record="recipe"),
@@ -174,7 +181,7 @@ class TwoUserApi:
             self.transport.documents[("RecipeHistory", actor.user.user_id, actor.history_id)][
                 "_etag"
             ]
-            if case == COOK_CASE
+            if case in (COOK_CASE, FEEDBACK_CASE)
             else self.profile(actor)["_etag"]
         )
         return self.client.request(
@@ -236,7 +243,7 @@ def two_user_api(
                     generated_recipe_id = result.json()["data"]["generatedRecipeId"]
             saved = client.post(
                 "/api/v1/recipes",
-                json={"generatedRecipeId": generated_recipe_id},
+                json={"generatedRecipeId": generated_recipe_id, "cooked": True},
                 headers={"Idempotency-Key": "seed-acceptance"},
             )
             assert saved.status_code == 201, saved.text
@@ -541,7 +548,7 @@ def test_recipe_pages_and_filter_cursors_are_owned_in_both_directions(
         ]
         if owner == actor:
             expected = [record["id"] for record in seeded]
-            if view == "all":
+            if view in {"all", "awaitingFeedback"}:
                 expected.append(owner.history_id)
     before = deepcopy(two_user_api.transport.documents)
     executions = len(two_user_api.executor.calls)
