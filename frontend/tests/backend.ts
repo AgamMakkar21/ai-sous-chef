@@ -31,6 +31,9 @@ export async function backend(
   page: Page,
   initial: Preferences | null = preferences,
 ) {
+  await page.route("**/api/v1/recipes?*", (route) =>
+    route.fulfill({ json: { items: [], nextCursor: null } }),
+  );
   await page.route("**/api/v1/nutrition/search", (route) =>
     route.fulfill({ json: { foods: [], truncated: false } }),
   );

@@ -1,4 +1,5 @@
 import { useId } from "react";
+import type { ReactNode } from "react";
 import {
   nutrientLabels,
   safeRecipeUrl,
@@ -36,7 +37,13 @@ const unknownReasons: Record<string, string> = {
   missing_nutrients: "source nutrients missing",
 };
 
-export default function RecipeCard({ recipe }: { recipe: StructuredRecipe }) {
+export default function RecipeCard({
+  recipe,
+  actions,
+}: {
+  recipe: StructuredRecipe;
+  actions?: ReactNode;
+}) {
   const id = useId();
   const nutrition = recipe.nutrition;
   const groups = [
@@ -312,28 +319,7 @@ export default function RecipeCard({ recipe }: { recipe: StructuredRecipe }) {
           Check ingredient labels and handling guidance. No recipe can guarantee
           allergy safety.
         </p>
-        <div className="recipe-actions">
-          <button
-            type="button"
-            className="button primary"
-            disabled
-            aria-describedby={`${id}-actions`}
-          >
-            Cook This
-          </button>
-          <button
-            type="button"
-            className="button secondary"
-            disabled
-            aria-describedby={`${id}-actions`}
-          >
-            Save to Cook
-          </button>
-        </div>
-        <p id={`${id}-actions`}>
-          Cooking and saving actions are not available in this view yet. This
-          recipe has not been saved or marked cooked.
-        </p>
+        {actions}
       </footer>
     </section>
   );

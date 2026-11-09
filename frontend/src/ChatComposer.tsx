@@ -32,6 +32,7 @@ export default function ChatComposer({
   onExpired,
   onBusy,
   onDirty,
+  blocked = false,
 }: {
   id: string;
   owner: string;
@@ -43,6 +44,7 @@ export default function ChatComposer({
   onExpired: () => void;
   onBusy: (busy: boolean) => void;
   onDirty: (dirty: boolean) => void;
+  blocked?: boolean;
 }) {
   const [draft, setDraft] = useState("");
   const [phase, setPhase] = useState<Phase>("checking");
@@ -59,6 +61,7 @@ export default function ChatComposer({
     (turn) => turn.status === "pending" || turn.status === "outcomeUnknown",
   );
   const locked =
+    blocked ||
     working ||
     phase === "pending" ||
     phase === "unknown" ||

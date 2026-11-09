@@ -130,7 +130,7 @@ async function open(page: Page) {
 const card = (page: Page) =>
   page.getByRole("region", { name: "Simple carrot rice", exact: true });
 
-test("contract recipe fields, shopping shortfall, citations and unavailable actions render in saved history", async ({
+test("contract recipe fields, shopping shortfall, citations and lifecycle actions render in saved history", async ({
   page,
 }, testInfo) => {
   await recipeBackend(page, [recipeTurn()]);
@@ -187,10 +187,7 @@ test("contract recipe fields, shopping shortfall, citations and unavailable acti
   ).toHaveAttribute("rel", "noopener noreferrer");
   for (const label of ["Cook This", "Save to Cook"]) {
     const action = recipe.getByRole("button", { name: label, exact: true });
-    await expect(action).toBeDisabled();
-    await expect(action).toHaveAccessibleDescription(
-      /not available.*not been saved/,
-    );
+    await expect(action).toBeEnabled();
   }
   await expect(
     page.getByText("private-model-summary-not-for-rendering"),
