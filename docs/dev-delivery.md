@@ -100,6 +100,19 @@ PostgreSQL, import USDA data, register API keys or copy developer credentials.
    `latest`, creates an identity-less fallback, or invents prompts/tools.
    Source versions are immutable release inputs, not names of model deployments.
 
+   Configure the recipe-grounding settings on **App Service**, not only in the
+   publisher's local `.env.dev`: `ASC_FOUNDRY_IQ_SEARCH_ENDPOINT`,
+   `ASC_FOUNDRY_IQ_INDEX_NAME`, `ASC_FOUNDRY_IQ_KNOWLEDGE_SOURCE_NAME`,
+   `ASC_FOUNDRY_IQ_KNOWLEDGE_BASE_NAME`, `ASC_FOUNDRY_IQ_CONNECTION_NAME`, and
+   `ASC_FOUNDRY_PROJECT_RESOURCE_ID`, alongside the existing
+   `ASC_FOUNDRY_PROJECT_ENDPOINT`. Use the verified Search resources and Foundry
+   project; these are nonsecret resource identifiers, not credentials. The enabled
+   release checks for missing or blank values before publishing agent versions,
+   uploading code, or changing the feature flag. An app-only release does not
+   require these settings. A published specialist alone does not configure the
+   backend: missing settings prevent application startup and make `/health`
+   return a platform 503.
+
 The workflow deliberately has no manual/PR trigger. Complete setup before the
 first reviewed merge. Do not broaden permissions to fix a failed bootstrap.
 Wait for role propagation and investigate the actual denial at the granted scope.
