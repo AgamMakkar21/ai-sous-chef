@@ -361,7 +361,7 @@ def parse_grades(
             name, score = grade.get("name"), grade.get("score")
             if not isinstance(name, str) or name not in METRICS or name in seen:
                 problems.append("unexpected_or_duplicate_grade")
-                if name in grades[case_id]:
+                if isinstance(name, str) and name in grades[case_id]:
                     del grades[case_id][name]
                 continue
             seen.add(name)

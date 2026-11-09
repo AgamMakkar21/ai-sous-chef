@@ -26,6 +26,12 @@ and timeout cases deliberately inject a fault at the nutrition boundary; the
 timeout is not a measurement of provider latency. A failure before that boundary
 cannot pass as the expected injected timeout.
 
+Replay defaults to the combined grounding route now pinned in dev. Live capture
+preserves `ASC_FOUNDRY_RECIPE_NUTRITION_MODE`; both phased and combined routes are
+tested offline. Combined retrieval and Web IQ share one model invocation and one
+usage receipt, while retaining separate tool evidence. The configured mode is
+recorded and must match on resume.
+
 | Dimension | Evidence |
 | --- | --- |
 | Relevance | Foundry `builtin.relevance` on the full synthetic request and response |
@@ -109,7 +115,8 @@ the two built-ins to exact versions, creates an evaluation through
 through `evals.runs.create`. It follows all result pages and locally reapplies
 the fixed thresholds instead of trusting a service pass flag.
 
-Polling stops after at most 900 seconds. A pending, failed, incomplete or
+The polling wait budget is at most 900 seconds; bounded network requests and
+output export add time. A pending, failed, incomplete or
 uncalibrated live run returns exit 2, not success. With process approval restored,
 collect the **same run** using:
 

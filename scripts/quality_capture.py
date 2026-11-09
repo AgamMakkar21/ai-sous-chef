@@ -24,6 +24,7 @@ from sous_chef.domain.orchestrator import (
     TokenUsage,
 )
 from sous_chef.domain.recipes import (
+    CombinedRecipeGenerationRequest,
     GroundedRecipeGenerationRequest,
     NutritionEvidence,
     NutritionRequest,
@@ -126,6 +127,10 @@ class Gateway(Protocol):
 
     async def ground_web(self, request: WebGroundingRequest) -> tuple[WebGrounding, TokenUsage]: ...
 
+    async def generate_combined_recipe(
+        self, request: CombinedRecipeGenerationRequest
+    ) -> tuple[RecipeDraft, RecipeGrounding, WebGrounding | None, TokenUsage]: ...
+
 
 class ObservedGateway:
     def __init__(self, gateway: Gateway, trace: Trace) -> None:
@@ -175,6 +180,28 @@ class ObservedGateway:
         event.status = "completed"
         self.trace.web.append(result[0])
         self.trace.usage.append(result[1])
+        return result
+
+    async def generate_combined_recipe(
+        self, request: CombinedRecipeGenerationRequest
+    ) -> tuple[RecipeDraft, RecipeGrounding, WebGrounding | None, TokenUsage]:
+        events = [ToolEvent(name="foundry_iq")]
+        if request.web_query is not None:
+            events.append(ToolEvent(name="web_iq"))
+        self.trace.tools.extend(events)
+        self.trace.model_attempts += 1
+        try:
+            result = await self.gateway.generate_combined_recipe(request)
+        except BaseException:
+            for event in events:
+                event.status = "error"
+            raise
+        for event in events:
+            event.status = "completed"
+        self.trace.grounding.append(result[1])
+        if result[2] is not None:
+            self.trace.web.append(result[2])
+        self.trace.usage.append(result[3])
         return result
 
 
@@ -289,6 +316,23 @@ class ReplayGateway:
             TokenUsage(input_tokens=100, output_tokens=50),
         )
 
+    async def generate_combined_recipe(
+        self, request: CombinedRecipeGenerationRequest
+    ) -> tuple[RecipeDraft, RecipeGrounding, WebGrounding | None, TokenUsage]:
+        draft, grounding, usage = await self.generate_grounded_recipe(request)
+        web = None
+        if request.web_query is not None:
+            web, _ = await self.ground_web(
+                WebGroundingRequest(
+                    role=request.role,
+                    operation_id=request.operation_id,
+                    prompt=request.web_query,
+                    max_input_tokens=2000,
+                    max_output_tokens=request.max_output_tokens,
+                )
+            )
+        return draft, grounding, web, usage
+
 
 def dependencies(case: Case, settings: Settings | None) -> tuple[Gateway, NutritionTool]:
     if settings is not None:
@@ -309,7 +353,12 @@ async def capture(case: Case, defaults: RequestContext, settings: Settings | Non
     observed = ObservedGateway(gateway, trace)
     service = OrchestratorService(
         observed,
-        RecipeSpecialistService(observed, None, ObservedNutrition(nutrition, trace, case.fault)),
+        RecipeSpecialistService(
+            observed,
+            None,
+            ObservedNutrition(nutrition, trace, case.fault),
+            combined=settings is None or settings.foundry_recipe_nutrition_mode == "combined",
+        ),
     )
     started = monotonic()
     result, error = None, None

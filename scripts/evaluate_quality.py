@@ -102,6 +102,7 @@ def configured_agents(settings: Settings) -> dict[str, Any]:
             "version": settings.foundry_orchestrator_agent_version,
         },
         "recipe": {
+            "mode": settings.foundry_recipe_nutrition_mode,
             "name": settings.foundry_recipe_nutrition_agent_name,
             "generation": settings.foundry_recipe_nutrition_agent_version,
             "retrieval": settings.foundry_recipe_nutrition_retrieval_agent_version,
@@ -183,6 +184,9 @@ async def execute(args: argparse.Namespace) -> int:
             "status": "capturing" if args.live else "not_run",
             "approval": "explicit_process_only" if args.live else "offline_only",
         }
+        state["versions"]["recipe_mode"] = (
+            settings.foundry_recipe_nutrition_mode if settings is not None else "combined"
+        )
         if settings is not None:
             state["project_sha256"] = digest(str(settings.foundry_project_endpoint))
             state["versions"]["agents"] = configured_agents(settings)

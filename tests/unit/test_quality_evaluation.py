@@ -5,14 +5,14 @@ import json
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from pydantic import HttpUrl, ValidationError
 from sous_chef.domain.recipes import RecipeSourceClaim
 from sous_chef.settings import ConfigurationError, Settings
 
-from scripts import evaluate_quality
+from scripts import evaluate_quality, quality_capture
 from scripts.quality_capture import METRICS, Observation, ToolEvent, capture
 from scripts.quality_evidence import (
     Suite,
@@ -107,6 +107,28 @@ def test_replay_exercises_production_orchestration_and_never_claims_live_quality
     assert "NOT a live" in result["measurement"]
 
 
+@pytest.mark.parametrize("mode", ["phased", "combined"])
+@pytest.mark.parametrize("case_id", ["normal-no-web", "current-public-information"])
+def test_capture_preserves_configured_grounding_mode_and_single_combined_usage(
+    suite: Suite,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: Literal["phased", "combined"],
+    case_id: str,
+) -> None:
+    dependencies = quality_capture.dependencies
+    monkeypatch.setattr(
+        quality_capture, "dependencies", lambda case, settings: dependencies(case, None)
+    )
+    case = next(case for case in suite.cases if case.id == case_id)
+    observation = asyncio.run(
+        capture(case, suite.defaults, Settings.model_construct(foundry_recipe_nutrition_mode=mode))
+    )
+    assert all(item.status == "pass" for item in factual_checks(suite, case, observation).values())
+    expected_models = 4 if mode == "phased" and case.web == "required" else 3
+    assert observation.trace.model_attempts == len(observation.trace.usage) == expected_models
+    assert len(observation.trace.web) == int(case.web == "required")
+
+
 def test_timeout_and_unavailable_nutrition_are_expected_handling_not_available_facts(
     suite: Suite,
     observations: list[Observation],
@@ -154,7 +176,16 @@ def test_observation_coverage_fails_closed(
 
 
 @pytest.mark.parametrize(
-    "failure", ["missing", "duplicate", "extra", "skipped", "duplicate-grade", "wrong-input"]
+    "failure",
+    [
+        "missing",
+        "duplicate",
+        "extra",
+        "skipped",
+        "duplicate-grade",
+        "wrong-input",
+        "malformed-grade",
+    ],
 )
 def test_cloud_coverage_cannot_raise_scores_by_dropping_or_repeating_results(
     suite: Suite,
@@ -172,6 +203,8 @@ def test_cloud_coverage_cannot_raise_scores_by_dropping_or_repeating_results(
         outputs[0]["status"] = "skipped"
     elif failure == "wrong-input":
         outputs[0]["datasource_item"]["response"] = "A different candidate."
+    elif failure == "malformed-grade":
+        outputs[0]["results"][0]["name"] = []
     else:
         outputs[0]["results"].append(outputs[0]["results"][0])
     result = scored_report(suite, observations, outputs=outputs)

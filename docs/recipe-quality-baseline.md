@@ -7,19 +7,21 @@ publication occurred. `quality_passed` remains `false`.
 
 ## Reproducible evidence
 
-Run `python -m scripts.evaluate_quality` from a fresh output directory using the
+Run `python -m scripts.evaluate_quality --output artifacts\quality-evaluation\offline-v1`
+from a fresh output directory using the
 [evaluation instructions](recipe-quality-evaluations.md). Full per-case
 observations, grade inputs, review template and aggregate report persist locally
-under `artifacts\quality-evaluation`; generated evidence is excluded from Git.
+under `artifacts\quality-evaluation\offline-v1`; generated evidence is excluded from Git.
 `--resume` and `--report-only` also reproduced the saved result without recapture.
 
 | Provenance | Recorded value |
 | --- | --- |
 | Dataset | `asc56-recipe-quality-v1` |
 | Dataset SHA-256 | `c14b6c47e080a1cd413e438f7ccae3eb4b82719d96deb77ca8d9b7679207a94a` |
-| Starting commit | `3ee0735f31893302a326709e1f4c5e0a29a7789e` |
-| Evaluated source-tree SHA-256 | `30336622c6829cf83f70f91f2e5c7e59a978c25d54b51285093c380498a47d72` |
-| Working tree | Dirty: includes this feature's uncommitted capture/scoring implementation |
+| Starting commit | `b8824edc4bf3ac883b5356bd3b32df6a7dbf85c1` |
+| Evaluated source-tree SHA-256 | `5d918f309e6b2b7de70cc028bb232914bb2a01c762f4e335f1d6954eb4a5fc8b` |
+| Working tree | Dirty: includes uncommitted combined-mode capture/scoring changes |
+| Recipe grounding mode | `combined`, matching dev's PR #120 configuration |
 | SDK versions | `azure-ai-projects 2.8.0`, `openai 3.27.0`, `azure-identity 1.26.0` |
 | Production policy versions | Orchestrator `2`; recipe `5` |
 | Cloud spend | USD 0; no cloud calls; replay token counts are synthetic |
@@ -29,6 +31,9 @@ The source-tree digest includes production Python, evaluation scripts and both
 replay fixtures. Prompt hashes and tool implementation/version details are in
 `report.json`. The starting commit alone is not the evaluated implementation.
 No live model or evaluator version is claimed for a fixed-response replay.
+The Web case records three model invocations with three usage receipts:
+combined retrieval/Web generation is counted once, not as two model calls.
+Focused tests also cover the still-supported phased route.
 
 ## Per-case result
 
