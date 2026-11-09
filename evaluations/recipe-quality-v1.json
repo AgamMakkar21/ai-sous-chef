@@ -1,0 +1,145 @@
+{
+  "version": "asc56-recipe-quality-v1",
+  "data_classification": "synthetic-only",
+  "thresholds": {
+    "judge_minimum": 4,
+    "required_pass_rate": 1.0,
+    "minimum_pantry_utilization": 0.5,
+    "maximum_human_judge_delta": 1
+  },
+  "defaults": {
+    "explicitPreferences": {
+      "allergies": ["milk", "peanut"],
+      "dietaryRestrictions": ["vegetarian"],
+      "likes": ["carrot", "rice"],
+      "dislikes": [],
+      "preferredCuisines": [],
+      "spicePreference": "mild",
+      "cookingSkill": "beginner",
+      "typicalTimeBudgetMinutes": 30,
+      "nutritionGoals": ["balanced meals"]
+    },
+    "groceries": [
+      {"groceryId": "00000000-0000-4000-8000-000000000001", "name": "rice", "quantity": 200, "unit": "g", "updatedAt": "2026-01-01T00:00:00Z"},
+      {"groceryId": "00000000-0000-4000-8000-000000000002", "name": "carrot", "quantity": 200, "unit": "g", "updatedAt": "2026-01-01T00:00:00Z"},
+      {"groceryId": "00000000-0000-4000-8000-000000000003", "name": "olive oil", "quantity": 20, "unit": "g", "updatedAt": "2026-01-01T00:00:00Z"}
+    ],
+    "omittedGroceryCount": 0,
+    "history": [],
+    "learnedPreferences": [],
+    "currentRequest": "Use the rice and carrots for a mild beginner dinner in 30 minutes."
+  },
+  "cases": [
+    {
+      "id": "normal-no-web",
+      "request": "Use the rice and carrots for a mild beginner dinner in 30 minutes.",
+      "expected": ["candidate"],
+      "web": "forbidden"
+    },
+    {
+      "id": "insufficient-groceries",
+      "request": "There are only 20 g of rice and no other groceries. Suggest a beginner meal in 30 minutes and list every purchase needed.",
+      "groceries": [
+        {"groceryId": "00000000-0000-4000-8000-000000000001", "name": "rice", "quantity": 20, "unit": "g", "updatedAt": "2026-01-01T00:00:00Z"}
+      ],
+      "expected": ["candidate"],
+      "web": "forbidden",
+      "require_shopping": true,
+      "measure_pantry_utilization": false
+    },
+    {
+      "id": "unrealistic-time",
+      "request": "Roast a whole turkey from raw in five minutes. Do not silently substitute another dish; explain why and ask which constraint to change.",
+      "minutes": 5,
+      "expected": ["clarification", "unable"],
+      "web": "forbidden",
+      "judge_metrics": ["relevance", "feasibility"],
+      "measure_pantry_utilization": false
+    },
+    {
+      "id": "missing-nutrition",
+      "request": "Make a beginner carrot and rice dinner in 30 minutes. If nutrition data is unavailable, state that instead of inventing amounts.",
+      "fault": "missing_nutrition",
+      "expected": ["candidate"],
+      "web": "forbidden"
+    },
+    {
+      "id": "nutrition-timeout",
+      "request": "Make a beginner carrot and rice dinner in 30 minutes.",
+      "fault": "nutrition_timeout",
+      "expected": ["error"],
+      "web": "forbidden",
+      "judge_metrics": [],
+      "measure_pantry_utilization": false
+    },
+    {
+      "id": "conflicting-taste-nutrition",
+      "request": "I want a creamy, cheesy high-protein dinner in 30 minutes, but keep the milk allergy and vegetarian restriction. Explain any tradeoff; do not claim a protein target without evidence.",
+      "nutrition_goals": ["high protein"],
+      "expected": ["candidate"],
+      "web": "forbidden"
+    },
+    {
+      "id": "current-public-information",
+      "request": "Use current FDA food recall information to inform a beginner carrot and rice dinner in 30 minutes. Attribute current claims and do not claim absence of recalls proves safety.",
+      "expected": ["candidate"],
+      "web": "required"
+    },
+    {
+      "id": "creative-within-constraints",
+      "request": "Give the rice and carrots a creative twist in a mild beginner vegetarian dinner in 30 minutes. Mark adaptations separately from source facts and keep the milk and peanut allergies.",
+      "expected": ["candidate"],
+      "web": "forbidden"
+    }
+  ],
+  "rubrics": {
+    "grocery_utilization": "Judge whether the response makes useful use of the stated pantry, minimizes avoidable purchases and honestly explains shortages. Ingredient matching alone does not establish a good meal. When stock is insufficient, an explicit reasonable shopping plan is preferable to pretending ingredients are available.",
+    "feasibility": "Judge whether preparation, quantities, total elapsed time, equipment assumptions and techniques form a practical meal at the stated skill. A realistic clarification for an impossible request scores highly; invented time or silently changing the requested dish scores poorly. Consider taste/nutrition conflicts without overriding allergies or restrictions.",
+    "controlled_creativity": "Judge useful, coherent flavor, presentation or technique adaptations within all stated constraints. Novelty is not mandatory for ordinary requests. For an explicitly creative request, merely renaming an unchanged dish is weak. Distinguish an honestly labeled adaptation from a claimed source fact. Reward practical adaptations, never invented nutrition, safety or external claims."
+  },
+  "scale": {
+    "1": "Fails the criterion or makes unsupported claims.",
+    "2": "Major omissions or impractical adaptation.",
+    "3": "Partially useful but has a material unresolved weakness.",
+    "4": "Meets the criterion with only minor weaknesses.",
+    "5": "Fully meets the criterion with specific, attributable support."
+  },
+  "anchors": [
+    {
+      "id": "anchor-practical",
+      "query": "Suggest a vegetarian beginner carrot rice dinner in 30 minutes using rice, carrots and olive oil.",
+      "response": "Cook 100 g rice, soften 150 g carrot with 10 g olive oil, then combine. Two servings, 25 minutes, beginner skill. These are the available groceries. Source fact: the source describes beginner carrot rice taking 25 minutes. Adaptation: dice the carrots finely for a softer texture; this is a proposed variation, not a quoted source property. Nutrition is unavailable; no nutrient amount or health benefit is claimed.",
+      "context": "Source: synthetic-rice-v1. Beginner carrot rice with olive oil takes 25 minutes. Pantry: 200 g rice, 200 g carrot, 20 g olive oil.",
+      "grounded_response": "Beginner carrot rice with olive oil takes 25 minutes.",
+      "minimum": 4,
+      "maximum": 5
+    },
+    {
+      "id": "anchor-unsupported",
+      "query": "Suggest a vegetarian beginner carrot rice dinner in 30 minutes using rice, carrots and olive oil.",
+      "response": "Buy beef and cheese and roast for three hours. This is vegetarian and safe for every allergy. The source guarantees 100 g protein per serving and FDA approval.",
+      "context": "Source: synthetic-rice-v1. Beginner carrot rice with olive oil takes 25 minutes. Pantry: 200 g rice, 200 g carrot, 20 g olive oil.",
+      "grounded_response": "The source guarantees 100 g protein per serving and FDA approval.",
+      "minimum": 1,
+      "maximum": 2
+    },
+    {
+      "id": "anchor-creative",
+      "query": "Suggest a creative mild vegetarian beginner rice and carrot meal in 30 minutes using the pantry; no milk or peanuts.",
+      "response": "Cook 100 g rice and soften 150 g carrot in 10 g olive oil, then combine. Serve as two small molded rice portions. This presentation is an adaptation, not a source claim. Use a bowl as the mold; no special equipment or additional ingredients are needed. Two servings, 25 minutes and beginner skill. Source fact: beginner carrot rice takes 25 minutes. Nutrition is unavailable; do not infer a nutrient total.",
+      "context": "Source: synthetic-rice-v1. Beginner carrot rice takes 25 minutes. Pantry: 200 g rice, 200 g carrot, 20 g olive oil.",
+      "grounded_response": "Beginner carrot rice takes 25 minutes.",
+      "minimum": 4,
+      "maximum": 5
+    },
+    {
+      "id": "anchor-novelty-not-evidence",
+      "query": "Suggest a creative mild vegetarian beginner rice and carrot meal in 30 minutes using the pantry; no milk or peanuts.",
+      "response": "Buy cheese, peanut sauce and beef for a molecular banquet requiring advanced equipment and three hours. Renaming it carrot rice makes it vegetarian. The rice source proves this adaptation is allergen-free and contains exactly 100 g protein per portion.",
+      "context": "Source: synthetic-rice-v1. Beginner carrot rice takes 25 minutes. Pantry: 200 g rice, 200 g carrot, 20 g olive oil.",
+      "grounded_response": "The rice source proves this adaptation is allergen-free and contains exactly 100 g protein per portion.",
+      "minimum": 1,
+      "maximum": 2
+    }
+  ]
+}
