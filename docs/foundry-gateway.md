@@ -19,9 +19,16 @@ Pinned-agent requests do not send `tools`, `tool_choice`, `parallel_tool_calls`,
 and strict output schemas belong to immutable prompt-agent source versions.
 The service rejects request-time tool overrides alongside `agent_reference`;
 see [microsoft/agent-framework#5087](https://github.com/microsoft/agent-framework/issues/5087).
-The specialist uses three phase versions under its one existing identity:
-tool-free generation, curated retrieval plus generation, and isolated Web IQ.
+The current dev design selects `ASC_FOUNDRY_RECIPE_NUTRITION_MODE=combined`:
+one specialist version contains recipe MCP and native web search, with a strict
+recipe-plus-web-claims output schema. The legacy `phased` mode uses three versions
+under that same identity: tool-free generation, curated retrieval plus generation,
+and isolated Web IQ.
 The backend selects the phase pin; user input cannot select an agent or version.
+Combined mode pins only `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION`; stale legacy
+retrieval/web settings are not used. Web queries and citations are validated
+after native execution; this mode does not guarantee pre-search privacy isolation.
+See [combined boundaries](recipe-specialist.md#combined-recipe-agent-with-native-web-search).
 
 The recipe MCP result allowance follows validated `ASC_ENVIRONMENT`: dev allows
 65,536 characters/16,000 tokens for the full result, while local/production retain
@@ -42,18 +49,22 @@ Gateway construction requires `ASC_ADAPTER_MODE=live` and these values:
 | `ASC_FOUNDRY_ORCHESTRATOR_AGENT_NAME` | Deployed Orchestrator runtime agent name |
 | `ASC_FOUNDRY_ORCHESTRATOR_AGENT_VERSION` | Explicit positive numeric version, not `latest` |
 | `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_NAME` | Different deployed Recipe + Nutrition runtime name |
-| `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION` | Explicit tool-free generation version |
-| `ASC_FOUNDRY_RECIPE_NUTRITION_RETRIEVAL_AGENT_VERSION` | Explicit curated-retrieval/generation version |
-| `ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION` | Explicit isolated Web IQ version |
+| `ASC_FOUNDRY_RECIPE_NUTRITION_MODE` | `combined` for native web and recipe MCP on one version; default `phased` preserves legacy releases |
+| `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION` | Explicit combined version, or tool-free generation version in phased mode |
+| `ASC_FOUNDRY_RECIPE_NUTRITION_RETRIEVAL_AGENT_VERSION` | Required only in phased mode |
+| `ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION` | Required only in phased mode |
 | `ASC_FOUNDRY_INVOCATION_TIMEOUT_SECONDS` | Positive finite total deadline, at most 120 seconds; default 60 |
 | `AZURE_CLIENT_ID` | Required in dev/prod: App Service user-assigned managed identity client ID |
 
 Names and versions are optional for the application scaffold, but mandatory when
 constructing this gateway. Versions are configuration pins, not discovered or
 silently upgraded at invocation time.
-The three specialist versions must differ. Live readiness reads all three pins
+In phased mode the three specialist versions must differ. Live readiness reads all three pins
 and verifies their current source fingerprints, policy/phase metadata, exact
 tool configuration and output schemas without invoking a model.
+Combined readiness instead reads the single specialist pin and verifies its
+policy-6 definition, both tools, combined output schema and fingerprint. Merely
+adding web search to a policy-5 retrieval source cannot pass those checks.
 
 ASC-25 additionally exposes `coordinate()` for the Orchestrator's strict
 `recipe_specialist` function handoff. Unlike the original text-only `invoke()`,

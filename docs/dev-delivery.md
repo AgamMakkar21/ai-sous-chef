@@ -87,10 +87,11 @@ PostgreSQL, import USDA data, register API keys or copy developer credentials.
    | `ASC_FOUNDRY_ACCOUNT_NAME` | Existing dev Foundry account name |
    | `ASC_FOUNDRY_PROJECT_NAME` | Existing dev project name |
 
-5. Review the explicit stage in `deploy/agents.dev.json`. The current app-only
-   stage has `agents_enabled: false` and an empty `agents` mapping; source agents
-   and their unfinished tool integrations do not block the backend/auth rollout.
-   For an agent-enabled release, pin the **actual approved agent versions**.
+5. Review the explicit stage in `deploy/agents.dev.json`. The current candidate
+   enables combined-mode chat with the read-back-verified Orchestrator source 1
+   and Recipe + Nutrition combined source 5. This is release configuration,
+   not evidence that the candidate has been deployed or passed live UI acceptance.
+   Agent-enabled releases pin the **actual approved agent versions**.
    Both agents must already have separate, enabled Entra Agent identities.
    If neither agent exists yet, use the owner-approved
    [first-time bootstrap](orchestrator.md#first-time-creation-when-the-project-has-no-agents)
@@ -105,7 +106,42 @@ Wait for role propagation and investigate the actual denial at the granted scope
 
 ## Release stages
 
-The checked-in schema-version-2 manifest intentionally starts with:
+The current dev agent design is **combined**: native web search and recipe MCP
+are published on one Recipe + Nutrition source version. After publishing and
+exactly verifying the reviewed `--phase combined` source, use this manifest shape:
+
+```json
+{
+  "schema_version": 4,
+  "agents_enabled": true,
+  "agents": {
+    "orchestrator": {"name": "sous-chef-orchestrator-dev", "version": "1"},
+    "recipe_nutrition": {
+      "name": "sous-chef-recipe-nutrition-dev",
+      "version": "5"
+    }
+  }
+}
+```
+
+The pins above are the actual read-back-verified sources selected for this candidate,
+not assumed next-version numbers. Future releases must read back their selected
+versions again. Deployment sets `ASC_FOUNDRY_RECIPE_NUTRITION_MODE=combined`,
+verifies and clones both exact sources under their existing identities, then pins
+the resulting release versions. It does not publish separate retrieval/web phases.
+Readiness requires the combined strict schema and policy-6 fingerprint. Manually
+adding a web tool/reasoning settings to old version 4 does not automatically meet
+that contract. Source 5 was published from the reviewed combined definition and
+read back successfully before enabling the candidate manifest. App Service must
+receive the compatible backend and complete runtime pins together through delivery;
+do not enable its flag manually against the older backend. USDA secrets/enabling
+and the stable `ASC_PAGINATION_KEY` remain owner-managed.
+Post-execution web-query validation is not pre-search privacy isolation; review
+the [combined-agent boundaries](recipe-specialist.md#combined-recipe-agent-with-native-web-search).
+
+The schema-version-3 instructions below remain for legacy phased releases.
+
+An explicit app-only release or rollback uses schema version 2:
 
 ```json
 {

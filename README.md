@@ -14,13 +14,21 @@ consumer authentication. Profile/onboarding, grocery inventory and conversation
 persistence APIs, shared Cosmos access and the managed-agent gateway are available.
 The React frontend adds the authenticated three-tab shell, onboarding/profile
 editing, and conversation creation, selection and paginated transcripts.
-Grocery controls, message sending and recipe-history screens remain follow-on work.
-Live chat execution and other product endpoints remain separate work.
+Chat message sending uses the bounded Orchestrator and recipe specialist.
+Grocery controls and recipe-history screens remain follow-on work.
+Live chat requires explicit agent activation and verified published sources;
+offline readiness alone does not enable it.
 The [Recipe + Nutrition specialist](docs/recipe-specialist.md) supplies versioned
 instructions, strict recipe output, identity-bound recipe retrieval, read-only USDA
-nutrition and the deterministic final recipe gate. Live chat activation remains
-separate work; [USDA setup](docs/recipe-specialist.md#usda-nutrition-asc-32)
+nutrition and the deterministic final recipe gate. The enabled dev release still
+requires deployment and live UI acceptance; [USDA setup](docs/recipe-specialist.md#usda-nutrition-asc-32)
 uses an app-owned MCP server over the FoodData Central API and a protected USDA API key.
+The current dev specialist design supports recipe MCP and native web search on
+one reviewed agent version with `ASC_FOUNDRY_RECIPE_NUTRITION_MODE=combined`.
+Web search remains conditional on an authorized public current-information query,
+not unrestricted recipe browsing. The backend checks returned native queries and
+citations after execution; the combined agent is not isolated from personalization
+context before searching. Existing phased releases remain supported.
 See [frontend setup and scope](docs/frontend.md).
 See [profile API setup and usage](docs/profiles.md) and
 [conversation setup and HTTP contracts](docs/conversations.md) for the persistence APIs.

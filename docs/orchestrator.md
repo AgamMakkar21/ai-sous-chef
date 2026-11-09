@@ -170,8 +170,9 @@ environment. Configure the existing ignored `.env.dev` (never commit it):
 
 Sign in with the approved project-scoped publisher account using Azure CLI, then
 run this command in the activated Python environment. This administrative
-`AzureCliCredential` is not an application runtime credential. Keep the App
-Service's agent flag and the checked-in manifest disabled:
+`AzureCliCredential` is not an application runtime credential. This command does
+not change the App Service flag or release manifest. Enable runtime execution only
+through compatible delivery after verifying the selected sources:
 
 ```powershell
 $previousEnvironment = $env:ASC_ENVIRONMENT
@@ -189,8 +190,10 @@ try {
 The temporary process flag authorizes this command's configuration only.
 The script creates the missing Orchestrator with its reviewed function declaration,
 and the missing specialist with its tool-free generation configuration, strict
-output schema and RAI references. Publish the specialist's retrieval and web
-phase versions separately before enabling chat; see
+output schema and RAI references. For the current combined dev design, publish
+and verify one `--phase combined` specialist version with recipe MCP and native
+web search attached together. The old separate retrieval/web publications are
+required only for legacy phased releases; see
 [specialist source publication](recipe-specialist.md#source-publication-and-setup).
 Publication
 resolves each approved policy name to its full ARM resource ID on the account
@@ -205,10 +208,11 @@ list after refresh. The portal cannot add/edit function declarations; they are
 installed by the SDK definition, not by selecting A2A or Connected agents.
 
 On success, retain the printed exact names/numeric generation source versions.
-Publish and verify the two additional specialist phase versions, then include all pins in a
+Publish and verify the combined specialist source, then include its single pin in a
 peer-reviewed agent-enabled manifest change as described in
 [dev delivery](dev-delivery.md#release-stages); do not treat the displayed JSON
-as an already activated release. The printed principal IDs let the owner assign
+as an already activated release. Legacy phased mode retains its three specialist pins.
+The printed principal IDs let the owner assign
 required downstream access. In particular, grant Search Index Data Reader to
 the Recipe + Nutrition identity only and retain the connection's
 `AgenticIdentityToken` authentication. Verify the required permitted/denied tool
@@ -233,7 +237,10 @@ updates rather than weakening bootstrap checks.
 For a read-only comparison, use `python -m sous_chef.bootstrap_agents --inspect`
 with the same temporary dev process settings. This reads each named agent and
 its latest numeric version, then reports status, metadata mismatch keys and
-definition difference paths without printing definition values. It never creates
+definition difference paths without printing private definition values. It also
+reports bounded allowlisted tool types, reviewed-web-tool equality and reasoning
+settings; unknown values and custom fields remain withheld. Use `--phase combined`
+to compare a combined source. It never creates
 or updates versions. Investigate any returned differences before retrying;
 server normalization must not hide a missing policy, tool or instruction.
 
@@ -247,7 +254,8 @@ owner intentionally publish the corrected retrieval source with
 `python -m sous_chef.publish_orchestrator --approve-dev-publication --agent recipe_nutrition --phase retrieval`.
 Verify its exact version with `--phase retrieval --verify-version <source-version>`.
 The default bootstrap inspection compares the latest version with the generation source;
-use `--inspect --phase retrieval` only when inspecting a latest retrieval version.
+use `--inspect --phase retrieval` for a retrieval-only source or `--inspect --phase combined`
+for the current combined design.
 Do not ignore fingerprint
 drift or append replacement versions automatically during bootstrap.
 

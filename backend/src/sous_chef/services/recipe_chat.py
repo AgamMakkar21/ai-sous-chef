@@ -33,7 +33,12 @@ class RecipeChatExecutor:
             raise ConfigurationError("Recipe chat requires distinct workload and agent pins.")
         RecipeKnowledgeConfig.from_settings(settings)
         nutrition = UsdaNutritionTool.from_settings(settings)
-        specialist = RecipeSpecialistService(gateway, None, nutrition)
+        specialist = RecipeSpecialistService(
+            gateway,
+            None,
+            nutrition,
+            combined=settings.foundry_recipe_nutrition_mode == "combined",
+        )
         assert settings.foundry_orchestrator_agent_name is not None
         return cls(
             OrchestratorService(gateway, specialist),

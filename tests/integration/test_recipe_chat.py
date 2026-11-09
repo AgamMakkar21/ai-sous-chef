@@ -26,7 +26,7 @@ from test_grocery_api import add
 from test_grounded_specialist import configuration
 from test_profile_api import document, onboard
 from test_usda_nutrition import SERVER
-from test_web_grounding import WebHarness
+from test_web_grounding import CombinedHarness, WebHarness
 
 
 class RecipeChatHarness(WebHarness):
@@ -99,6 +99,70 @@ def recipe_api(
         onboard(client)
         add(client, name="rice", quantity=100, unit="g")
         yield client
+
+
+@pytest.mark.parametrize("use_web", [False, True])
+def test_combined_app_composition_returns_and_persists_a_grounded_recipe(
+    use_web: bool,
+    recipe_settings: Settings,
+    auth_headers: dict[str, str],
+    harness: tuple[Transport, SyntheticCredential],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = CombinedHarness(use_web=use_web)
+    original_handle = transport.handle
+
+    async def handle(request: httpx2.Request) -> httpx2.Response:
+        payload = json.loads(request.content)
+        kind = transport.request_kind(payload)
+        if kind == "function" and isinstance(payload["input"], str):
+            transport.data = RequestContext.model_validate_json(payload["input"].split("\n", 1)[1])
+        elif kind == "combined":
+            transport.combined["output"][0]["arguments"] = json.dumps(
+                {"query_variants": [retrieval_query(transport.data, transport.arguments)]}
+            )
+        return await original_handle(request)
+
+    monkeypatch.setattr(transport, "handle", handle)
+    monkeypatch.setattr(foundry_gateway, "_project_client", transport.factory)
+    settings = Settings.model_validate(
+        recipe_settings.model_dump()
+        | {
+            "foundry_recipe_nutrition_mode": "combined",
+            "foundry_recipe_nutrition_agent_version": "4",
+            "foundry_recipe_nutrition_retrieval_agent_version": None,
+            "foundry_recipe_nutrition_web_agent_version": None,
+        }
+    )
+    content = (
+        "Check current rice recalls and make a dinner."
+        if use_web
+        else "Make a 30-minute pantry recipe."
+    )
+    with TestClient(create_app(settings), headers=auth_headers) as client:
+        onboard(client)
+        add(client, name="rice", quantity=100, unit="g")
+        conversation = create(client)
+        response = send(client, conversation, content=content)
+        assert response.status_code == 200, response.text
+        turn = response.json()["data"]
+        assert turn["status"] == "completed" and turn["generatedRecipeId"]
+        assert turn["recipe"]["nutrition"]["status"] == "known"
+        assert {source["kind"] for source in turn["recipe"]["sources"]} == {
+            "curated_recipe",
+            "usda",
+        }
+        assert bool(turn["recipe"]["webGrounding"]) == use_web
+        assert len(transport.requests) == 3
+        combined = json.loads(transport.requests[1].content)
+        assert combined["agent_reference"]["version"] == "4"
+        assert combined["max_tool_calls"] == (2 if use_web else 1)
+        assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
+        assert send(client, conversation, content=content).json() == response.json()
+        assert len(transport.requests) == 3
+    with TestClient(create_app(settings), headers=auth_headers) as restarted:
+        assert restarted.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
+    assert len(transport.requests) == 3
 
 
 @pytest.mark.parametrize("use_web", [False, True])

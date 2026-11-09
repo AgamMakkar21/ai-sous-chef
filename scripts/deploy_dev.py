@@ -151,17 +151,21 @@ def manifest() -> dict[str, dict[str, str]]:
         not isinstance(data, dict)
         or set(data) != {"schema_version", "agents_enabled", "agents"}
         or type(data.get("schema_version")) is not int
-        or data.get("schema_version") not in (2, 3)
+        or data.get("schema_version") not in (2, 3, 4)
         or type(data.get("agents_enabled")) is not bool
         or not isinstance(data.get("agents"), dict)
     ):
-        raise DeliveryError("Use a version-2 or version-3 manifest with explicit agents_enabled.")
+        raise DeliveryError(
+            "Use a version-2, version-3 or version-4 manifest with explicit agents_enabled."
+        )
     if data["agents_enabled"] is False:
         if data["agents"]:
             raise DeliveryError("Disabled agent releases must have an empty agents mapping.")
         return {}
-    if data["schema_version"] != 3:
-        raise DeliveryError("Enabled agent releases require version-3 specialist phase pins.")
+    if data["schema_version"] not in (3, 4):
+        raise DeliveryError(
+            "Enabled releases require version-3 phase pins or version-4 combined pins."
+        )
     if set(data["agents"]) != set(ROLES):
         raise DeliveryError("Enabled agent releases must contain both agent roles.")
     agents = data["agents"]
@@ -170,7 +174,7 @@ def manifest() -> dict[str, dict[str, str]]:
         target = agents[role]
         version_fields = (
             ("version",)
-            if role == "orchestrator"
+            if role == "orchestrator" or data["schema_version"] == 4
             else ("version", "retrieval_version", "web_version")
         )
         if not isinstance(target, dict) or set(target) != {"name", *version_fields}:
@@ -189,6 +193,8 @@ def manifest() -> dict[str, dict[str, str]]:
         if len({target[field] for field in version_fields}) != len(version_fields):
             raise DeliveryError("Pin different specialist source versions for each phase.")
         validated[role] = {"name": name, **{field: target[field] for field in version_fields}}
+        if role == "recipe_nutrition" and data["schema_version"] == 4:
+            validated[role]["mode"] = "combined"
     if agents[ROLES[0]]["name"] == agents[ROLES[1]]["name"]:
         raise DeliveryError("The two agents must have different runtime names.")
     return validated
@@ -373,7 +379,7 @@ def release_agents(
         )
         version_fields = (
             ("version",)
-            if role == "orchestrator"
+            if role == "orchestrator" or pin.get("mode") == "combined"
             else ("version", "retrieval_version", "web_version")
         )
         for field in version_fields:
@@ -394,12 +400,14 @@ def release_agents(
                     "retrieval_version": RecipePhase.RETRIEVAL,
                     "web_version": RecipePhase.WEB,
                 }[field]
+                if pin.get("mode") == "combined":
+                    phase = RecipePhase.COMBINED
                 tool = None
-                if phase == RecipePhase.RETRIEVAL:
+                if phase in (RecipePhase.RETRIEVAL, RecipePhase.COMBINED):
                     tools = source.definition.tools
                     if (
                         not tools
-                        or len(tools) != 1
+                        or len(tools) != (2 if phase == RecipePhase.COMBINED else 1)
                         or not isinstance(tools[0], MCPTool)
                         or not isinstance(tools[0].server_url, str)
                         or not isinstance(tools[0].project_connection_id, str)
@@ -422,6 +430,8 @@ def release_agents(
             "Agent identities must be distinct from each other and the app."
         ) from None
     settings = {}
+    combined = agents["recipe_nutrition"].get("mode") == "combined"
+    settings["ASC_FOUNDRY_RECIPE_NUTRITION_MODE"] = "combined" if combined else "phased"
     for (role, field), source in sources.items():
         pin = agents[role]
         version = project.agents.create_version(

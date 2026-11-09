@@ -11,6 +11,7 @@ import zipfile
 from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError
 
@@ -47,6 +48,109 @@ ENABLED_MANIFEST = {
 
 
 class DeliveryTests(unittest.TestCase):
+    def test_combined_manifest_pins_one_specialist_and_release_keeps_both_tools(self) -> None:
+        from azure.ai.projects.models import AgentVersionDetails
+        from sous_chef.recipe_definition import (
+            RecipePhase,
+            build_recipe_definition,
+            recipe_knowledge_tool,
+            recipe_source_metadata,
+        )
+
+        from scripts.release import validate_runtime
+
+        data: dict[str, Any] = {
+            "schema_version": 4,
+            "agents_enabled": True,
+            "agents": {
+                "orchestrator": {"name": "orchestrator", "version": "1"},
+                "recipe_nutrition": {"name": "recipe-nutrition", "version": "4"},
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "deploy").mkdir()
+            (root / "deploy" / "agents.dev.json").write_text(json.dumps(data))
+            with patch.object(delivery, "ROOT", root):
+                agents = delivery.manifest()
+                self.assertEqual(agents["recipe_nutrition"]["mode"], "combined")
+                data["agents"]["recipe_nutrition"]["web_version"] = "5"
+                (root / "deploy" / "agents.dev.json").write_text(json.dumps(data))
+                with self.assertRaises(delivery.DeliveryError):
+                    delivery.manifest()
+        combined = build_recipe_definition(
+            "recipe-model",
+            "approved-policy",
+            phase=RecipePhase.COMBINED,
+            knowledge_tool=recipe_knowledge_tool(
+                "https://synthetic.search.windows.net/knowledgebases/fixture/mcp",
+                "fixture-mcp",
+            ),
+        )
+        project = MagicMock()
+        project.agents.get.side_effect = [
+            SimpleNamespace(
+                state="enabled",
+                instance_identity=SimpleNamespace(
+                    principal_id=principal,
+                    client_id=principal + "-client",
+                ),
+            )
+            for principal in (
+                "22222222-2222-2222-2222-222222222222",
+                "33333333-3333-3333-3333-333333333333",
+            )
+        ]
+        project.agents.get_version.side_effect = [
+            AgentVersionDetails(
+                {
+                    "name": "orchestrator",
+                    "version": "1",
+                    "status": "active",
+                    "draft": False,
+                    "definition": {
+                        "kind": "prompt",
+                        "model": "orchestrator",
+                        "instructions": "approved",
+                    },
+                }
+            ),
+            AgentVersionDetails(
+                {
+                    "name": "recipe-nutrition",
+                    "version": "4",
+                    "status": "active",
+                    "draft": False,
+                    "definition": combined.as_dict(),
+                    "metadata": recipe_source_metadata(combined, RecipePhase.COMBINED),
+                }
+            ),
+        ]
+        project.agents.create_version.side_effect = [
+            SimpleNamespace(version="8"),
+            SimpleNamespace(version="9"),
+        ]
+        with patch.dict(os.environ, ENV):
+            pins = delivery.release_agents(
+                project,
+                agents,
+                "11111111-1111-1111-1111-111111111111",
+            )
+        self.assertEqual(project.agents.get_version.call_count, 2)
+        self.assertEqual(project.agents.create_version.call_count, 2)
+        self.assertEqual(pins["ASC_FOUNDRY_RECIPE_NUTRITION_MODE"], "combined")
+        self.assertEqual(pins["ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION"], "9")
+        self.assertNotIn("ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION", pins)
+        self.assertEqual(project.agents.create_version.call_args.kwargs["definition"], combined)
+        validate_runtime(
+            pins
+            | {
+                "ASC_AGENTS_ENABLED": "true",
+                "ASC_APP_WORKLOAD_PRINCIPAL_ID": "11111111-1111-1111-1111-111111111111",
+                "ASC_READINESS_TIMEOUT_SECONDS": "10",
+            }
+        )
+
     def test_azure_output_contract_is_explicit_and_json_reads_remain_strict(self) -> None:
         with patch.dict(os.environ, ENV):
             with patch.object(delivery, "command", return_value="") as run:
@@ -537,7 +641,14 @@ class DeliveryTests(unittest.TestCase):
                     }
                 )
             ]
-            for index, phase in enumerate(RecipePhase, 1):
+            for index, phase in enumerate(
+                (
+                    RecipePhase.GENERATION,
+                    RecipePhase.RETRIEVAL,
+                    RecipePhase.WEB,
+                ),
+                1,
+            ):
                 definition = build_recipe_definition(
                     "recipe-model",
                     "approved-policy",

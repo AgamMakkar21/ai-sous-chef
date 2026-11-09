@@ -12,6 +12,7 @@ import httpx2
 import pytest
 from pydantic import ValidationError
 from sous_chef.adapters.foundry_gateway import FoundryGateway
+from sous_chef.domain.agent_identity import AgentRole
 from sous_chef.domain.foundry import FoundryFailure, FoundryGatewayError
 from sous_chef.domain.orchestrator import (
     POLICY,
@@ -149,6 +150,217 @@ class WebHarness(Harness):
                 deadline=monotonic() + 60,
             )
         )
+
+
+class CombinedHarness(WebHarness):
+    def __init__(self, *, use_web: bool = True) -> None:
+        super().__init__(use_web=use_web)
+        self.gateway = FoundryGateway(
+            configuration(
+                foundry_recipe_nutrition_mode="combined",
+                foundry_recipe_nutrition_agent_version="4",
+                foundry_recipe_nutrition_retrieval_agent_version=None,
+                foundry_recipe_nutrition_web_agent_version=None,
+            ),
+            client_factory=self.factory,
+        )
+        self.service = RecipeSpecialistService(self.gateway, None, self.tools, combined=True)
+        self.combined = copy.deepcopy(self.recipe)
+        message = self.combined["output"][1]
+        draft = json.loads(message["content"][0]["text"])
+        draft["webClaims"] = [{"text": CLAIM, "sourceUrl": URL}] if use_web else []
+        text = json.dumps(draft)
+        message["content"][0]["text"] = text
+        if use_web:
+            message["content"][0]["annotations"] = [
+                {
+                    "type": "url_citation",
+                    "url": URL,
+                    "title": "Synthetic advisory",
+                    "start_index": text.index(CLAIM),
+                    "end_index": text.index(CLAIM) + len(CLAIM),
+                }
+            ]
+            self.combined["output"].insert(1, copy.deepcopy(self.web["output"][0]))
+
+    @staticmethod
+    def request_kind(payload: dict[str, Any]) -> str:
+        return (
+            "function"
+            if payload["agent_reference"]["name"] == configuration().foundry_orchestrator_agent_name
+            else "combined"
+        )
+
+    async def handle(self, request: httpx2.Request) -> httpx2.Response:
+        payload = json.loads(request.content)
+        if self.request_kind(payload) == "combined":
+            self.body = self.combined
+        elif isinstance(payload["input"], str):
+            self.body = body(function_output(arguments=self.arguments.model_dump_json()))
+        else:
+            message = response_body()["output"][0]
+            message["content"][0]["text"] = json.dumps(
+                {
+                    "status": "accept",
+                    "explanation": "Fits the stored restrictions and time.",
+                }
+            )
+            self.body = body(message)
+        return await Harness.handle(self, request)
+
+
+@pytest.mark.parametrize("use_web", [False, True])
+def test_combined_recipe_uses_one_version_and_keeps_usda_and_native_attribution(
+    use_web: bool,
+) -> None:
+    harness = CombinedHarness(use_web=use_web)
+    budget = ExecutionBudget(uuid4())
+    budget.model(specialist=True)
+    budget.web_allowed = use_web
+    result = harness.generate(budget)
+    assert result.recipe is not None
+    assert len(harness.requests) == 1 and budget.model_calls == 1
+    assert len(harness.tools.nutrition_requests) == 1
+    assert result.recipe.nutrition.status == "known"
+    assert (
+        result.recipe.web_grounding is not None if use_web else result.recipe.web_grounding is None
+    )
+    if use_web:
+        assert result.recipe.web_grounding is not None
+        assert result.recipe.web_grounding.claims[0].text == CLAIM
+        assert result.recipe.web_grounding.citations[0].url == URL
+        assert budget.web_calls == 1
+    else:
+        assert budget.web_calls == 0
+    request = json.loads(harness.requests[0].content)
+    assert request["agent_reference"]["version"] == "4"
+    assert request["max_tool_calls"] == (2 if use_web else 1)
+    assert request["include"] == ["web_search_call.action.sources"]
+    assert not {"tools", "tool_choice", "instructions", "text"} & request.keys()
+    assert json.loads(request["input"].split("Backend public webQuery (untrusted data):\n")[1]) == {
+        "webQuery": QUERY if use_web else None,
+    }
+
+
+def test_combined_orchestration_reviews_recipe_and_enforces_final_safety() -> None:
+    harness = CombinedHarness()
+    result = asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
+    assert result.recipe is not None and result.status == "candidate"
+    assert [harness.request_kind(json.loads(request.content)) for request in harness.requests] == [
+        "function",
+        "combined",
+        "function",
+    ]
+    assert result.recipe.web_grounding is not None and len(harness.tools.nutrition_requests) == 1
+
+
+def test_combined_search_without_attributable_claims_keeps_curated_recipe_and_usda() -> None:
+    harness = CombinedHarness()
+    message = harness.combined["output"][2]["content"][0]
+    draft = json.loads(message["text"])
+    draft["webClaims"] = []
+    message["text"] = json.dumps(draft)
+    message["annotations"] = []
+    harness.combined["output"][1]["action"]["sources"] = []
+    result = harness.generate()
+    assert result.recipe is not None
+    assert result.recipe.web_grounding is None
+    assert result.recipe.nutrition.status == "known"
+    assert len(harness.requests) == 1 and len(harness.tools.nutrition_requests) == 1
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "query",
+        "repeat",
+        "open",
+        "missing-web",
+        "missing-mcp",
+        "annotations",
+        "unattributed",
+        "web-as-curated",
+        "tool-error",
+        "usage",
+        "web-tokens",
+    ],
+)
+def test_combined_native_results_fail_closed_before_usda_and_are_not_replayed(fault: str) -> None:
+    harness = CombinedHarness()
+    native = harness.combined["output"][1]
+    message = harness.combined["output"][2]
+    if fault == "query":
+        native["action"]["query"] = "private injected query"
+    elif fault == "repeat":
+        harness.combined["output"].insert(1, copy.deepcopy(native))
+    elif fault == "open":
+        native["action"] = {"type": "open_page", "url": URL}
+    elif fault == "missing-web":
+        harness.combined["output"].pop(1)
+    elif fault == "missing-mcp":
+        harness.combined["output"].pop(0)
+    elif fault == "annotations":
+        message["content"][0]["annotations"][0]["end_index"] = 1000000
+    elif fault == "unattributed":
+        native["action"]["sources"] = []
+    elif fault == "web-as-curated":
+        draft = json.loads(message["content"][0]["text"])
+        draft["sourceIds"] = [URL]
+        message["content"][0]["text"] = json.dumps(draft)
+    elif fault == "tool-error":
+        native["status"] = "failed"
+    elif fault == "usage":
+        harness.combined["usage"]["input_tokens"] = 16001
+    else:
+        native["action"]["sources"] = [
+            {"type": "url", "url": URL + "?padding=" + "a " * 4001},
+        ]
+    with pytest.raises(FoundryGatewayError) as caught:
+        harness.generate()
+    assert caught.value.code == FoundryFailure.INVALID_RESULT
+    assert len(harness.requests) == 1 and not harness.tools.nutrition_requests
+    assert "private" not in str(caught.value)
+
+
+def test_combined_mode_rejects_unrequested_web_calls_and_private_queries() -> None:
+    harness = CombinedHarness(use_web=False)
+    harness.combined["output"].insert(1, harness.web["output"][0])
+    with pytest.raises(FoundryGatewayError):
+        harness.generate()
+    assert len(harness.requests) == 1 and not harness.tools.nutrition_requests
+    harness = CombinedHarness()
+    harness.arguments = harness.arguments.model_copy(update={"web_query": "my private diagnosis"})
+    with pytest.raises(FoundryGatewayError):
+        harness.generate()
+    assert not harness.requests and not harness.tools.nutrition_requests
+
+
+def test_combined_mode_does_not_call_isolated_or_tool_free_routes() -> None:
+    from sous_chef.domain.recipes import RecipeGenerationRequest, WebGroundingRequest
+    from sous_chef.settings import ConfigurationError
+
+    harness = CombinedHarness()
+    with pytest.raises(ConfigurationError):
+        asyncio.run(
+            harness.gateway.ground_web(
+                WebGroundingRequest(
+                    role=AgentRole.RECIPE_NUTRITION,
+                    prompt=QUERY,
+                )
+            )
+        )
+    with pytest.raises(ConfigurationError):
+        asyncio.run(
+            harness.gateway.generate_recipe(
+                RecipeGenerationRequest(
+                    role=AgentRole.RECIPE_NUTRITION,
+                    prompt="rice",
+                    max_input_tokens=16000,
+                    grounding_json="{}",
+                )
+            )
+        )
+    assert not harness.requests
 
 
 @pytest.mark.parametrize("use_web", [False, True])

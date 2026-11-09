@@ -1,4 +1,5 @@
 import copy
+import json
 import sys
 from types import SimpleNamespace
 from typing import Any
@@ -384,6 +385,48 @@ def test_cli_requires_explicit_owner_approval(monkeypatch: pytest.MonkeyPatch) -
         bootstrap_agents.main()
     assert error.value.code == 2
     client.assert_not_called()
+
+
+def test_capability_inspection_is_bounded_and_hides_unknown_provider_values() -> None:
+    from sous_chef.recipe_definition import web_search_tool
+
+    report = bootstrap_agents.source_capabilities(
+        {
+            "instructions": "private instructions",
+            "tools": [
+                {"type": "mcp", "server_url": "https://private.invalid"},
+                web_search_tool().as_dict(),
+                *[{"type": "private tool", "private-key": "private value"} for _ in range(10)],
+            ],
+            "tool_choice": "required",
+            "reasoning": {"effort": "high", "summary": "private summary", "private-key": "private"},
+        }
+    )
+    assert "private" not in json.dumps(report)
+    assert report["tools_omitted"] == 4
+    tools = report["tools"]
+    assert isinstance(tools, list) and len(tools) == 8
+    assert tools[1]["matches_reviewed_web_tool"] is True
+    assert report["reasoning"] == {
+        "effort": "high",
+        "summary": "<unrecognized>",
+        "other_fields_present": True,
+    }
+    assert report["tool_choice"] == "required"
+
+
+@pytest.mark.parametrize("tools", [None, "private", [None, {}]])
+def test_capability_inspection_handles_unknown_shapes_without_printing_values(
+    tools: object,
+) -> None:
+    report = bootstrap_agents.source_capabilities(
+        {
+            "tools": tools,
+            "tool_choice": {"private": "private"},
+            "reasoning": "private",
+        }
+    )
+    assert "private" not in json.dumps(report)
 
 
 @pytest.mark.parametrize("status", [400, 401, 403, 429, 500, None])

@@ -91,6 +91,7 @@ class Settings(BaseSettings):
     foundry_recipe_nutrition_agent_version: str | None = Field(
         default=None, pattern=r"^[1-9][0-9]{0,9}$", repr=False
     )
+    foundry_recipe_nutrition_mode: Literal["phased", "combined"] = "phased"
     foundry_recipe_nutrition_retrieval_agent_version: str | None = Field(
         default=None, pattern=r"^[1-9][0-9]{0,9}$", repr=False
     )
@@ -243,7 +244,7 @@ class Settings(BaseSettings):
             )
             if value is not None
         ]
-        if len(phases) != len(set(phases)):
+        if self.foundry_recipe_nutrition_mode == "phased" and len(phases) != len(set(phases)):
             raise ConfigurationError(
                 "Specialist generation, retrieval and web versions must differ."
             )
