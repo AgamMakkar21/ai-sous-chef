@@ -448,6 +448,31 @@ class CosmosRepository:
             patch_kinds={RecordKind.RECIPE},
         )
 
+    async def commit_feedback(
+        self,
+        user: AuthenticatedUser,
+        *,
+        creates: tuple[NewRecord, ...],
+        patches: tuple[tuple[StoredRecord, RecordPatch], ...],
+    ) -> tuple[StoredRecord, ...]:
+        """Atomically persist current feedback, an optional revision, and one receipt."""
+        if (
+            sum(record.kind == RecordKind.RECIPE_OPERATION for record in creates) != 1
+            or sum(record.kind == RecordKind.FEEDBACK_REVISION for record in creates) > 1
+            or len(patches) != 1
+            or set(patches[0][1].fields)
+            != {"rating", "note", "feedbackRevision", "processingStatus"}
+        ):
+            raise ValueError("A feedback batch requires one receipt and one feedback patch.")
+        return await self._commit_history(
+            user,
+            ProductContainer.RECIPE_HISTORY,
+            creates,
+            patches,
+            create_kinds={RecordKind.RECIPE_OPERATION, RecordKind.FEEDBACK_REVISION},
+            patch_kinds={RecordKind.RECIPE},
+        )
+
     async def _commit_history(
         self,
         user: AuthenticatedUser,

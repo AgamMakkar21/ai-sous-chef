@@ -56,6 +56,7 @@ class ErrorCategory(StrEnum):
     REVISION_CONFLICT = "revision_conflict"
     DUPLICATE_RESOURCE = "duplicate_resource"
     RECORD_TOO_LARGE = "record_too_large"
+    FEEDBACK_REQUIRES_COOKING = "feedback_requires_cooking"
     BODY_TOO_LARGE = "body_too_large"
     INVALID_CURSOR = "invalid_cursor"
     IDEMPOTENCY_CONFLICT = "idempotency_conflict"

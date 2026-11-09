@@ -11,6 +11,7 @@ from sous_chef.domain.chat import SendConflict
 from sous_chef.domain.context import ContextLimitExceeded
 from sous_chef.domain.conversations import IdempotencyConflict, InvalidCursor
 from sous_chef.domain.cosmos import CosmosError, CosmosFailure
+from sous_chef.domain.feedback import FeedbackRequiresCooking
 from sous_chef.domain.groceries import GROCERY_FIELDS, DuplicateGrocery, GroceryLimitReached
 from sous_chef.domain.profiles import PREFERENCE_FIELDS, OnboardingRequired
 from sous_chef.domain.recipe_lifecycle import RecipeLifecycleConflict
@@ -44,6 +45,17 @@ def problem_response(
 
 
 def register_problem_handlers(app: FastAPI) -> None:
+    @app.exception_handler(FeedbackRequiresCooking)
+    async def feedback_requires_cooking(
+        _request: Request, _exc: FeedbackRequiresCooking
+    ) -> JSONResponse:
+        return problem_response(
+            409,
+            "feedback_requires_cooking",
+            "Confirm cooking first",
+            "Mark this recipe as cooked before submitting feedback.",
+        )
+
     @app.exception_handler(RecipeSafetyError)
     async def recipe_safety(_request: Request, _exc: RecipeSafetyError) -> JSONResponse:
         return problem_response(

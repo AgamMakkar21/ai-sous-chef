@@ -242,9 +242,10 @@ Transactions are limited to one container and logical partition; sharing
 | `RecipeHistory.feedbackRevision` | History/occasion reference, feedback revision, current rating/note at that revision, superseded revision reference, processing provenance |
 | `RecipeHistory.processing` | Owned source/revision, policy version, status/attempts, validated evidence references, result/receipt and safe failure classification |
 
-The [ASC-42 lifecycle guide](../recipe-lifecycle.md) documents the implemented
-save, cooking, rejection and revision mutations, including their replay and
-ETag rules. History GETs and feedback remain separate deliverables.
+The [lifecycle and feedback guide](../recipe-lifecycle.md) documents the implemented
+save, cooking, rejection, revision and feedback mutations plus history GETs,
+including their replay, ETag and immutable feedback-event rules. Asynchronous
+learning remains a separate deliverable.
 
 Provider response and optional provider conversation IDs are internal references
 to New Foundry Responses/Conversations, not classic Threads/Runs. Map them

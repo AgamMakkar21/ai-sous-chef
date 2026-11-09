@@ -20,6 +20,7 @@ Reason = Annotated[
     str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=2000)
 ]
 BehaviorKind = Literal["saved", "rejected", "revisionRequested"]
+Rating = Literal["liked", "fine", "disliked"]
 
 
 class SaveRecipe(ConversationModel):
@@ -60,7 +61,7 @@ class RecipeHistory(LifecycleModel):
     accepted: Literal[True] = True
     saved_at: AwareDatetime
     cooked_at: AwareDatetime | None
-    rating: Literal["liked", "fine", "disliked"] | None = None
+    rating: Rating | None = None
     note: Reason | None = Field(default=None, repr=False)
     feedback_revision: int = Field(default=0, ge=0, strict=True)
     processing_status: Literal["notEligible", "pending", "processing", "completed", "failed"]
