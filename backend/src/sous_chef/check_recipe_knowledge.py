@@ -622,7 +622,12 @@ def check(
 ) -> tuple[UUID, int]:
     if settings.environment != "dev" or not re.fullmatch(r"[1-9][0-9]{0,9}", version):
         raise ConfigurationError("Select dev and an explicit numeric specialist source version.")
-    source = prepare_agent_source(settings, AgentRole.RECIPE_NUTRITION, phase=RecipePhase.RETRIEVAL)
+    phase = (
+        RecipePhase.COMBINED
+        if settings.foundry_recipe_nutrition_mode == "combined"
+        else RecipePhase.RETRIEVAL
+    )
+    source = prepare_agent_source(settings, AgentRole.RECIPE_NUTRITION, phase=phase)
     knowledge = RecipeKnowledgeConfig.from_settings(settings)
     identities = resolve_agent_identities(settings, project.agents)
     identity = next(item for item in identities if item.role == AgentRole.RECIPE_NUTRITION)

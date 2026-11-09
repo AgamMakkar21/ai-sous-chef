@@ -296,6 +296,18 @@ def validate_runtime(pins: dict[str, Any]) -> None:
         for role in delivery.ROLES
         for field in ("NAME", "VERSION", "PRINCIPAL_ID")
     }
+    mode_key = "ASC_FOUNDRY_RECIPE_NUTRITION_MODE"
+    phase_keys = {
+        "ASC_FOUNDRY_RECIPE_NUTRITION_RETRIEVAL_AGENT_VERSION",
+        "ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION",
+    }
+    mode = pins.get(mode_key)
+    if mode == "combined":
+        agent_keys.add(mode_key)
+    elif mode == "phased":
+        agent_keys |= {mode_key, *phase_keys}
+    elif mode is not None:
+        raise delivery.DeliveryError("Runtime recipe mode must be phased or combined.")
     require(
         pins.get("ASC_AGENTS_ENABLED") in {"true", "false"}
         and set(pins) == (common | agent_keys if pins["ASC_AGENTS_ENABLED"] == "true" else common)
@@ -306,6 +318,17 @@ def validate_runtime(pins: dict[str, Any]) -> None:
     identities = [pins["ASC_APP_WORKLOAD_PRINCIPAL_ID"].lower()]
     names = []
     if pins["ASC_AGENTS_ENABLED"] == "true":
+        if mode == "phased":
+            versions = [pins.get(field, "") for field in phase_keys]
+            versions.append(pins.get("ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION", ""))
+            require(
+                all(
+                    isinstance(version, str) and re.fullmatch(r"[1-9][0-9]{0,9}", version)
+                    for version in versions
+                )
+                and len(set(versions)) == 3,
+                "Runtime specialist phase versions must be explicit and distinct.",
+            )
         for role in delivery.ROLES:
             prefix = f"ASC_FOUNDRY_{role.upper()}_AGENT_"
             require(

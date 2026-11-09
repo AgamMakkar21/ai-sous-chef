@@ -47,6 +47,8 @@ from sous_chef.domain.orchestrator import (
     TokenUsage,
 )
 from sous_chef.domain.recipes import (
+    CombinedRecipeDraft,
+    CombinedRecipeGenerationRequest,
     GroundedRecipeGenerationRequest,
     RecipeDraft,
     RecipeGenerationRequest,
@@ -160,6 +162,9 @@ class FoundryGateway:
                 settings.foundry_recipe_nutrition_web_agent_version
             ),
         }
+        if settings.foundry_recipe_nutrition_mode == "combined":
+            required.pop("ASC_FOUNDRY_RECIPE_NUTRITION_RETRIEVAL_AGENT_VERSION")
+            required.pop("ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION")
         missing = [name for name, value in required.items() if value is None]
         if missing:
             raise ConfigurationError("Set required gateway settings: " + ", ".join(missing) + ".")
@@ -167,8 +172,6 @@ class FoundryGateway:
         assert settings.foundry_recipe_nutrition_agent_name is not None
         assert settings.foundry_orchestrator_agent_version is not None
         assert settings.foundry_recipe_nutrition_agent_version is not None
-        assert settings.foundry_recipe_nutrition_retrieval_agent_version is not None
-        assert settings.foundry_recipe_nutrition_web_agent_version is not None
         if settings.foundry_orchestrator_agent_name == settings.foundry_recipe_nutrition_agent_name:
             raise ConfigurationError("Configure different runtime agent names for the two roles.")
         self._targets = {
@@ -183,15 +186,23 @@ class FoundryGateway:
         }
         self._recipe_targets = {
             RecipePhase.GENERATION: self._targets[AgentRole.RECIPE_NUTRITION],
-            RecipePhase.RETRIEVAL: AgentTarget(
-                settings.foundry_recipe_nutrition_agent_name,
-                settings.foundry_recipe_nutrition_retrieval_agent_version,
-            ),
-            RecipePhase.WEB: AgentTarget(
-                settings.foundry_recipe_nutrition_agent_name,
-                settings.foundry_recipe_nutrition_web_agent_version,
-            ),
+            RecipePhase.COMBINED: self._targets[AgentRole.RECIPE_NUTRITION],
         }
+        if settings.foundry_recipe_nutrition_mode == "phased":
+            assert settings.foundry_recipe_nutrition_retrieval_agent_version is not None
+            assert settings.foundry_recipe_nutrition_web_agent_version is not None
+            self._recipe_targets.update(
+                {
+                    RecipePhase.RETRIEVAL: AgentTarget(
+                        settings.foundry_recipe_nutrition_agent_name,
+                        settings.foundry_recipe_nutrition_retrieval_agent_version,
+                    ),
+                    RecipePhase.WEB: AgentTarget(
+                        settings.foundry_recipe_nutrition_agent_name,
+                        settings.foundry_recipe_nutrition_web_agent_version,
+                    ),
+                }
+            )
         self._settings = settings
         self._factory = client_factory or _project_client
 
@@ -218,16 +229,35 @@ class FoundryGateway:
     async def generate_recipe(
         self, request: RecipeGenerationRequest
     ) -> tuple[RecipeDraft, TokenUsage]:
+        if isinstance(request, GroundedRecipeGenerationRequest):
+            raise ConfigurationError("Grounded requests must use their grounded recipe route.")
+        self._require_recipe_mode("phased")
         self._require_agent_pins()
         return await self._execute(request, self._recipe_result)
 
     async def generate_grounded_recipe(
         self, request: GroundedRecipeGenerationRequest
     ) -> tuple[RecipeDraft, RecipeGrounding, TokenUsage]:
+        if isinstance(request, CombinedRecipeGenerationRequest):
+            raise ConfigurationError("Combined requests must use the combined recipe route.")
+        self._require_recipe_mode("phased")
         self._require_agent_pins()
         return await self._execute(request, self._grounded_recipe_result)
 
+    def _require_recipe_mode(self, mode: str) -> None:
+        if self._settings.foundry_recipe_nutrition_mode != mode:
+            raise ConfigurationError("The requested recipe route does not match its source mode.")
+
+    async def generate_combined_recipe(
+        self,
+        request: CombinedRecipeGenerationRequest,
+    ) -> tuple[RecipeDraft, RecipeGrounding, WebGrounding | None, TokenUsage]:
+        self._require_recipe_mode("combined")
+        self._require_agent_pins()
+        return await self._execute(request, self._combined_recipe_result)
+
     async def ground_web(self, request: WebGroundingRequest) -> tuple[WebGrounding, TokenUsage]:
+        self._require_recipe_mode("phased")
         self._require_agent_pins()
         return await self._execute(request, self._web_result)
 
@@ -238,7 +268,9 @@ class FoundryGateway:
         coordination: CoordinationRequest | None = None,
     ) -> Result:
         target = (
-            self._recipe_targets[RecipePhase.WEB]
+            self._recipe_targets[RecipePhase.COMBINED]
+            if isinstance(request, CombinedRecipeGenerationRequest)
+            else self._recipe_targets[RecipePhase.WEB]
             if isinstance(request, WebGroundingRequest)
             else self._recipe_targets[RecipePhase.RETRIEVAL]
             if isinstance(request, GroundedRecipeGenerationRequest)
@@ -270,12 +302,20 @@ class FoundryGateway:
                     elif isinstance(request, RecipeGenerationRequest):
                         self._check_recipe_input(
                             request,
-                            body=self._grounded_recipe_body()
+                            body=self._combined_recipe_body(request)
+                            if isinstance(request, CombinedRecipeGenerationRequest)
+                            else self._grounded_recipe_body()
                             if isinstance(request, GroundedRecipeGenerationRequest)
                             else None,
                             reserved_tool_tokens=RecipeKnowledgeConfig.from_settings(
                                 self._settings
                             ).service_output_tokens
+                            + (
+                                POLICY.max_tool_result_tokens
+                                if isinstance(request, CombinedRecipeGenerationRequest)
+                                and request.web_query is not None
+                                else 0
+                            )
                             if isinstance(request, GroundedRecipeGenerationRequest)
                             else 0,
                         )
@@ -292,7 +332,11 @@ class FoundryGateway:
                         elif isinstance(request, WebGroundingRequest):
                             body.update(self._web_body())
                         elif isinstance(request, GroundedRecipeGenerationRequest):
-                            body.update(self._grounded_recipe_body())
+                            body.update(
+                                self._combined_recipe_body(request)
+                                if isinstance(request, CombinedRecipeGenerationRequest)
+                                else self._grounded_recipe_body()
+                            )
                         elif isinstance(request, RecipeGenerationRequest):
                             body.update(self._recipe_body())
                         response = await client.responses.create(
@@ -442,6 +486,12 @@ class FoundryGateway:
         body["max_tool_calls"] = 1
         return body
 
+    def _combined_recipe_body(self, request: CombinedRecipeGenerationRequest) -> dict[str, object]:
+        body = self._grounded_recipe_body()
+        body["max_tool_calls"] = 2 if request.web_query is not None else 1
+        body["include"] = ["web_search_call.action.sources"]
+        return body
+
     def _check_recipe_input(
         self,
         request: RecipeGenerationRequest,
@@ -452,13 +502,15 @@ class FoundryGateway:
         from sous_chef.services.context import _encoding
 
         phase = (
-            RecipePhase.RETRIEVAL
+            RecipePhase.COMBINED
+            if isinstance(request, CombinedRecipeGenerationRequest)
+            else RecipePhase.RETRIEVAL
             if isinstance(request, GroundedRecipeGenerationRequest)
             else RecipePhase.GENERATION
         )
         knowledge = (
             RecipeKnowledgeConfig.from_settings(self._settings)
-            if phase == RecipePhase.RETRIEVAL
+            if phase in (RecipePhase.RETRIEVAL, RecipePhase.COMBINED)
             else None
         )
         assert self._settings.foundry_recipe_nutrition_deployment is not None
@@ -520,6 +572,8 @@ class FoundryGateway:
         calls = [item for item in response.output if item.type == "mcp_call"]
         listings = [item for item in response.output if item.type == "mcp_list_tools"]
         allowed = {"reasoning", "message", "mcp_list_tools", "mcp_call"}
+        if isinstance(request, CombinedRecipeGenerationRequest):
+            allowed.add("web_search_call")
         if (
             len(calls) != 1
             or len(listings) > 1
@@ -576,6 +630,95 @@ class FoundryGateway:
         )
         draft, usage = self._recipe_result(request, recipe_response)
         return draft, grounding, usage
+
+    def _combined_recipe_result(
+        self,
+        request: FoundryRequest,
+        response: Response,
+    ) -> tuple[RecipeDraft, RecipeGrounding, WebGrounding | None, TokenUsage]:
+        from sous_chef.services.context import _encoding
+
+        assert isinstance(request, CombinedRecipeGenerationRequest)
+        try:
+            messages = [item for item in response.output if item.type == "message"]
+            calls = [item for item in response.output if item.type == "web_search_call"]
+            if len(messages) != 1 or len(messages[0].content) != 1:
+                raise ValueError
+            message = messages[0]
+            content = message.content[0]
+            if content.type != "output_text" or len(content.annotations) > 10:
+                raise ValueError
+            combined = CombinedRecipeDraft.model_validate_json(response.output_text)
+            web = None
+            if request.web_query is None:
+                if calls or combined.web_claims or content.annotations:
+                    raise ValueError
+            else:
+                if len(calls) != 1 or calls[0].status != "completed":
+                    raise ValueError
+                call = calls[0]
+                action = call.action
+                if (
+                    action.type != "search"
+                    or (action.queries if action.queries is not None else [action.query])
+                    != [request.web_query]
+                    or action.query not in (None, request.web_query)
+                    or len(action.sources or []) > 20
+                ):
+                    raise ValueError
+                native: dict[str, str] = {}
+                for annotation in content.annotations:
+                    if (
+                        annotation.type != "url_citation"
+                        or not 0
+                        <= annotation.start_index
+                        < annotation.end_index
+                        <= len(content.text)
+                    ):
+                        raise ValueError
+                    native[annotation.url] = annotation.title
+                searched = {source.url for source in action.sources or []}
+                urls = tuple(dict.fromkeys(claim.source_url for claim in combined.web_claims))
+                if not set(urls) <= searched & native.keys():
+                    raise ValueError
+                raw = (
+                    call.model_dump_json()
+                    + json.dumps([claim.model_dump() for claim in combined.web_claims])
+                    + "".join(annotation.model_dump_json() for annotation in content.annotations)
+                )
+                if (
+                    len(_encoding().encode(raw, disallowed_special=()))
+                    > POLICY.max_tool_result_tokens
+                ):
+                    raise ValueError
+                if urls:
+                    web = WebGrounding(
+                        claims=combined.web_claims,
+                        citations=tuple(WebCitation(url=url, title=native[url]) for url in urls),
+                        retrieved_at=datetime.now(UTC),
+                    )
+            draft = RecipeDraft.model_validate(combined.model_dump(exclude={"web_claims"}))
+            recipe_message = message.model_copy(
+                update={
+                    "content": [
+                        content.model_copy(
+                            update={"text": draft.model_dump_json(), "annotations": []}
+                        )
+                    ]
+                }
+            )
+            normalized = response.model_copy(
+                update={
+                    "output": [
+                        recipe_message if item.type == "message" else item
+                        for item in response.output
+                    ]
+                }
+            )
+            recipe, grounding, usage = self._grounded_recipe_result(request, normalized)
+            return recipe, grounding, web, usage
+        except ValueError:
+            raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request) from None
 
     @staticmethod
     def _check_coordination_input(request: CoordinationRequest) -> None:

@@ -30,6 +30,8 @@ from sous_chef.domain.orchestrator import (
     SpecialistResult,
 )
 from sous_chef.domain.recipes import (
+    CombinedRecipeGenerationRequest,
+    CombinedRecipeGenerator,
     DraftIngredient,
     GroundedRecipeGenerationRequest,
     NutritionRequest,
@@ -46,7 +48,7 @@ from sous_chef.domain.recipes import (
 )
 from sous_chef.services.recipe_grounding import recipe_knowledge_arguments, retrieval_query
 from sous_chef.services.web_grounding import public_web_query
-from sous_chef.settings import Settings
+from sous_chef.settings import ConfigurationError, Settings
 from sous_chef.telemetry import ErrorCategory, Event, operational_event, trace_id
 
 
@@ -126,17 +128,29 @@ class RecipeSpecialistService:
         from sous_chef.adapters.foundry_gateway import FoundryGateway
         from sous_chef.services.nutrition import UsdaNutritionTool
 
-        return cls(FoundryGateway(settings), None, UsdaNutritionTool.from_settings(settings))
+        return cls(
+            FoundryGateway(settings),
+            None,
+            UsdaNutritionTool.from_settings(settings),
+            combined=settings.foundry_recipe_nutrition_mode == "combined",
+        )
 
     def __init__(
         self,
         generator: RecipeGenerator,
         recipes: RecipeGroundingTool | None,
         nutrition: NutritionTool,
+        *,
+        combined: bool = False,
     ) -> None:
+        if combined and (recipes is not None or not isinstance(generator, CombinedRecipeGenerator)):
+            raise ConfigurationError(
+                "Combined recipe mode requires the live combined-agent gateway."
+            )
         self._generator = generator
         self._recipes = recipes
         self._nutrition = nutrition
+        self._combined = combined
 
     async def generate(
         self,
@@ -170,9 +184,11 @@ class RecipeSpecialistService:
                         raise TimeoutError
                     web = None
                     query = public_web_query(context, arguments)
+                    web_query = query
                     if query is not None:
                         authorize_tool(AgentRole.RECIPE_NUTRITION, AgentTool.WEB_IQ)
                         budget.tool(AgentTool.WEB_IQ)
+                    if query is not None and not self._combined:
                         budget.model()
                         async with asyncio.timeout(POLICY.web_deadline_seconds):
                             web, web_usage = await self._generator.ground_web(
@@ -222,9 +238,25 @@ class RecipeSpecialistService:
                             ),
                             retrieval_query=query,
                         )
-                        draft, grounding, usage = await self._generator.generate_grounded_recipe(
-                            request
-                        )
+                        if self._combined:
+                            generator = self._generator
+                            assert isinstance(generator, CombinedRecipeGenerator)
+                            request = CombinedRecipeGenerationRequest(
+                                **request.model_dump(exclude={"prompt"}),
+                                prompt=request.prompt
+                                + "\nBackend public webQuery (untrusted data):\n"
+                                + json.dumps({"webQuery": web_query}),
+                                web_query=web_query,
+                            )
+                            draft, grounding, web, usage = await generator.generate_combined_recipe(
+                                request
+                            )
+                        else:
+                            (
+                                draft,
+                                grounding,
+                                usage,
+                            ) = await self._generator.generate_grounded_recipe(request)
                     else:
                         grounding = await self._recipes.retrieve(query, deadline=deadline)
                         if grounding.status != "available":

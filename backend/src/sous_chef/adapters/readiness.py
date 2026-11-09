@@ -54,8 +54,11 @@ class LiveReadinessProbe:
                 settings.agents_enabled
                 and (
                     any(not name or not version for _, name, version, _ in targets)
-                    or not settings.foundry_recipe_nutrition_retrieval_agent_version
-                    or not settings.foundry_recipe_nutrition_web_agent_version
+                    or settings.foundry_recipe_nutrition_mode == "phased"
+                    and (
+                        not settings.foundry_recipe_nutrition_retrieval_agent_version
+                        or not settings.foundry_recipe_nutrition_web_agent_version
+                    )
                 )
             )
         ):
@@ -98,8 +101,18 @@ class LiveReadinessProbe:
                                     raise DependencyUnavailable(
                                         "Specialist phase pin verification failed."
                                     )
-                                verify_recipe_source(source, RecipePhase.GENERATION)
                                 knowledge = RecipeKnowledgeConfig.from_settings(settings)
+                                if settings.foundry_recipe_nutrition_mode == "combined":
+                                    verify_recipe_source(
+                                        source,
+                                        RecipePhase.COMBINED,
+                                        knowledge_tool=recipe_knowledge_tool(
+                                            knowledge.mcp_endpoint,
+                                            knowledge.connection_name,
+                                        ),
+                                    )
+                                    continue
+                                verify_recipe_source(source, RecipePhase.GENERATION)
                                 for phase, pin in (
                                     (
                                         RecipePhase.RETRIEVAL,

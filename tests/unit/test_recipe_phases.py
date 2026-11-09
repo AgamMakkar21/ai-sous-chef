@@ -6,7 +6,7 @@ from azure.ai.projects.models import MCPTool, PromptAgentDefinition
 from sous_chef import publish_orchestrator
 from sous_chef.adapters.foundry_gateway import FoundryGateway
 from sous_chef.domain.agent_identity import AgentRole
-from sous_chef.domain.recipes import RecipeDraft, WebDraft
+from sous_chef.domain.recipes import CombinedRecipeDraft, RecipeDraft, WebDraft
 from sous_chef.publish_orchestrator import prepare_agent_source
 from sous_chef.recipe_definition import RecipePhase, verify_recipe_source
 from sous_chef.settings import ConfigurationError
@@ -19,19 +19,26 @@ def test_persisted_phase_has_only_its_capabilities_and_strict_output(phase: Reci
     definition = source.definition.as_dict()
     assert source.name == "recipe-agent"
     assert source.metadata["asc_recipe_phase"] == phase.value
-    assert source.metadata["asc_policy_version"] == "5"
+    assert source.metadata["asc_policy_version"] == ("6" if phase == RecipePhase.COMBINED else "5")
     assert definition["text"]["format"]["strict"] is True
-    expected_schema = WebDraft if phase == RecipePhase.WEB else RecipeDraft
+    expected_schema = (
+        CombinedRecipeDraft
+        if phase == RecipePhase.COMBINED
+        else WebDraft
+        if phase == RecipePhase.WEB
+        else RecipeDraft
+    )
     assert definition["text"]["format"]["schema"] == expected_schema.model_json_schema()
     assert definition["tool_choice"] == ("none" if phase == RecipePhase.GENERATION else "required")
     expected_type = {
         RecipePhase.GENERATION: [],
         RecipePhase.RETRIEVAL: ["mcp"],
         RecipePhase.WEB: ["web_search"],
+        RecipePhase.COMBINED: ["mcp", "web_search"],
     }[phase]
     assert [tool["type"] for tool in definition["tools"]] == expected_type
     tool = None
-    if phase == RecipePhase.RETRIEVAL:
+    if phase in (RecipePhase.RETRIEVAL, RecipePhase.COMBINED):
         assert source.definition.tools is not None
         assert isinstance(source.definition.tools[0], MCPTool)
         tool = source.definition.tools[0]

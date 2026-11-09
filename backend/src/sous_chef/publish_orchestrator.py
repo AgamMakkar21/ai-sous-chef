@@ -87,7 +87,7 @@ def prepare_agent_source(
             phase=phase,
             knowledge_tool=(
                 recipe_knowledge_tool(knowledge.mcp_endpoint, knowledge.connection_name)
-                if phase == RecipePhase.RETRIEVAL
+                if phase in (RecipePhase.RETRIEVAL, RecipePhase.COMBINED)
                 else None
             ),
         )

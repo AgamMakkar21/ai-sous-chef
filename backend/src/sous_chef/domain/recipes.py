@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Final, Literal, Protocol, Self
+from typing import TYPE_CHECKING, Annotated, Final, Literal, Protocol, Self, runtime_checkable
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -325,6 +325,10 @@ class WebDraft(RecipeModel):
     claims: tuple[WebClaim, ...] = Field(max_length=3, repr=False)
 
 
+class CombinedRecipeDraft(RecipeDraft):
+    web_claims: tuple[WebClaim, ...] = Field(max_length=3, repr=False)
+
+
 class WebCitation(RecipeModel):
     url: str = Field(min_length=1, max_length=500, repr=False)
     title: Text = Field(repr=False)
@@ -420,6 +424,10 @@ class GroundedRecipeGenerationRequest(RecipeGenerationRequest):
     retrieval_query: str = Field(min_length=1, max_length=2000, repr=False)
 
 
+class CombinedRecipeGenerationRequest(GroundedRecipeGenerationRequest):
+    web_query: str | None = Field(min_length=1, max_length=240, default=None, repr=False)
+
+
 class WebGroundingRequest(FoundryRequest):
     role: Literal[AgentRole.RECIPE_NUTRITION]
     prompt: str = Field(min_length=1, max_length=240, pattern=r"\S", repr=False)
@@ -440,6 +448,14 @@ class RecipeGenerator(Protocol):
 
 class RecipeGroundingTool(Protocol):
     async def retrieve(self, requirements: str, *, deadline: float) -> RecipeGrounding: ...
+
+
+@runtime_checkable
+class CombinedRecipeGenerator(Protocol):
+    async def generate_combined_recipe(
+        self,
+        request: CombinedRecipeGenerationRequest,
+    ) -> tuple[RecipeDraft, RecipeGrounding, WebGrounding | None, TokenUsage]: ...
 
 
 class NutritionTool(Protocol):

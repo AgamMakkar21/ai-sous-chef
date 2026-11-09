@@ -17,7 +17,7 @@ from azure.identity import AzureCliCredential
 from sous_chef.adapters.agent_identity import resolve_agent_identities
 from sous_chef.domain.agent_identity import AgentRole, IdentityError
 from sous_chef.publish_orchestrator import AgentSource, prepare_agent_source
-from sous_chef.recipe_definition import RECIPE_KNOWLEDGE_TOOL, RecipePhase
+from sous_chef.recipe_definition import RECIPE_KNOWLEDGE_TOOL, RecipePhase, web_search_tool
 from sous_chef.settings import ConfigurationError, Settings, load_settings
 from sous_chef.telemetry import configure_safe_telemetry
 
@@ -144,6 +144,57 @@ def definition_difference_paths(
     return [] if expected == actual else [path]
 
 
+def source_capabilities(definition: dict[str, object]) -> dict[str, object]:
+    """Report bounded known capability settings, never instructions, URLs or custom values."""
+    tools = definition.get("tools")
+    if not isinstance(tools, list):
+        return {"tools_shape_valid": False}
+    summaries: list[dict[str, object]] = []
+    for tool in tools[:8]:
+        if not isinstance(tool, dict):
+            summaries.append({"type": "<unrecognized>"})
+            continue
+        kind = tool.get("type")
+        summary: dict[str, object] = {
+            "type": kind
+            if kind in ("mcp", "web_search", "web_search_preview", "function")
+            else "<unrecognized>",
+        }
+        if kind in ("web_search", "web_search_preview"):
+            summary["matches_reviewed_web_tool"] = tool == web_search_tool().as_dict()
+            size = tool.get("search_context_size")
+            summary["search_context_size"] = (
+                size if size in ("low", "medium", "high") else "<unrecognized>"
+            )
+            access = tool.get("external_web_access")
+            summary["external_web_access"] = access if type(access) is bool else "<unrecognized>"
+            summary["filters_present"] = tool.get("filters") is not None
+            summary["user_location_present"] = tool.get("user_location") is not None
+        summaries.append(summary)
+    choice = definition.get("tool_choice")
+    result: dict[str, object] = {
+        "tools": summaries,
+        "tools_omitted": max(0, len(tools) - 8),
+        "tool_choice": choice if choice in ("none", "auto", "required") else "<unrecognized>",
+    }
+    reasoning = definition.get("reasoning")
+    if isinstance(reasoning, dict):
+        effort = reasoning.get("effort")
+        summary_mode = reasoning.get("summary")
+        result["reasoning"] = {
+            "effort": effort
+            if effort in ("none", "minimal", "low", "medium", "high", "xhigh")
+            else "<unrecognized>",
+            "summary": summary_mode
+            if summary_mode in (None, "auto", "concise", "detailed")
+            else "<unrecognized>",
+            "other_fields_present": bool(reasoning.keys() - {"effort", "summary"}),
+        }
+    else:
+        result["reasoning_present"] = reasoning is not None
+    return result
+
+
 def inspect_sources(
     settings: Settings,
     project: AIProjectClient,
@@ -190,6 +241,7 @@ def inspect_sources(
             ],
         }
         if role == AgentRole.RECIPE_NUTRITION:
+            report["capabilities"] = source_capabilities(version.definition.as_dict())
             tools = version.definition.as_dict().get("tools", [])
             report["retrieval_only_filter_encoding"] = (
                 isinstance(tools, list)

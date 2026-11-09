@@ -50,6 +50,63 @@ def settings() -> Settings:
     )
 
 
+@pytest.mark.parametrize("drift", [False, True])
+def test_combined_readiness_checks_only_the_single_reviewed_specialist_source(drift: bool) -> None:
+    config = settings().model_copy(
+        update={
+            "foundry_recipe_nutrition_mode": "combined",
+            "foundry_recipe_nutrition_retrieval_agent_version": None,
+            "foundry_recipe_nutrition_web_agent_version": None,
+        }
+    )
+    knowledge = RecipeKnowledgeConfig.from_settings(config)
+    definition = build_recipe_definition(
+        "recipe-nutrition",
+        "approved-policy",
+        phase=RecipePhase.COMBINED,
+        knowledge_tool=recipe_knowledge_tool(knowledge.mcp_endpoint, knowledge.connection_name),
+    )
+    metadata = recipe_source_metadata(definition, RecipePhase.COMBINED)
+    if drift:
+        metadata["asc_recipe_phase"] = "retrieval"
+    source = AgentVersionDetails(
+        {
+            "name": "recipe",
+            "version": "3",
+            "status": "active",
+            "draft": False,
+            "definition": definition.as_dict(),
+            "metadata": metadata,
+        }
+    )
+    credential, cosmos_context, project_context = AsyncMock(), AsyncMock(), AsyncMock()
+    cosmos, project = MagicMock(), MagicMock()
+    cosmos_context.__aenter__.return_value = cosmos
+    project_context.__aenter__.return_value = project
+    cosmos.get_database_client.return_value.get_container_client.return_value.read = AsyncMock()
+    details = []
+    for role in ("orchestrator", "recipe"):
+        agent = MagicMock()
+        agent.state = "enabled"
+        agent.instance_identity.principal_id = role
+        agent.instance_identity.client_id = role + "-client"
+        details.append(agent)
+    project.agents.get = AsyncMock(side_effect=details)
+    project.agents.get_version = AsyncMock(side_effect=[MagicMock(), source])
+    with (
+        patch("sous_chef.adapters.readiness.build_async_credential", return_value=credential),
+        patch("sous_chef.adapters.readiness.CosmosClient", return_value=cosmos_context),
+        patch("sous_chef.adapters.readiness.AIProjectClient", return_value=project_context),
+    ):
+        if drift:
+            with pytest.raises(DependencyUnavailable):
+                asyncio.run(LiveReadinessProbe(config).check())
+        else:
+            asyncio.run(LiveReadinessProbe(config).check())
+    assert project.agents.get_version.await_count == 2
+    project.get_openai_client.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "failure", ["none", "cosmos", "foundry", "shared", "disabled", "pinned", "phase"]
 )
@@ -108,7 +165,15 @@ def test_live_probe_reads_only_metadata_and_fails_closed(failure: str, session_a
         )
     ]
     knowledge = RecipeKnowledgeConfig.from_settings(config)
-    for number, phase in zip(("3", "4", "5"), RecipePhase, strict=True):
+    for number, phase in zip(
+        ("3", "4", "5"),
+        (
+            RecipePhase.GENERATION,
+            RecipePhase.RETRIEVAL,
+            RecipePhase.WEB,
+        ),
+        strict=True,
+    ):
         definition = build_recipe_definition(
             "recipe-nutrition",
             "approved-policy",

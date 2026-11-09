@@ -1,6 +1,6 @@
 # Recipe + Nutrition structured output and grounding (ASC-26 / ASC-30 / ASC-34)
 
-This slice implements the GPT-5.4 specialist's version-5 source policy, strict
+This slice implements the GPT-5.4 specialist's version-6 combined source policy, strict
 draft/full-recipe schemas, one-call New Foundry generation, backend enrichment,
 identity-bound Foundry IQ recipe retrieval and conditional Web IQ. It does not activate chat
 or an Azure release, save/cook a recipe, or replace
@@ -9,13 +9,59 @@ the final full-recipe safety gate.
 chat completion/save-preparation boundaries. No model/tool availability research or
 alternative provider is required.
 
+## Combined recipe agent with native web search
+
+The current dev design keeps recipe MCP retrieval and **native web search on the
+same Recipe + Nutrition agent version**. Set
+`ASC_FOUNDRY_RECIPE_NUTRITION_MODE=combined` and pin its reviewed
+`ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION`. Separate retrieval/web pins are not
+required or used in this mode. The default `phased` mode remains available for
+existing releases; the phase-specific sections below describe that legacy route.
+
+The Orchestrator delegates once to this combined specialist. That one Responses
+invocation retrieves curated evidence exactly once and may perform one native
+web search for the backend's authorized public query. An ordinary request has
+`webQuery=null` and permits only the recipe MCP call. Native web search is not a
+backend function or an A2A connection, and no separate Web IQ model invocation
+occurs. Current-information query authorization is unchanged; this does not
+introduce general web-based recipe inspiration.
+
+The combined strict output is `combined_recipe_draft_v1`: the existing recipe
+draft plus `webClaims` (at most three short claims with `sourceUrl`). The backend
+checks the native search query, single-search count, completion, retrieved URLs,
+URL annotations, citation spans and web-result budget. It attaches validated web
+grounding separately, then runs the existing USDA MCP calculation, source/quantity
+mapping checks, Orchestrator review and deterministic final safety gate. Web
+citations cannot become curated recipe source IDs, USDA evidence or safety approval.
+
+**Privacy and enforcement boundary:** the same Foundry invocation receives the
+private personalization context and has the native web tool available. Published
+instructions require the public query unchanged and forbid private context in
+searches. The backend validates queries only after Foundry has executed them;
+it cannot pre-approve native searches or undo an outgoing query. A rejected
+response is not proof that private data was never searched. This is intentionally
+different from the isolated web phase; do not describe combined mode as providing
+that phase's pre-search privacy isolation. No live combined invocation was made
+while implementing this change.
+
+Combined source policy 6 has its own exact definition/phase/fingerprint checks.
+Manually attaching web search to an older retrieval version is not sufficient:
+the old instructions/output schema and stale fingerprint metadata do not meet
+this contract. Preserve existing agent identities and versions, and publish a
+reviewed combined source using `--phase combined`; retain its returned version
+without assuming the next number. Native reasoning configuration changes also
+require review rather than silently accepting source drift.
+
 ## Execution and tool boundaries
 
 `RecipeSpecialistService` implements the existing `RecipeSpecialist` protocol.
 For live retrieval, construct it with `RecipeSpecialistService(gateway, None, nutrition)`,
 where `gateway` is the configured `FoundryGateway` and `nutrition` is an explicit
 `NutritionTool`. `RecipeSpecialistService.from_settings(settings)` now constructs
-that live gateway with `UsdaNutritionTool`; see [USDA setup](#usda-nutrition-asc-32).
+that live gateway with `UsdaNutritionTool` and selects combined mode from settings;
+manual combined composition also requires `combined=True`. See [USDA setup](#usda-nutrition-asc-32).
+The normal chat executor also passes the configured mode to its specialist, so
+authenticated conversation requests use the same combined route as direct composition.
 Passing a `RecipeGroundingTool` instead of `None` retains the
 backend-supplied evidence seam for offline fixtures.
 The interfaces are explicit dependencies; there is no default successful tool
@@ -34,17 +80,20 @@ It uses `AzureCliCredential` explicitly as an administrative test initiator,
 checks the selected source and distinct identities, and reads connection metadata
 without requesting secrets. The connection must use agentic identity and the
 configured knowledge-base MCP target.
-The version must be a newly verified **retrieval** phase source, not an older
-combined-tools source or a generation/web source. Phase, complete definition and
+The version must be the newly verified **combined** source in combined mode, or
+the **retrieval** phase in legacy phased mode, not a manually changed old source
+or a generation/web source. Phase, complete definition and
 fingerprint checks fail before any Responses call when that pin is wrong.
 
 The check makes one non-retried Responses request to the exact specialist
-name/version, inherits its published retrieval-only capabilities, permits at most one
+name/version, inherits its published capabilities, permits at most one
 `knowledge_base_retrieve` call and uses only the fixed public query `rice dinner`.
 Its exact arguments are `{"query_variants":["rice dinner"]}`, matching the
 Search MCP input schema. The array must contain that one unchanged string;
 extra variants, additional fields and the legacy `query` field are rejected.
-No Web or USDA call, source publication, role assignment, resource configuration
+The fixed check does not authorize web; any returned web call is rejected. With a
+combined native-web source that is a post-call rejection, not a pre-execution
+disable of the attached tool. No USDA call, source publication, role assignment, resource configuration
 or runtime activation occurs. Provider storage is disabled. The response must
 complete within the configured SDK timeout and token limits, use the expected
 query/tool, and return nonempty recipe grounding that passes the existing
@@ -456,6 +505,10 @@ fit a budget. Conditional web requests use the additional bounded stage below.
 
 ## Conditional Web IQ
 
+The separate Web IQ invocation described in this section is the legacy
+`phased` route. Combined mode uses the native search in its recipe invocation,
+the same authorized public-query rules, and the post-execution checks above.
+
 Ordinary pantry recipes and USDA-backed nutrition amounts do not enable web tools.
 The Orchestrator's strict routing function supplies `web_query=null` with
 `use_web=false`. For explicitly current information, such as a recall, seasonal
@@ -715,7 +768,12 @@ try {
 }
 ```
 
-Repeat as separate approved runs with `--phase web` and `--phase generation`.
+For the current combined design, use `--phase combined` instead of `retrieval`
+in the command above, then verify that returned version with
+`--phase combined --verify-version <printed-version>`. This keeps both native
+web search and recipe MCP on the same agent.
+
+For legacy phased releases, repeat as separate approved runs with `--phase web` and `--phase generation`.
 Retain each printed numeric version; publication does not assume the next number.
 Read back every selected phase without writing or invoking a model:
 `python -m sous_chef.publish_orchestrator --agent recipe_nutrition --phase <phase> --verify-version <printed-version>`.
@@ -732,12 +790,14 @@ explicit `AzureCliCredential` pattern; application runtime remains
 managed-identity-first. An ambiguous publication error must be inspected before
 retrying. The command changes no app runtime flags or release manifest.
 
-Keep `deploy/agents.dev.json` disabled until the remaining live tool adapters and chat/final
-safety composition are ready. Later work must inject those adapters, retain
-budget enforcement and identity separation, and pin the approved source version
-in a schema-version-3 peer-reviewed release. Existing combined-tools versions are
-retained but cannot be used as phase pins. No deployment or live grounding was performed by
-implementing this slice.
+The current `deploy/agents.dev.json` candidate pins read-back-verified combined
+source 5 and Orchestrator source 1 in an enabled schema-version-4 release
+(schema version 3 remains the legacy phased format). Live adapters and final
+safety are composed by the backend; publishing a source or preparing this manifest
+does not deploy that backend or prove end-to-end UI acceptance. Existing manually
+modified combined-tool versions are retained, but do not use them unless they match
+the reviewed combined contract. Deploy the compatible backend and runtime pins
+together before testing a real UI request.
 
 ## One-time Foundry IQ setup for ASC-30
 
