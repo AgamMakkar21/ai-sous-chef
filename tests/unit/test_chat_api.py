@@ -9,6 +9,7 @@ from typing import Any, Literal
 from uuid import UUID, uuid4
 
 import pytest
+import tiktoken
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 from sous_chef.adapters.cosmos import CosmosRepository, open_cosmos
@@ -26,6 +27,7 @@ from sous_chef.domain.cosmos import (
 from sous_chef.domain.recipe_safety import UNABLE, RecipeSafetyError
 from sous_chef.domain.recipes import StructuredRecipe
 from sous_chef.services import chat
+from sous_chef.services import context as request_context
 from sous_chef.services.orchestrator import OrchestratorService
 from sous_chef.services.recipe_chat import RecipeChatExecutor
 from sous_chef.services.recipe_safety import prepare_recipe_save
@@ -133,6 +135,45 @@ def send(
 
 def documents(transport: Transport, kind: str) -> list[dict[str, Any]]:
     return [record for record in transport.documents.values() if record["recordKind"] == kind]
+
+
+def test_cold_tokenizer_initialization_does_not_consume_chat_admission_budget(
+    conversation_settings: Settings,
+    auth_headers: dict[str, str],
+    executor: FakeExecutor,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sous_chef.adapters import cosmos
+
+    encoding = request_context._encoding()
+    request_context._encoding.cache_clear()
+    elapsed = 0.0
+    initializations = 0
+
+    def initialize(name: str) -> tiktoken.Encoding:
+        nonlocal elapsed, initializations
+        assert name == "o200k_base"
+        with pytest.raises(RuntimeError, match="no running event loop"):
+            asyncio.get_running_loop()
+        initializations += 1
+        elapsed += 6
+        return encoding
+
+    monkeypatch.setattr(tiktoken, "get_encoding", initialize)
+    monkeypatch.setattr(cosmos, "monotonic", lambda: monotonic() + elapsed)
+    monkeypatch.setattr(chat, "monotonic", lambda: monotonic() + elapsed)
+    try:
+        with TestClient(
+            create_app(conversation_settings, chat_executor=executor), headers=auth_headers
+        ) as client:
+            onboard(client)
+            conversation = create(client)
+            response = send(client, conversation)
+            assert response.status_code == 200, response.text
+            assert response.json()["data"]["status"] == "completed"
+            assert initializations == len(executor.calls) == 1
+    finally:
+        request_context._encoding.cache_clear()
 
 
 def test_durable_exchange_replays_after_app_restart_without_executor(

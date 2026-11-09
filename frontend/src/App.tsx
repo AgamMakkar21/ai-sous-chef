@@ -374,6 +374,14 @@ export default function App() {
                             key={ready.session.userId}
                             session={ready.session}
                             onExpired={expire}
+                            onSession={(session) =>
+                              setState((current) =>
+                                current.kind === "ready" &&
+                                current.session.userId === session.userId
+                                  ? { ...current, session }
+                                  : current,
+                              )
+                            }
                           />
                         </>
                       ) : (

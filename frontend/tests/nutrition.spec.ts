@@ -215,6 +215,73 @@ for (const state of ["unavailable", "no-energy", "zero"] as const) {
   });
 }
 
+for (const renewal of [
+  "success",
+  "signed-out",
+  "different-user",
+  "unavailable",
+] as const) {
+  test(`nutrition renews CSRF without replay when renewal is ${renewal}`, async ({
+    page,
+  }) => {
+    const { state, writes } = await backend(page);
+    let calls = 0;
+    await page.route("**/api/v1/nutrition/lookup", async (route) => {
+      calls++;
+      if (calls === 1) {
+        await route.fulfill({
+          status: 403,
+          json: { code: "csrf_failed", detail: "private-provider-details" },
+        });
+      } else {
+        expect(route.request().headers()["x-csrf-token"]).toBe("r".repeat(43));
+        await route.fulfill({ json: { data: evidence() } });
+      }
+    });
+    await page.goto("/");
+    await expect(page.getByLabel("USDA ingredient name")).toBeVisible();
+    state.token = "r".repeat(43);
+    if (renewal === "different-user") state.sessionUser = "different-user";
+    if (renewal === "signed-out" || renewal === "unavailable") {
+      await page.route("**/auth/session", (route) =>
+        route.fulfill({
+          status: renewal === "signed-out" ? 401 : 503,
+          json: { code: "unavailable" },
+        }),
+      );
+    }
+    await lookup(page);
+    if (renewal === "signed-out" || renewal === "different-user") {
+      await expect(
+        page.getByRole("link", { name: "Sign in", exact: true }),
+      ).toBeVisible();
+      await expect(page.getByLabel("USDA ingredient name")).toHaveCount(0);
+    } else {
+      await expect(page.getByRole("alert")).toContainText(
+        renewal === "success" ? "It has been renewed" : "could not be renewed",
+      );
+      await expect(page.locator(".ingredient-nutrition-result")).toHaveCount(0);
+      await expect(page.getByLabel("USDA ingredient name")).toHaveValue(
+        "Carrots, raw",
+      );
+    }
+    expect(calls).toBe(1);
+    expect(writes).toHaveLength(0);
+    await expect(page.locator("body")).not.toContainText(
+      "private-provider-details",
+    );
+    if (renewal === "success") {
+      await page
+        .getByRole("button", { name: "Look up calories", exact: true })
+        .click();
+      await expect(page.locator(".ingredient-nutrition-result")).toContainText(
+        "41 kcal",
+      );
+      expect(calls).toBe(2);
+    }
+  });
+}
+
 for (const failure of [
   "unavailable",
   "timeout",
