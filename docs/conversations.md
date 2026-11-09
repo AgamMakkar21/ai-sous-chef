@@ -56,6 +56,11 @@ python -c "import tiktoken; tiktoken.get_encoding('o200k_base')"
 Keep that cache available at runtime (do not commit it). The initial download is
 public vocabulary data only; no profile, prompt, credential or chat is sent.
 An unavailable tokenizer is not replaced with a character-count estimate.
+When chat is configured, application startup initializes this cached encoder in a
+worker thread before accepting requests. Cold vocabulary loading must not block
+the event loop or consume the shared five-second Cosmos admission budget.
+Tokenizer initialization failures prevent startup rather than becoming a misleading
+first-send database timeout. Database and overall send deadlines are unchanged.
 
 To fit the ceiling, remove oldest *complete* exchanges first, then lowest-ranked
 learned preferences, then lowest-priority grocery rows. Groceries are ranked by

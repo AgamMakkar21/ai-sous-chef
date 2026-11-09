@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ApiError } from "./api";
+import { ApiError, getSession } from "./api";
 import {
   lookupNutrition,
   searchNutrition,
@@ -9,10 +9,18 @@ import {
 } from "./nutrition";
 import type { Session } from "./profile";
 
-type Props = { session: Session; onExpired: () => void };
+type Props = {
+  session: Session;
+  onExpired: () => void;
+  onSession: (session: Session) => void;
+};
 type Result = IngredientNutrition & { name: string };
 
-export default function IngredientLookup({ session, onExpired }: Props) {
+export default function IngredientLookup({
+  session,
+  onExpired,
+  onSession,
+}: Props) {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
@@ -62,6 +70,29 @@ export default function IngredientLookup({ session, onExpired }: Props) {
       if (controller.signal.aborted) return;
       if (failure instanceof ApiError && failure.status === 401) {
         onExpired();
+        return;
+      }
+      if (failure instanceof ApiError && failure.code === "csrf_failed") {
+        try {
+          const renewed = await getSession(controller.signal);
+          if (controller.signal.aborted) return;
+          if (renewed.userId !== session.userId) {
+            onExpired();
+            return;
+          }
+          onSession(renewed);
+          setError(
+            "Your security token changed. It has been renewed; press Look up calories again. No lookup was replayed.",
+          );
+        } catch (renewalError) {
+          if (controller.signal.aborted) return;
+          if (renewalError instanceof ApiError && renewalError.status === 401)
+            onExpired();
+          else
+            setError(
+              "The security session could not be renewed. Refresh this page before trying again.",
+            );
+        }
         return;
       }
       setError(

@@ -137,6 +137,13 @@ No additional environment settings, services or AI dependencies are required;
 reuse [grocery API setup](groceries.md). Grocery data and drafts stay in memory.
 The layout wraps long names/labels and stacks quick entry on narrow screens.
 
+The ingredient-calorie lookup distinguishes a stale CSRF token from a USDA failure.
+On `csrf_failed`, it renews the session, verifies the same account and updates the
+shell's in-memory token. It preserves the ingredient input but requires another
+explicit lookup; neither the lookup nor a grocery mutation is replayed.
+Renewal failure is visible. Expiry or a changed account clears private content
+through the existing sign-in flow, and late responses after navigation are ignored.
+
 ## Conversation navigation (ASC-39)
 
 The Sous Chef tab uses the existing owned conversation APIs, not a second history
