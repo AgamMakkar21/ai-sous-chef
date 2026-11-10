@@ -147,6 +147,9 @@ def test_combined_app_composition_returns_and_persists_a_grounded_recipe(
         message = transport.combined["output"][-1]["content"][0]
         draft = json.loads(message["text"])
         draft["title"] = "Chicken and rice skillet"
+        if poultry_request == "Chicken dinner":
+            draft["sourceIds"] = ["0"]
+            draft["sourceClaims"] = [{"sourceId": "0", "quote": "Unverified generated quotation"}]
         draft["ingredients"].append(
             {"lineId": "chicken", "name": "chicken breast", "quantity": 200, "unit": "g"}
         )
@@ -210,6 +213,10 @@ def test_combined_app_composition_returns_and_persists_a_grounded_recipe(
         if poultry_request is not None:
             assert turn["messages"][0]["content"] == content
             assert turn["recipe"]["title"] == "Chicken and rice skillet"
+            if poultry_request == "Chicken dinner":
+                assert turn["recipe"]["sourceIds"] == ["hf-food-recipes-1"]
+                assert turn["recipe"]["sourceClaims"] == []
+                assert "Unverified generated quotation" not in response.text
             assert "Pan-fry the chicken breast" in turn["messages"][1]["content"]
             assert "thermometer" not in turn["messages"][1]["content"]
             assert "chicken" in {

@@ -92,6 +92,7 @@ class Event(StrEnum):
     ORCHESTRATOR_INVOKED = "orchestrator_invoked"
     RECIPE_INVOKED = "recipe_invoked"
     RECIPE_COMPLETED = "recipe_completed"
+    RECIPE_ATTRIBUTION_NORMALIZED = "recipe_attribution_normalized"
     RECIPE_FAILED = "recipe_failed"
     RECIPE_CANCELLED = "recipe_cancelled"
     RECIPE_SAFETY_REJECTED = "recipe_safety_rejected"

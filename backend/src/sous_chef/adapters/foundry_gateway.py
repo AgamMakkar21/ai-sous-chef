@@ -535,7 +535,10 @@ class FoundryGateway:
 
     @staticmethod
     def _recipe_result(
-        request: FoundryRequest, response: Response
+        request: FoundryRequest,
+        response: Response,
+        *,
+        grounding: RecipeGrounding | None = None,
     ) -> tuple[RecipeDraft, TokenUsage]:
         assert isinstance(request, RecipeGenerationRequest)
         try:
@@ -552,16 +555,44 @@ class FoundryGateway:
                 or actions[0].content[0].type != "output_text"
             ):
                 raise ValueError
+            payload = json.loads(response.output_text)
+            if not isinstance(payload, dict):
+                raise ValueError
+            if grounding is not None:
+                # Attribution is tool-owned; optional generated quotations cannot veto a recipe.
+                sources = {item.source.source_id: item.snippet for item in grounding.recipes}
+                claims = payload.get("sourceClaims")
+                verified = (
+                    [
+                        claim
+                        for claim in claims
+                        if isinstance(claim, dict)
+                        and set(claim) == {"sourceId", "quote"}
+                        and isinstance(claim["sourceId"], str)
+                        and claim["sourceId"] in sources
+                        and isinstance(claim["quote"], str)
+                        and 0 < len(claim["quote"].strip()) <= 240
+                        and claim["quote"] in sources[claim["sourceId"]]
+                    ][:10]
+                    if isinstance(claims, list)
+                    else []
+                )
+                if payload.get("sourceIds") != list(sources) or claims != verified:
+                    operational_event(Event.RECIPE_ATTRIBUTION_NORMALIZED)
+                payload.update(sourceIds=list(sources), sourceClaims=verified)
+            model = (
+                CombinedRecipeDraft
+                if isinstance(request, CombinedRecipeGenerationRequest)
+                else RecipeDraft
+            )
             return (
-                RecipeDraft.model_validate_json(response.output_text),
+                model.model_validate_json(json.dumps(payload)),
                 TokenUsage(input_tokens=usage.input_tokens, output_tokens=usage.output_tokens),
             )
         except ValueError:
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request) from None
 
-    def _grounded_recipe_result(
-        self, request: FoundryRequest, response: Response
-    ) -> tuple[RecipeDraft, RecipeGrounding, TokenUsage]:
+    def _recipe_grounding(self, request: FoundryRequest, response: Response) -> RecipeGrounding:
         from sous_chef.recipe_definition import RECIPE_KNOWLEDGE_LABEL, RECIPE_KNOWLEDGE_TOOL
         from sous_chef.services.recipe_grounding import (
             parse_mcp_grounding,
@@ -621,6 +652,12 @@ class FoundryGateway:
         )
         if grounding.status == "empty":
             raise FoundryGatewayError(FoundryFailure.NO_RESULTS, request)
+        return grounding
+
+    def _grounded_recipe_result(
+        self, request: FoundryRequest, response: Response
+    ) -> tuple[RecipeDraft, RecipeGrounding, TokenUsage]:
+        grounding = self._recipe_grounding(request, response)
         recipe_response = response.model_copy(
             update={
                 "output": [
@@ -628,7 +665,7 @@ class FoundryGateway:
                 ]
             }
         )
-        draft, usage = self._recipe_result(request, recipe_response)
+        draft, usage = self._recipe_result(request, recipe_response, grounding=grounding)
         return draft, grounding, usage
 
     def _combined_recipe_result(
@@ -640,6 +677,8 @@ class FoundryGateway:
 
         assert isinstance(request, CombinedRecipeGenerationRequest)
         try:
+            combined, grounding, usage = self._grounded_recipe_result(request, response)
+            assert isinstance(combined, CombinedRecipeDraft)
             messages = [item for item in response.output if item.type == "message"]
             calls = [item for item in response.output if item.type == "web_search_call"]
             if len(messages) != 1 or len(messages[0].content) != 1:
@@ -648,7 +687,6 @@ class FoundryGateway:
             content = message.content[0]
             if content.type != "output_text" or len(content.annotations) > 10:
                 raise ValueError
-            combined = CombinedRecipeDraft.model_validate_json(response.output_text)
             web = None
             if request.web_query is None:
                 if calls or combined.web_claims or content.annotations:
@@ -698,25 +736,7 @@ class FoundryGateway:
                         retrieved_at=datetime.now(UTC),
                     )
             draft = RecipeDraft.model_validate(combined.model_dump(exclude={"web_claims"}))
-            recipe_message = message.model_copy(
-                update={
-                    "content": [
-                        content.model_copy(
-                            update={"text": draft.model_dump_json(), "annotations": []}
-                        )
-                    ]
-                }
-            )
-            normalized = response.model_copy(
-                update={
-                    "output": [
-                        recipe_message if item.type == "message" else item
-                        for item in response.output
-                    ]
-                }
-            )
-            recipe, grounding, usage = self._grounded_recipe_result(request, normalized)
-            return recipe, grounding, web, usage
+            return draft, grounding, web, usage
         except ValueError:
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request) from None
 

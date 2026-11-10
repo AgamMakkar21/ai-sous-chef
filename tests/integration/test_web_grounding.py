@@ -269,6 +269,50 @@ def test_combined_search_without_attributable_claims_keeps_curated_recipe_and_us
     assert len(harness.requests) == 1 and len(harness.tools.nutrition_requests) == 1
 
 
+@pytest.mark.parametrize("use_web", [False, True])
+@pytest.mark.parametrize("fault", ["quote", "reference", "missing", "shape", "web-as-curated"])
+def test_generated_attribution_cannot_abort_or_fabricate_grounded_recipe_sources(
+    use_web: bool, fault: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    configure_safe_telemetry()
+    harness = CombinedHarness(use_web=use_web)
+    content = harness.combined["output"][-1]["content"][0]
+    draft = json.loads(content["text"])
+    valid_claims = copy.deepcopy(draft["sourceClaims"])
+    if fault == "quote":
+        draft["sourceClaims"].append(
+            {"sourceId": draft["sourceIds"][0], "quote": "PRIVATE_CANARY invented quotation"}
+        )
+    elif fault == "reference":
+        draft["sourceIds"] = ["0"]
+        draft["sourceClaims"] = [{"sourceId": "0", "quote": "PRIVATE_CANARY invented quotation"}]
+    elif fault == "missing":
+        del draft["sourceIds"]
+        del draft["sourceClaims"]
+    elif fault == "shape":
+        draft["sourceClaims"] = {"private": "PRIVATE_CANARY invalid attribution"}
+    else:
+        draft["sourceIds"] = [URL]
+    content["text"] = json.dumps(draft)
+    if use_web:
+        content["annotations"][0]["start_index"] = content["text"].index(CLAIM)
+        content["annotations"][0]["end_index"] = content["text"].index(CLAIM) + len(CLAIM)
+    result = harness.generate()
+    assert result.recipe is not None and result.recipe.nutrition.status == "known"
+    recipe = result.recipe
+    assert recipe.source_ids == ("hf-food-recipes-1",)
+    assert [claim.model_dump(by_alias=True) for claim in recipe.source_claims] == (
+        valid_claims if fault in {"quote", "web-as-curated"} else []
+    )
+    assert all(
+        source.reference != URL for source in recipe.sources if source.kind == "curated_recipe"
+    )
+    assert bool(recipe.web_grounding) == use_web
+    assert len(harness.requests) == len(harness.tools.nutrition_requests) == 1
+    assert "recipe_attribution_normalized" in caplog.text
+    assert "PRIVATE_CANARY" not in recipe.model_dump_json() + caplog.text
+
+
 @pytest.mark.parametrize(
     "fault",
     [
@@ -279,7 +323,6 @@ def test_combined_search_without_attributable_claims_keeps_curated_recipe_and_us
         "missing-mcp",
         "annotations",
         "unattributed",
-        "web-as-curated",
         "tool-error",
         "usage",
         "web-tokens",
@@ -303,10 +346,6 @@ def test_combined_native_results_fail_closed_before_usda_and_are_not_replayed(fa
         message["content"][0]["annotations"][0]["end_index"] = 1000000
     elif fault == "unattributed":
         native["action"]["sources"] = []
-    elif fault == "web-as-curated":
-        draft = json.loads(message["content"][0]["text"])
-        draft["sourceIds"] = [URL]
-        message["content"][0]["text"] = json.dumps(draft)
     elif fault == "tool-error":
         native["status"] = "failed"
     elif fault == "usage":

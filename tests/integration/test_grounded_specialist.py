@@ -139,6 +139,21 @@ def live_setup(
     return RecipeSpecialistService(gateway, None, tools), tools, harness
 
 
+def test_phased_retrieval_uses_backend_attribution_instead_of_generated_references() -> None:
+    service, tools, harness = live_setup()
+    content = harness.body["output"][-1]["content"][0]
+    draft = json.loads(content["text"])
+    draft["sourceIds"] = ["0"]
+    draft["sourceClaims"] = [{"sourceId": "0", "quote": "Unverified generated quote"}]
+    content["text"] = json.dumps(draft)
+    result = run(service)
+    assert result.recipe is not None
+    assert result.recipe.sources[0] == curated_excerpt(recipe_fixture()).source
+    assert result.recipe.source_ids == ("hf-food-recipes-1",)
+    assert not result.recipe.source_claims
+    assert len(harness.requests) == len(tools.nutrition_requests) == 1
+
+
 def test_one_pinned_call_uses_only_the_approved_connection_and_preserves_provenance(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
