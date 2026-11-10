@@ -6,8 +6,10 @@ adds its identity-based `feedback_change_feed` trigger and deterministic admissi
 filter. `GET /api/health` still returns a fixed `{"status":"ok","scope":"host-only"}` and
 an `X-ASC-Commit` header from packaged release metadata. It accepts no business
 inputs, returns no user data, and performs no Cosmos reads/writes itself.
-Extraction, Foundry invocation, processing receipts and learned-state mutation
-remain ASC-47/48 work. Host health is not evidence that the trigger or learning works.
+ASC-47 supplies a standalone [extraction adapter](preference-extraction.md);
+the trigger does not invoke it. Owned-context loading, durable application and
+processing receipts remain ASC-48 work. Host health is not evidence that the
+trigger or learning works.
 
 ## Hosting and versions
 
@@ -112,8 +114,9 @@ current owned/cooked source state and replace superseded evidence.
 
 **The default `process_feedback` boundary refuses acknowledgement.** Tests supply
 a mock handler; hosted code does not invoke a model or manufacture a successful
-no-insight result. Eligible feedback remains pending until ASC-47/48 connect
-validated extraction and durable application. No new product write or Foundry
+no-insight result. Eligible feedback remains pending until ASC-48 connects
+the available extraction adapter to owned context and durable application.
+No new product write or Foundry
 permission is granted by this change.
 
 Every document is isolated: an invalid event or processor exception does not
@@ -132,10 +135,11 @@ Dead-lettering, durable retries and operator recovery remain ASC-49 work. Do not
 manually mark feedback completed, advance a blocked lease, or disable retries
 to make a smoke test appear successful.
 
-The worker remains a standalone standard-library filter plus its existing
-`azure-functions==1.24.0` pin. It does not import the separately packaged web app.
-An API-to-worker regression test passes real synthetic persisted outbox records
-through this filter to guard contract drift.
+The admission filter remains standard-library-only plus
+`azure-functions==1.24.0`. The separately invoked extraction adapter adds pinned
+New Foundry dependencies and shared domain models to the worker ZIP, but no web
+routes, adapters or services. An API-to-worker regression test passes real
+synthetic persisted outbox records through the filter to guard contract drift.
 
 Host storage's public network endpoint is enabled but shared keys and anonymous
 blob access are disabled; all access requires Entra authorization. Cosmos keeps

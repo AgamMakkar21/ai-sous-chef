@@ -23,6 +23,7 @@ from sous_chef.domain.context import (
     RecipeRevisionContext,
     RequestContext,
     ResolvedPreference,
+    conflicts_with_explicit,
 )
 from sous_chef.domain.cosmos import (
     CosmosError,
@@ -30,12 +31,6 @@ from sous_chef.domain.cosmos import (
     HistoryQuery,
     PageRequest,
     StoredRecord,
-)
-from sous_chef.domain.food_safety import (
-    IngredientLine,
-    SafetyProfile,
-    Verdict,
-    validate_ingredients,
 )
 from sous_chef.domain.profiles import ExplicitPreferences, ProfileModel, require_onboarding
 from sous_chef.services.conversations import ConversationService
@@ -80,30 +75,6 @@ def bound_context(context: RequestContext) -> RequestContext:
     return context
 
 
-def _conflicts(preference: ResolvedPreference, explicit: ExplicitPreferences) -> bool:
-    value = preference.value.casefold()
-    if preference.field == "spicePreference":
-        return value != explicit.spice_preference
-    if preference.field == "likes":
-        safety = validate_ingredients(
-            SafetyProfile(
-                allergies=explicit.allergies,
-                dietary_restrictions=explicit.dietary_restrictions,
-                dislikes=explicit.dislikes,
-            ),
-            [IngredientLine(line_id="learned", name=preference.value)],
-        )
-        return safety.verdict != Verdict.PASS or bool(safety.dislike_matches)
-    if preference.field == "dislikes":
-        return value in {item.casefold() for item in explicit.likes}
-    selections = (
-        explicit.preferred_cuisines
-        if preference.field == "preferredCuisines"
-        else explicit.nutrition_goals
-    )
-    return bool(selections) and value not in {item.casefold() for item in selections}
-
-
 def _eligible(
     user: AuthenticatedUser,
     resolved: tuple[ResolvedPreference, ...],
@@ -138,7 +109,11 @@ def _eligible(
         )
         cooked = sum(evidence.cooked and evidence.direction == "support" for evidence in current)
         confidence = (3 + support) / (6 + support + opposition)
-        if cooked < 2 or confidence < 0.65 or _conflicts(item, explicit):
+        if (
+            cooked < 2
+            or confidence < 0.65
+            or conflicts_with_explicit(item.field, item.value, explicit)
+        ):
             continue
         ranked.append(
             (
