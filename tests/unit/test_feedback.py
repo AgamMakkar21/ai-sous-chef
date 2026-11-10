@@ -22,7 +22,31 @@ from test_cosmos_repository import SyntheticCredential, Transport
 from test_cosmos_repository import harness as harness
 from test_recipe_lifecycle import RECIPES, accept, generate
 
+from worker import function_app as feedback_worker
+
 NOTE = "Private note: less salt next time."
+
+
+def test_persisted_feedback_events_feed_worker_but_current_recipe_and_receipts_do_not(
+    chat_api: TestClient,
+    executor: FakeExecutor,
+    harness: tuple[Transport, SyntheticCredential],
+) -> None:
+    saved = accept(chat_api, generate(chat_api, executor)["generatedRecipeId"], cooked=True)
+    first = feedback(chat_api, saved)
+    assert first.status_code == 200
+    second = feedback(chat_api, first, note="Use more lime.", key="edit-feedback")
+    assert second.status_code == 200
+    events: list[feedback_worker.FeedbackEvent] = []
+    records = [
+        *documents(harness[0], "recipe"),
+        *documents(harness[0], "recipeOperation"),
+        *documents(harness[0], "feedbackRevision"),
+    ]
+    feedback_worker.process_batch(records, events.append)
+    assert sorted(event.feedback_revision for event in events) == [1, 2]
+    assert len({event.event_key for event in events}) == 2
+    assert all(event.user_id == OWNER.user_id for event in events)
 
 
 def feedback(

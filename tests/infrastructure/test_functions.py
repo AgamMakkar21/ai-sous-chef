@@ -1,4 +1,4 @@
-"""Host-only acceptance checks; no Azure credentials or business events."""
+"""Offline worker wiring and delivery checks; no Azure credentials."""
 
 import copy
 import io
@@ -13,6 +13,7 @@ from typing import Any, ClassVar
 from unittest.mock import MagicMock, patch
 
 import azure.functions as func
+from azure.functions.decorators.retry_policy import RETRY_POLICY
 from test_foundation import compile_bicep
 
 from scripts import deploy_dev as delivery
@@ -139,14 +140,35 @@ class FunctionsInfrastructureTests(unittest.TestCase):
 
 
 class FunctionsHostTests(unittest.TestCase):
-    def test_only_health_is_registered_not_a_feedback_trigger(self) -> None:
+    def test_health_and_identity_based_feedback_trigger_are_registered(self) -> None:
         functions = host.app.get_functions()
-        self.assertEqual(len(functions), 1)
-        self.assertEqual(functions[0].get_function_name(), "host_health")
-        bindings = json.loads(functions[0].get_function_json())["bindings"]
+        indexed = {function.get_function_name(): function for function in functions}
+        self.assertEqual(set(indexed), {"host_health", "feedback_change_feed"})
+        bindings = json.loads(indexed["host_health"].get_function_json())["bindings"]
         trigger = next(binding for binding in bindings if binding["type"] == "httpTrigger")
         self.assertEqual(trigger["route"], "health")
         self.assertEqual(trigger["methods"], ["GET"])
+        definition = json.loads(indexed["feedback_change_feed"].get_function_json())
+        trigger = next(b for b in definition["bindings"] if b["type"] == "cosmosDBTrigger")
+        self.assertEqual(trigger["connection"], "FeedbackCosmos")
+        self.assertEqual(trigger["databaseName"], "%ASC_COSMOS_DATABASE%")
+        self.assertEqual(trigger["containerName"], "%ASC_FEEDBACK_CONTAINER%")
+        self.assertEqual(trigger["leaseConnection"], "FeedbackLeases")
+        self.assertEqual(trigger["leaseDatabaseName"], "%ASC_COSMOS_DATABASE%")
+        self.assertEqual(trigger["leaseContainerName"], "%ASC_LEASE_CONTAINER%")
+        self.assertFalse(trigger["createLeaseContainerIfNotExists"])
+        self.assertEqual(trigger["leaseContainerPrefix"], "feedback-v1")
+        self.assertTrue(trigger["startFromBeginning"])
+        self.assertEqual(trigger["maxItemsPerInvocation"], 50)
+        self.assertEqual(
+            indexed["feedback_change_feed"].get_settings_dict(RETRY_POLICY),
+            {
+                "setting_name": "retry_policy",
+                "strategy": "fixed_delay",
+                "max_retry_count": "-1",
+                "delay_interval": "00:01:00",
+            },
+        )
 
     def test_health_is_fixed_and_matches_packaged_revision(self) -> None:
         with (
