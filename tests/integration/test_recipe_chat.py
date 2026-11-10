@@ -232,6 +232,54 @@ def test_combined_app_composition_returns_and_persists_a_grounded_recipe(
     assert len(transport.requests) == 3
 
 
+def test_combined_chat_delivers_with_broad_api_backed_usda_search(
+    combined_settings: Settings,
+    auth_headers: dict[str, str],
+    harness: tuple[Transport, SyntheticCredential],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = CombinedHarness(use_web=False)
+    original_handle = transport.handle
+
+    async def handle(request: httpx2.Request) -> httpx2.Response:
+        payload = json.loads(request.content)
+        kind = transport.request_kind(payload)
+        if kind == "function" and isinstance(payload["input"], str):
+            transport.data = RequestContext.model_validate_json(payload["input"])
+        elif kind == "combined":
+            transport.combined["output"][0]["arguments"] = json.dumps(
+                {"query_variants": [retrieval_query(transport.data, transport.arguments)]}
+            )
+        return await original_handle(request)
+
+    monkeypatch.setattr(transport, "handle", handle)
+    monkeypatch.setattr(foundry_gateway, "_project_client", transport.factory)
+    settings = Settings.model_validate(
+        combined_settings.model_dump()
+        | {
+            "usda_mcp_server": SERVER.with_name("usda_api_server.py"),
+            "usda_mcp_env": {"TEST_USDA_MODE": SecretStr("broad_search")},
+        }
+    )
+    with TestClient(create_app(settings), headers=auth_headers) as client:
+        onboard(client)
+        conversation = create(client)
+        response = send(client, conversation, content="Rice dinner")
+        assert response.status_code == 200, response.text
+        turn = response.json()["data"]
+        assert turn["status"] == "completed" and turn["generatedRecipeId"]
+        nutrition = turn["recipe"]["nutrition"]
+        assert nutrition["status"] == "unavailable"
+        assert not nutrition["nutrients"] and not nutrition["mappings"]
+        assert any(
+            item["ingredientLineId"] == "rice" and item["reason"] == "food_unavailable"
+            for item in nutrition["unknownComponents"]
+        )
+        assert {source["kind"] for source in turn["recipe"]["sources"]} == {"curated_recipe"}
+        assert len(transport.requests) == 3
+        assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
+
+
 @pytest.mark.parametrize("allergen_location", ["metadata", "ingredient"])
 def test_combined_revision_preserves_context_and_enriches_only_its_current_ingredients(
     allergen_location: str,

@@ -70,7 +70,7 @@ def test_hosted_api_cannot_be_replaced_by_a_legacy_database_launcher(
     assert "private" not in str(caught.value)
 
 
-def test_search_preserves_terms_filters_forms_and_ranks_before_twenty_result_limit() -> None:
+def test_search_preserves_terms_filters_forms_and_ranks_before_requested_result_limit() -> None:
     requests: list[httpx.Request] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
@@ -90,7 +90,7 @@ def test_search_preserves_terms_filters_forms_and_ranks_before_twenty_result_lim
                             description=f"Babyfood, chicken dinner {index}",
                             foodCategory="Baby Foods",
                         )
-                        for index in range(30)
+                        for index in range(15)
                     ],
                     dict(FOOD, fdcId=3000000, description="Chicken, breast, roasted"),
                     dict(FOOD, fdcId=3000001, description="Babyfood, chicken and strawberry"),
@@ -105,11 +105,50 @@ def test_search_preserves_terms_filters_forms_and_ranks_before_twenty_result_lim
             raw = await api.search("chicken, raw")
             assert [food.fdc_id for food in raw.foods] == ["1234567"]
             assert raw.truncated  # Provider reports additional unexamined matches.
-            generic = await api.search("chicken")
-            assert len(generic.foods) == 20 and generic.foods[0].fdc_id == "1234567"
+            generic = await api.search("chicken", limit=2)
+            assert len(generic.foods) == 2 and generic.foods[0].fdc_id == "1234567"
 
     asyncio.run(check())
     assert json.loads(requests[0].content)["query"] == "+chicken +raw"
+
+
+@pytest.mark.parametrize("keyword", ["rice", "salt"])
+def test_broad_search_requests_fit_the_existing_response_budget(keyword: str) -> None:
+    page_sizes: list[int] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        page_sizes.append(body["pageSize"])
+        return httpx.Response(
+            200,
+            json={
+                "totalHits": 300,
+                "foods": [
+                    dict(
+                        FOOD,
+                        fdcId=1234567 + index,
+                        description=f"{keyword}, synthetic food {index}",
+                        foodNutrients=[
+                            {
+                                "nutrientId": 1008,
+                                "value": 100,
+                                "derivationDescription": "synthetic source metadata " * 600,
+                            }
+                        ],
+                    )
+                    for index in range(body["pageSize"])
+                ],
+            },
+        )
+
+    async def check() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            result = await FoodDataCentral(client, SecretStr("synthetic-key")).search(keyword)
+            assert len(result.foods) == 20
+            assert result.truncated
+
+    asyncio.run(check())
+    assert page_sizes == [20]
 
 
 @pytest.mark.parametrize("environment", ["dev", "prod"])
@@ -143,7 +182,7 @@ def test_complete_search_is_only_truncated_when_candidates_were_omitted(count: i
                     200,
                     json={
                         "totalHits": count,
-                        "foods": [dict(FOOD, fdcId=1234567 + i) for i in range(count)],
+                        "foods": [dict(FOOD, fdcId=1234567 + i) for i in range(min(count, 20))],
                     },
                 )
             )

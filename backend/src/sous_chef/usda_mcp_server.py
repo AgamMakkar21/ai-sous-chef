@@ -22,7 +22,7 @@ from sous_chef.domain.nutrition import (
 
 API_ROOT = "https://api.nal.usda.gov/fdc/v1/"
 MAX_RESPONSE_BYTES = 2_097_152
-PAGE_SIZE = 200
+PAGE_SIZE = 20
 _FORMS = {
     "raw",
     "uncooked",

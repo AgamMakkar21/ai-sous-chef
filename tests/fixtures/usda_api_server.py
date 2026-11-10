@@ -56,7 +56,7 @@ def respond(request: httpx.Request) -> httpx.Response:
     if request.url.path.endswith("/foods/search"):
         body = json.loads(request.content)
         assert body["dataType"] == ["Foundation", "SR Legacy"]
-        assert body["pageSize"] == 200 and body["pageNumber"] == 1
+        assert body["pageSize"] == 20 and body["pageNumber"] == 1
         words = body["query"].replace("+", "").split()
         if mode == "throttle_chicken" and "chicken" in words:
             return httpx.Response(429, headers={"Retry-After": "60"})
@@ -67,7 +67,27 @@ def respond(request: httpx.Request) -> httpx.Response:
         ]
         if mode == "no_food":
             foods = []
-        return httpx.Response(200, json={"foods": foods, "totalHits": len(foods)})
+        total_hits = len(foods)
+        if mode == "broad_search" and words in (["rice"], ["salt"]):
+            total_hits = 300
+            foods = [
+                {
+                    **FOODS[0],
+                    "fdcId": 4000000 + index,
+                    "description": f"{words[0]}, synthetic food {index}",
+                    "foodNutrients": [
+                        {
+                            "nutrientId": 1008,
+                            "value": 100,
+                            "derivationDescription": "synthetic source metadata " * 600,
+                        }
+                    ],
+                }
+                for index in range(body["pageSize"])
+            ]
+        return httpx.Response(
+            200, json={"foods": foods[: body["pageSize"]], "totalHits": total_hits}
+        )
     food = next(food for food in FOODS if str(food["fdcId"]) == request.url.path.rsplit("/", 1)[1])
     return httpx.Response(
         200,
