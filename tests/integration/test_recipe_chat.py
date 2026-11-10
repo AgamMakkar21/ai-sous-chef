@@ -24,9 +24,11 @@ from test_conversation_api import BASE, OWNER, create
 from test_conversation_api import conversation_settings as conversation_settings
 from test_cosmos_repository import SyntheticCredential, Transport
 from test_cosmos_repository import harness as harness
+from test_foundry_gateway import Harness
 from test_grocery_api import add
 from test_grounded_specialist import configuration, native_mcp_result
-from test_profile_api import document, onboard
+from test_orchestrator_gateway import body, function_output
+from test_profile_api import document, onboard, preferences
 from test_usda_nutrition import SERVER
 from test_web_grounding import CombinedHarness, WebHarness
 
@@ -91,6 +93,19 @@ def recipe_settings(conversation_settings: Settings) -> Settings:
 
 
 @pytest.fixture
+def combined_settings(recipe_settings: Settings) -> Settings:
+    return Settings.model_validate(
+        recipe_settings.model_dump()
+        | {
+            "foundry_recipe_nutrition_mode": "combined",
+            "foundry_recipe_nutrition_agent_version": "4",
+            "foundry_recipe_nutrition_retrieval_agent_version": None,
+            "foundry_recipe_nutrition_web_agent_version": None,
+        }
+    )
+
+
+@pytest.fixture
 def recipe_api(
     recipe_settings: Settings,
     recipe_transport: RecipeChatHarness,
@@ -105,10 +120,22 @@ def recipe_api(
 
 @pytest.mark.parametrize("use_web", [False, True])
 @pytest.mark.parametrize("native_documents", [False, True])
+@pytest.mark.parametrize(
+    "poultry_request",
+    [
+        None,
+        "Chicken dinner",
+        "Dinner with 200 g CHICKEN BREASTS (boneless, skinless), 1/2 cup rice and carrots.",
+        "Make dinner with:\n- chicken-breast, diced\n- rice\n- carrots",
+        'Make dinner: [{"name":"chicken breast","quantity":0.2,"unit":"kg"},'
+        '{"name":"rice"},{"name":"carrots"}]',
+    ],
+)
 def test_combined_app_composition_returns_and_persists_a_grounded_recipe(
     use_web: bool,
     native_documents: bool,
-    recipe_settings: Settings,
+    poultry_request: str | None,
+    combined_settings: Settings,
     auth_headers: dict[str, str],
     harness: tuple[Transport, SyntheticCredential],
     monkeypatch: pytest.MonkeyPatch,
@@ -116,6 +143,33 @@ def test_combined_app_composition_returns_and_persists_a_grounded_recipe(
     transport = CombinedHarness(use_web=use_web)
     if native_documents:
         transport.combined["output"][0]["output"] = json.dumps(native_mcp_result())
+    if poultry_request is not None:
+        message = transport.combined["output"][-1]["content"][0]
+        draft = json.loads(message["text"])
+        draft["title"] = "Chicken breast and rice dinner"
+        draft["ingredients"].append(
+            {"lineId": "chicken", "name": "chicken breast", "quantity": 200, "unit": "g"}
+        )
+        draft["instructions"].append(
+            {
+                "step": 3,
+                "text": "Cook the chicken breast to an internal temperature of 165 F, "
+                "measured with a food thermometer.",
+                "ingredientLineIds": ["chicken"],
+            }
+        )
+        draft["instructions"].append(
+            {
+                "step": 4,
+                "text": "Serve the chicken breast with rice and carrot.",
+                "ingredientLineIds": ["chicken", "rice", "carrot"],
+            }
+        )
+        message["text"] = json.dumps(draft)
+        if use_web:
+            claim = draft["webClaims"][0]["text"]
+            message["annotations"][0]["start_index"] = message["text"].index(claim)
+            message["annotations"][0]["end_index"] = message["text"].index(claim) + len(claim)
     original_handle = transport.handle
 
     async def handle(request: httpx2.Request) -> httpx2.Response:
@@ -131,22 +185,20 @@ def test_combined_app_composition_returns_and_persists_a_grounded_recipe(
 
     monkeypatch.setattr(transport, "handle", handle)
     monkeypatch.setattr(foundry_gateway, "_project_client", transport.factory)
-    settings = Settings.model_validate(
-        recipe_settings.model_dump()
-        | {
-            "foundry_recipe_nutrition_mode": "combined",
-            "foundry_recipe_nutrition_agent_version": "4",
-            "foundry_recipe_nutrition_retrieval_agent_version": None,
-            "foundry_recipe_nutrition_web_agent_version": None,
-        }
-    )
     content = (
         "Check current rice recalls and make a dinner."
         if use_web
         else "Make a 30-minute pantry recipe."
     )
-    with TestClient(create_app(settings), headers=auth_headers) as client:
-        onboard(client)
+    if poultry_request is not None:
+        content = ("Check current rice recalls. " if use_web else "") + poultry_request
+    with TestClient(create_app(combined_settings), headers=auth_headers) as client:
+        onboard(
+            client,
+            preferences() | {"dietaryRestrictions": []}
+            if poultry_request is not None
+            else preferences(),
+        )
         add(client, name="rice", quantity=100, unit="g")
         conversation = create(client)
         response = send(client, conversation, content=content)
@@ -154,6 +206,14 @@ def test_combined_app_composition_returns_and_persists_a_grounded_recipe(
         turn = response.json()["data"]
         assert turn["status"] == "completed" and turn["generatedRecipeId"]
         assert turn["recipe"]["nutrition"]["status"] == "known"
+        assert transport.data.current_request == content
+        if poultry_request is not None:
+            assert turn["messages"][0]["content"] == content
+            assert turn["recipe"]["title"] == "Chicken breast and rice dinner"
+            assert "165 F" in turn["messages"][1]["content"]
+            assert "chicken" in {
+                mapping["ingredientLineId"] for mapping in turn["recipe"]["nutrition"]["mappings"]
+            }
         assert {source["kind"] for source in turn["recipe"]["sources"]} == {
             "curated_recipe",
             "usda",
@@ -166,9 +226,104 @@ def test_combined_app_composition_returns_and_persists_a_grounded_recipe(
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
         assert send(client, conversation, content=content).json() == response.json()
         assert len(transport.requests) == 3
-    with TestClient(create_app(settings), headers=auth_headers) as restarted:
+    with TestClient(create_app(combined_settings), headers=auth_headers) as restarted:
         assert restarted.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
     assert len(transport.requests) == 3
+
+
+def test_combined_revision_preserves_context_and_enriches_only_its_current_ingredients(
+    combined_settings: Settings,
+    auth_headers: dict[str, str],
+    harness: tuple[Transport, SyntheticCredential],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = CombinedHarness(use_web=False)
+    original_handle = transport.handle
+    draft = json.loads(transport.combined["output"][-1]["content"][0]["text"])
+    attempts = 0
+    correction = "Use declared ingredient names and neutral metadata; omit dish labels."
+
+    async def handle(request: httpx2.Request) -> httpx2.Response:
+        nonlocal attempts
+        payload = json.loads(request.content)
+        kind = transport.request_kind(payload)
+        if kind == "function" and isinstance(payload["input"], str):
+            transport.data = RequestContext.model_validate_json(payload["input"])
+        elif kind == "function":
+            feedback = json.loads(payload["input"][-1]["output"])
+            assert feedback == {
+                "status": "safety_rejected",
+                "revisions_remaining": 1,
+                "rejection_code": "recipe_prose_unsupported",
+                "candidate": None,
+            }
+            assert "Private rejected skillet" not in request.content.decode()
+            transport.arguments = transport.arguments.model_copy(
+                update={"requirements": correction}
+            )
+            transport.body = body(
+                function_output(arguments=transport.arguments.model_dump_json())
+                | {"call_id": "revision"}
+            )
+            return await Harness.handle(transport, request)
+        else:
+            attempts += 1
+            current = deepcopy(draft)
+            if attempts == 1:
+                current["title"] = "Private rejected skillet"
+            else:
+                current["ingredients"][0]["quantity"] = 200
+            transport.combined["output"][-1]["content"][0]["text"] = json.dumps(current)
+            transport.combined["output"][0]["arguments"] = json.dumps(
+                {"query_variants": [retrieval_query(transport.data, transport.arguments)]}
+            )
+        return await original_handle(request)
+
+    monkeypatch.setattr(transport, "handle", handle)
+    monkeypatch.setattr(foundry_gateway, "_project_client", transport.factory)
+    app = create_app(combined_settings)
+    with TestClient(app, headers=auth_headers) as client:
+        onboard(client)
+        add(client, name="rice", quantity=100, unit="g")
+        conversation = create(client)
+        nutrition = app.state.nutrition
+        with patch.object(nutrition, "lookup", wraps=nutrition.lookup) as lookup:
+            response = send(client, conversation, content="Make a 30-minute pantry recipe.")
+        assert response.status_code == 200, response.text
+        turn = response.json()["data"]
+        assert turn["recipe"]["ingredients"][0]["quantity"] == 200
+        energy = next(
+            nutrient
+            for nutrient in turn["recipe"]["nutrition"]["nutrients"]
+            if nutrient["name"] == "energy"
+        )
+        assert energy["amount"] == 360
+        assert [call.args[0].ingredients[0].quantity for call in lookup.call_args_list] == [
+            100,
+            200,
+        ]
+        assert "Private rejected skillet" not in response.text
+        assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
+        assert (
+            send(client, conversation, content="Make a 30-minute pantry recipe.").json()
+            == response.json()
+        )
+    assert attempts == 2 and len(transport.requests) == 4
+    requests = [json.loads(request.content) for request in transport.requests]
+    assert [transport.request_kind(request) for request in requests] == [
+        "function",
+        "combined",
+        "function",
+        "combined",
+    ]
+    assert requests[0]["agent_reference"] == requests[2]["agent_reference"]
+    assert requests[1]["agent_reference"] == requests[3]["agent_reference"]
+    for request in (requests[1], requests[3]):
+        assert request["input"].startswith(transport.data.prompt)
+        assert request["store"] is False
+        assert request["max_tool_calls"] == 1
+        assert '"time_budget_minutes":30' in request["input"]
+    assert correction in requests[3]["input"]
 
 
 def test_chat_uses_the_startup_checked_nutrition_client(

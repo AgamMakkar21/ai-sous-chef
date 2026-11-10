@@ -20,7 +20,7 @@ from sous_chef.domain.ingredient_catalog import (
 )
 from sous_chef.domain.recipes import StructuredRecipe
 
-POLICY_VERSION = "1"
+POLICY_VERSION = "2"
 GUIDANCE = "https://www.cdc.gov/food-safety/prevention/index.html"
 UNABLE = (
     "I couldn't complete a recipe that passes the current ingredient and cooking-safety "
@@ -65,7 +65,7 @@ _ACTIONS = _HEAT | {
     "serve",
 }
 _COMBINE = frozenset({"mix", "combine", "stir", "add", "garnish", "top", "serve"})
-_NEUTRAL = frozenset(
+METADATA_WORDS = frozenset(
     """a an the and with for in to of simple quick easy mild spicy dinner lunch breakfast
     dish bowl salad soup beginner intermediate advanced technique cooking plan minute
     fit fits time budget use instead respect dairy restriction replace replaces
@@ -73,11 +73,13 @@ _NEUTRAL = frozenset(
     substitution nutritious meal preparation""".split()
 )
 _POULTRY = {"chicken", "turkey", "duck"}
+_POULTRY_CUTS = {"breast", "thigh", "drumstick", "wing"}
 _CUTS = {"beef", "pork", "lamb", "veal", "steak"}
 _FINFISH = {"fish", "salmon", "tuna", "cod", "tilapia", "trout", "halibut", "mackerel", "sardine"}
 _ANIMAL_DESCRIPTORS = frozenset(
     {"fresh", "raw", "whole", "boneless", "skinless", "lean", "ground", "minced"}
 )
+_POULTRY_DESCRIPTORS = _ANIMAL_DESCRIPTORS | {"chopped", "cubed", "diced", "sliced", "trimmed"}
 _STARCH = {"rice", "quinoa", "polenta", "pasta", "spaghetti", "penne", "macaroni", "potato"}
 _PREPARATION = DESCRIPTORS - {"and", "or", "with"}
 _TEMPERATURE = re.compile(
@@ -98,10 +100,14 @@ def _base(name: str) -> tuple[str, ...]:
 def _heat_requirement(name: str) -> tuple[int, bool] | None:
     words = set(tokenize(name))
     base = _base(name)
+    if not base:
+        _reject(RecipeSafetyFailure.COOKING)
+    if base[0] in _POULTRY and (len(base) == 1 or (len(base) == 2 and base[1] in _POULTRY_CUTS)):
+        if words - set(base) - _POULTRY_DESCRIPTORS:
+            _reject(RecipeSafetyFailure.COOKING)
+        return 165, False
     if len(base) != 1 or words - set(base) - _ANIMAL_DESCRIPTORS:
         _reject(RecipeSafetyFailure.COOKING)
-    if base[0] in _POULTRY:
-        return 165, False
     if base[0] in _CUTS:
         return (160, False) if words & {"ground", "minced"} else (145, True)
     if base[0] in _FINFISH and not words & {"ground", "minced"}:
@@ -142,7 +148,7 @@ def _metadata(recipe: StructuredRecipe, names: dict[tuple[str, ...], str]) -> No
             )
             if phrase:
                 index += len(phrase)
-            elif words[index] in _NEUTRAL or (
+            elif words[index] in METADATA_WORDS or (
                 words[index].isdigit()
                 and 0 < int(words[index]) <= recipe.total_minutes
                 and index + 1 < len(words)
@@ -153,9 +159,14 @@ def _metadata(recipe: StructuredRecipe, names: dict[tuple[str, ...], str]) -> No
                 _reject(RecipeSafetyFailure.PROSE)
 
 
-def _foods(text: str, names: dict[tuple[str, ...], str]) -> set[str]:
-    if "raw" in tokenize(text):
+def _foods(
+    text: str, names: dict[tuple[str, ...], str], *, thermometer_step: bool = False
+) -> set[str]:
+    if "raw" in tokenize(text) and not thermometer_step:
         _reject(RecipeSafetyFailure.COOKING)
+    exact = names.get(tokenize(text.removeprefix("the ")))
+    if exact is not None:
+        return {exact}
     parts = re.split(r",\s*|\s+(?:and|with|in|into|over|to)\s+", text)
     ids: set[str] = set()
     for part in parts:
@@ -190,7 +201,7 @@ def validate_final_recipe(recipe: StructuredRecipe, profile: SafetyProfile) -> S
     temperatures: dict[str, tuple[int, bool]] = {}
     requires_heat: set[str] = set()
     for line in checked.ingredients:
-        if not re.fullmatch(r"[A-Za-z][A-Za-z -]*", line.name):
+        if not re.fullmatch(r"[A-Za-z][A-Za-z ,()-]*", line.name):
             _reject(RecipeSafetyFailure.INGREDIENT)
         resolution = resolve(line.name)
         base = _base(line.name)
@@ -231,7 +242,7 @@ def validate_final_recipe(recipe: StructuredRecipe, profile: SafetyProfile) -> S
         temperature = _TEMPERATURE.fullmatch(text)
         mentioned: set[str] = set()
         if temperature:
-            mentioned = _foods(temperature[1], names)
+            mentioned = _foods(temperature[1], names, thermometer_step=True)
             if len(mentioned) != 1:
                 _reject(RecipeSafetyFailure.COOKING)
             line_id = next(iter(mentioned))

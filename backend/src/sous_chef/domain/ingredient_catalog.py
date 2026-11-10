@@ -12,7 +12,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 
-CATALOG_VERSION = "1"
+CATALOG_VERSION = "2"
 
 
 class Trait(StrEnum):
@@ -43,7 +43,7 @@ class CatalogEntry(BaseModel):
 # Words that describe preparation or amount and never change what the ingredient is.
 DESCRIPTORS = frozenset(
     """a about additional an and approximately boneless canned chopped coarsely cold cooked
-    crushed cut diced divided dried extra fine finely fresh freshly frozen garnish grated
+    crushed cubed cut diced divided dried extra fine finely fresh freshly frozen garnish grated
     ground heaping hot large lean level medium minced more of optional or packed peeled pitted
     plain raw ripe roasted salted seeded shredded skinless sliced small softened sweetened
     taste the thinly to toasted trimmed unsalted unsweetened whole""".split()
@@ -256,11 +256,17 @@ _ENTRIES: list[CatalogEntry] = [
     _entry(
         "meat",
         "chicken",
+        "chicken breast",
+        "chicken thigh",
+        "chicken drumstick",
+        "chicken wing",
         "beef",
         "pork",
         "lamb",
         "turkey",
+        "turkey breast",
         "duck",
+        "duck breast",
         "veal",
         "venison",
         "bacon",

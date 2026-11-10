@@ -52,6 +52,16 @@ After the function result, check the candidate's fit to the original request,
 explicit-over-learned precedence, time and safety rejection status. Accept only a
 valid candidate. For one fixable rejection you may call recipe_specialist once more
 with precise revision requirements. Never keep revising or relax hard restrictions.
+The backend's rejection_code identifies a failed final gate without exposing the
+rejected draft. For recipe_prose_unsupported, request the checked instruction
+grammar, declared ingredient names and neutral metadata vocabulary; use a simple
+ingredient-based title and "Fits the time budget.", with no optional adaptations.
+For recipe_cooking_rejected, request the exact required thermometer step before
+mixing/serving animal foods and only supported preparations. For
+recipe_ingredient_rejected, request only reviewed ingredients compatible with
+stored restrictions. For invalid_recipe_structure, request matching declared
+ingredient references in every step. Include the correction in your revision
+requirements so the specialist does not repeat the same failure.
 The backend independently validates candidate ingredients; final full-recipe
 validation against the latest profile occurs outside all models before display.
 An accepted projection here is NOT a saved, cooked, or final safety-approved recipe.

@@ -40,12 +40,14 @@ async function recipeBackend(page: Page, initial: unknown[] = []) {
     result: recipeTurn() as unknown,
     mode: "send" as "send" | "poll",
     writes: [] as string[],
+    bodies: [] as unknown[],
   };
   const operationId = crypto.randomUUID();
   await page.route("**/api/v1/conversations**", async (route) => {
     const url = new URL(route.request().url());
     if (route.request().method() === "POST") {
       state.writes.push(url.pathname);
+      state.bodies.push(route.request().postDataJSON());
       if (state.mode === "send") {
         state.turns = [state.result];
         await route.fulfill({ json: { data: state.result } });
@@ -218,6 +220,69 @@ for (const mode of ["send", "poll"] as const) {
     await page.reload();
     await expect(card(page)).toBeVisible();
     expect(state.writes).toEqual([`/api/v1/conversations/${id}/turns`]);
+  });
+}
+
+for (const [format, content] of [
+  ["plain", "Chicken dinner"],
+  [
+    "measured",
+    "Dinner with 200 g CHICKEN BREASTS (boneless, skinless) and rice",
+  ],
+  ["list", "Make dinner:\n- chicken-breast, diced\n- 1/2 cup rice"],
+  [
+    "json",
+    'Make dinner: [{"name":"chicken breast","quantity":0.2,"unit":"kg"}]',
+  ],
+] as const) {
+  test(`${format} ingredient input sends unchanged and displays the returned chicken recipe`, async ({
+    page,
+  }) => {
+    const state = await recipeBackend(page);
+    const recipe = recipeFixture();
+    recipe.title = "Chicken breast and rice dinner";
+    recipe.ingredients.push({
+      lineId: "chicken",
+      name: "chicken breast",
+      quantity: 200,
+      unit: "g",
+      inventoryStatus: "unknown",
+    });
+    recipe.instructions.push({
+      step: 3,
+      text: "Cook the chicken breast to an internal temperature of 165 F, measured with a food thermometer.",
+      ingredientLineIds: ["chicken"],
+    });
+    recipe.nutrition = {
+      ...recipe.nutrition,
+      status: "unavailable",
+      nutrients: [],
+      mappings: [],
+      sources: [],
+      coverage: [],
+      unknownComponents: [],
+    };
+    recipe.sources = recipe.sources.filter((source) => source.kind !== "usda");
+    const turn = { ...recipeTurn(), recipe };
+    turn.messages[0]!.content = content;
+    state.result = turn;
+    await open(page);
+    await page
+      .getByRole("textbox", { name: "What would you like to cook?" })
+      .fill(content);
+    await page
+      .getByRole("button", { name: "Send request", exact: true })
+      .click();
+    const chicken = page.getByRole("region", {
+      name: recipe.title,
+      exact: true,
+    });
+    await expect(chicken).toBeVisible();
+    await expect(chicken).toContainText("165 F");
+    expect(state.bodies).toMatchObject([{ content }]);
+    await page.reload();
+    await expect(chicken).toBeVisible();
+    expect(state.writes).toHaveLength(1);
   });
 }
 

@@ -20,6 +20,7 @@ from sous_chef.domain.recipe_safety import (
 )
 from sous_chef.domain.recipes import StructuredRecipe
 from sous_chef.services.orchestrator import ExecutionBudget, OrchestratorService
+from sous_chef.telemetry import configure_safe_telemetry
 from test_orchestrator import USAGE, Coordinator, Specialist, answer, call, context
 
 FIXTURE = json.loads(
@@ -356,6 +357,92 @@ def test_temperature_check_does_not_authorize_later_raw_serving_or_cross_contami
         )
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "chicken breast",
+        "boneless skinless chicken breast",
+        "chicken thighs",
+        "raw chicken",
+        "raw chicken breast",
+        "turkey breast",
+        "duck breast",
+        "CHICKEN BREASTS",
+        "chicken-breast",
+        "chicken breast, boneless, skinless",
+        "chicken breasts (boneless, skinless)",
+        "diced chicken breast",
+        "cubed chicken",
+    ],
+)
+def test_poultry_names_can_be_cooked_then_served_without_weakening_temperature_checks(
+    name: str,
+) -> None:
+    cooked_name = name.removeprefix("raw ")
+    hot = f"Cook the {name} to an internal temperature of 165 F, measured with a food thermometer."
+    recipe = full_recipe(names=(name,), instructions=(hot, f"Serve the {cooked_name}."))
+    assert validate_final_recipe(recipe, SafetyProfile()) == recipe
+    with pytest.raises(RecipeSafetyError):
+        validate_final_recipe(
+            recipe.model_copy(
+                update={
+                    "instructions": (
+                        recipe.instructions[0].model_copy(
+                            update={"text": hot.replace("165 F", "145 F")}
+                        ),
+                        recipe.instructions[1],
+                    )
+                }
+            ),
+            SafetyProfile(),
+        )
+    with pytest.raises(RecipeSafetyError):
+        validate_final_recipe(recipe, SafetyProfile(dietary_restrictions=("vegetarian",)))
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["frozen chicken breast", "cooked chicken breast", "chicken stock", "chicken mystery cut"],
+)
+def test_poultry_cut_support_does_not_authorize_unreviewed_preparations(name: str) -> None:
+    with pytest.raises(RecipeSafetyError):
+        validate_final_recipe(
+            full_recipe(
+                names=(name,),
+                instructions=(
+                    f"Cook the {name} to an internal temperature of 165 F, "
+                    "measured with a food thermometer.",
+                ),
+            ),
+            SafetyProfile(),
+        )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "chicken breast (peanut coating)",
+        "chicken breast, peanut oil",
+        "chicken breast (mystery seasoning)",
+        "chicken breast without peanut",
+        "chicken breast (cooked)",
+        "chicken breast (frozen)",
+    ],
+)
+def test_flexible_name_formatting_never_discards_allergens_or_preparation(name: str) -> None:
+    with pytest.raises(RecipeSafetyError):
+        validate_final_recipe(
+            full_recipe(
+                names=(name,),
+                instructions=(
+                    f"Cook the {name} to an internal temperature of 165 F, "
+                    "measured with a food thermometer.",
+                ),
+            ),
+            SafetyProfile(allergies=("peanut",)),
+        )
+
+
 class FullSpecialist(Specialist):
     def __init__(self, *recipes: StructuredRecipe) -> None:
         self.recipes = list(recipes)
@@ -364,6 +451,35 @@ class FullSpecialist(Specialist):
     async def generate(self, *args: Any, **kwargs: Any) -> SpecialistResult:
         result = await super().generate(*args, **kwargs)
         return result.model_copy(update={"recipe": self.recipes.pop(0)})
+
+
+def test_coordinator_projection_must_match_full_instruction_references() -> None:
+    class MismatchedSpecialist(FullSpecialist):
+        async def generate(self, *args: Any, **kwargs: Any) -> SpecialistResult:
+            result = await super().generate(*args, **kwargs)
+            wrong = result.candidate.model_copy(
+                update={
+                    "instructions": (
+                        result.candidate.instructions[0].model_copy(
+                            update={"ingredient_line_ids": ("line1",)}
+                        ),
+                        result.candidate.instructions[1],
+                    )
+                }
+            )
+            return result.model_copy(update={"candidate": wrong})
+
+    recipe = full_recipe(
+        names=("rice", "carrot"),
+        instructions=("Cook the rice.", "Cook the carrot."),
+        references=(("line0",), ("line1",)),
+    )
+    router = Coordinator(call(), answer())
+    result = asyncio.run(OrchestratorService(router, MismatchedSpecialist(recipe)).run(context()))
+    assert result.status == "unable" and result.recipe is None
+    feedback = json.loads(router.requests[1].tool_output or "{}")
+    assert feedback["candidate"] is None
+    assert feedback["rejection_code"] == "invalid_recipe_structure"
 
 
 def test_one_final_gate_regeneration_shares_the_existing_four_call_budget() -> None:
@@ -378,6 +494,20 @@ def test_one_final_gate_regeneration_shares_the_existing_four_call_budget() -> N
     assert isinstance(budget, ExecutionBudget) and budget.model_calls == 4
     correction = router.requests[1].tool_output or ""
     assert "safety_rejected" in correction and "peanut" not in correction
+    assert json.loads(correction)["rejection_code"] == "recipe_prose_unsupported"
+
+
+def test_rejection_diagnostics_only_contain_allowlisted_categories(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    configure_safe_telemetry()
+    bad = full_recipe(instructions=("Cook the rice, then garnish with peanut.",))
+    router = Coordinator(call(), call(call_id="revision"))
+    asyncio.run(OrchestratorService(router, FullSpecialist(bad, full_recipe())).run(context()))
+    assert '"event":"recipe_safety_rejected"' in caplog.text
+    assert '"error_category":"recipe_prose_unsupported"' in caplog.text
+    for private in ("peanut", "garnish", "Make rice", "Simple dinner"):
+        assert private not in caplog.text
 
 
 @pytest.mark.parametrize("accept_rejected", [False, True])

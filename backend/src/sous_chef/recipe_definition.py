@@ -16,11 +16,12 @@ from azure.ai.projects.models import (
     WebSearchTool,
 )
 
+from sous_chef.domain.recipe_safety import METADATA_WORDS
 from sous_chef.domain.recipes import CombinedRecipeDraft, RecipeDraft, WebDraft
 from sous_chef.settings import ConfigurationError
 
-RECIPE_POLICY_VERSION = 5
-COMBINED_RECIPE_POLICY_VERSION = 6
+RECIPE_POLICY_VERSION = 6
+COMBINED_RECIPE_POLICY_VERSION = 7
 RECIPE_MODEL = "gpt-5.4"
 RECIPE_KNOWLEDGE_LABEL = "curated_recipes"
 RECIPE_KNOWLEDGE_TOOL = "knowledge_base_retrieve"
@@ -33,7 +34,8 @@ class RecipePhase(StrEnum):
     COMBINED = "combined"
 
 
-RECIPE_INSTRUCTIONS = """
+RECIPE_INSTRUCTIONS = (
+    """
 You are AI Sous Chef's Recipe + Nutrition specialist, powered by GPT-5.4.
 Produce one practical personalized recipe draft using the provided curated
 recipe grounding and the complete current context. Return only the specified
@@ -53,6 +55,16 @@ servings, measured ingredients where known, ordered steps referencing every
 ingredient line ID, and concise fit reasons. Include every consumed ingredient,
 including garnishes/oil/sauces; do not hide ingredients in instruction prose.
 Use null for genuinely unknown amounts or units; never invent inventory.
+Accept ingredient input as ordinary sentences, comma-separated names, newline
+or bullet lists, or JSON objects/lists. Inputs may include plurals, mixed case,
+hyphens, preparation notes in commas/parentheses, and explicit amounts such as
+"200 g chicken breasts", "0.5 kg chicken", or "1/2 cup rice". Normalize these into
+separate ingredient name, quantity and unit fields. Keep all food/allergen and
+preparation information; never strip a sauce, coating, unknown word or raw/cooked
+qualifier to make an ingredient pass. Do not equate raw and cooked groceries or
+infer stock quantities from a food name. Keep ambiguous amounts null rather
+than guessing. The Orchestrator owns user clarification; do not call it as a
+tool, invent another output format, or claim an ambiguous product was approved.
 Substitutions name the original ingredient and reference a replacement that
 is actually in the ingredient list, with a brief reason. Never suggest an
 allergy-conflicting replacement. No unconditional 'safe' or allergen-free claims.
@@ -85,7 +97,7 @@ Adapt the source; do not copy an entire recipe.
 The output is an unsaved candidate, not saved/cooked or final safety-approved.
 Final deterministic validation against the latest profile occurs outside models.
 
-Final output policy version 1 deliberately supports a small, checked English
+Final output policy version 2 deliberately supports a small, checked English
 instruction grammar. Use exact declared ingredient names (singular/plural is
 allowed), not pronouns, unspecified seasonings, alternative foods or vague mixtures.
 Each instruction must be one of Cook/Boil/Simmer/Steam/Saute/Bake/Roast/Soften/Heat/
@@ -97,6 +109,14 @@ Use simple descriptive titles and neutral fit reasons such as "Fits the time
 budget." Omit adaptations unless needed. A substitution reason should be exactly
 "Use REPLACEMENT instead of ORIGINAL." Never put extra cooking directions in
 titles, reasons or adaptations.
+Titles, fit reasons, adaptations and substitution reasons may contain only
+declared ingredient names, the neutral words listed below, and a number followed
+by "minute" within the total time budget. Do not invent dish labels such as
+"skillet" or "stir-fry", or claims such as "high protein". For example, with
+chicken breast and rice, use "Chicken breast and rice dinner" as the title and
+"Fits the time budget." as a fit reason. Prefer adaptations=[] and substitutions=[]
+when no substitution is needed. The ingredient name, not a cooking vessel or
+an undeclared food, follows every instruction verb.
 
 Animal foods require a separate exact step:
 "Cook the NAME to an internal temperature of N F, measured with a food thermometer."
@@ -105,6 +125,14 @@ and 145 F for finfish. Whole cuts of beef/pork/lamb/veal/steak require 145 F and
 the suffix ", then rest for 3 minutes." Cook animal foods before mixing or serving.
 Animal ingredient names may qualify the supported food only with fresh, raw, whole,
 boneless, skinless, lean, ground or minced. Ground/minced finfish is unsupported.
+Supported poultry cuts are chicken breast/thigh/drumstick/wing, turkey breast,
+and duck breast; all still require 165 F. Use those exact names, optionally with
+the supported qualifiers. Poultry also supports chopped, cubed, diced, sliced
+and trimmed. Commas, parentheses and hyphens do not change a declared food's
+identity; unknown words still fail validation. Prefer a simple name such as
+"diced chicken breast" rather than embedding amounts or directions in the name.
+A declared raw ingredient may appear in its thermometer
+step; after cooking, refer to it without "raw". Never serve a raw animal food.
 Previously cooked/roasted plant foods require the same thermometer step at 165 F.
 Use only reviewed, unambiguous foods. This policy does not yet support eggs,
 dairy, shellfish, flour/dough, dry pulses (use canned), processed animal foods,
@@ -112,6 +140,9 @@ frozen/previously cooked animal foods, microwave/thaw/storage directions,
 fermentation/preservation, or arbitrary free-form instructions. Do not invent
 support for them or claim that a rejected dish was approved.
 """.strip()
+    + "\n\nAllowed neutral metadata words:\n"
+    + " ".join(sorted(METADATA_WORDS))
+)
 
 WEB_GROUNDING_INSTRUCTIONS = """
 Retrieve current public food information for the exact public query supplied.

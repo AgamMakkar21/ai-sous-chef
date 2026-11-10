@@ -612,7 +612,7 @@ checks the latest profile and ingredient-bearing prose before display/persistenc
 
 ## Final recipe gate (ASC-36)
 
-`domain/recipe_safety.py` policy **1** revalidates the actual serialized
+`domain/recipe_safety.py` policy **2** revalidates the actual serialized
 `StructuredRecipe`, not just its nominal Python type or fit projection. It uses
 the reviewed ingredient catalog and ASC-35's deterministic hard-constraint checks.
 Every food must resolve unambiguously even when the profile has no restrictions.
@@ -650,6 +650,14 @@ approves unknown directions. This can reject otherwise reasonable recipes.
 - Animal ingredient qualifiers are limited to fresh, raw, whole, boneless,
   skinless, lean, ground and minced. Other catalog preparation descriptors cannot
   silently inherit whole-cut cooking rules. Ground/minced finfish is unsupported.
+- Reviewed poultry cuts include chicken breast/thigh/drumstick/wing, turkey breast
+  and duck breast. Plurals, case, hyphens, commas and parentheses are accepted:
+  `CHICKEN BREASTS`, `chicken-breast`, `chicken breast, boneless, skinless` and
+  `chicken breasts (boneless, skinless)` resolve to the same declared food.
+  Poultry may also be chopped, cubed, diced, sliced or trimmed, but still requires
+  the 165 F thermometer step. A declared `raw chicken` can appear in that step;
+  later instructions must omit `raw`. Frozen/cooked qualifiers, unknown words,
+  sauces, coatings and allergens are never discarded to force a match.
 - Eggs, dairy, shellfish, flour/dough, uncanned pulses, processed animal products,
   frozen/previously cooked animal foods, preservation, fermentation, microwave
   and arbitrary free-form handling are not approved by this policy version.
@@ -671,12 +679,44 @@ real-world handling, ingredient labels, cross-contact, recalls or medical fitnes
 `OrchestratorService` checks each full candidate **after all tool enrichment** and
 again on every specialist revision. A projection must match the full recipe.
 Rejected text never enters the coordinator function result: it receives only
-`safety_rejected` and the existing revision allowance. The request still has at
+`safety_rejected`, an allowlisted `rejection_code` and the existing revision
+allowance. The same code appears in privacy-safe `recipe_safety_rejected`
+operational events, without ingredient names, user text or rejected recipes.
+The Orchestrator includes the corresponding correction in its one revision.
+The request still has at
 most four model calls and two specialist invocations (one regeneration), shared
 with nested tool/model work. Exhausting the final-gate attempt/call budget returns
 a fixed honest `unable` result with no recipe or projection. A model cannot accept
 a rejected candidate. Transport/provider failures remain explicit; they are not
 replayed as regeneration.
+
+### Flexible chat input and dev activation
+
+Chat input is not the final recipe grammar. Users can supply sentences,
+comma-separated ingredients, newline/bullet lists or JSON ingredient objects,
+including amounts such as `200 g chicken breasts`, `0.5 kg chicken` and
+`1/2 cup rice`. The specialist normalizes explicit amounts into the structured
+`name`, `quantity` and `unit` fields; it must retain every food and preparation
+qualifier, preserve stored restrictions, and leave genuinely ambiguous
+quantities/inventory unknown. It never requires users to write the thermometer
+template themselves.
+
+The specialist source includes the gate's neutral metadata vocabulary directly
+from `domain/recipe_safety.py`, so an otherwise valid recipe is not rejected for
+invented dish labels or fit claims. Source policy versions are now Orchestrator
+**3**, Recipe + Nutrition **6**, and combined Recipe + Nutrition **7**. These are
+policy versions, **not** Foundry agent-version pins. Existing immutable agents
+do not acquire the new instructions when only backend code changes.
+
+Before deploying this change to dev, an authorized owner must publish and verify
+new Orchestrator and combined-specialist sources with the existing reviewed
+publisher, then update `deploy/agents.dev.json` with the exact returned numeric
+source versions. Do not guess those versions or edit old published versions.
+Use the reviewed dev delivery workflow for the backend and source changes
+together. Finish acceptance in a signed-in UI with `Chicken dinner` and the
+input formats above; confirm recipe instructions, honest USDA coverage and
+history reload. Offline transport/browser fixtures do not prove live agent
+interpretation, credentials, tool identity or deployment acceptance.
 
 `ValidatedReply` requires a full candidate whenever it carries a
 `generatedRecipeId`. `ChatService` reads the current owned profile immediately
