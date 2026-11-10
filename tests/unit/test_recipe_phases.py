@@ -19,7 +19,7 @@ def test_persisted_phase_has_only_its_capabilities_and_strict_output(phase: Reci
     definition = source.definition.as_dict()
     assert source.name == "recipe-agent"
     assert source.metadata["asc_recipe_phase"] == phase.value
-    assert source.metadata["asc_policy_version"] == ("7" if phase == RecipePhase.COMBINED else "6")
+    assert source.metadata["asc_policy_version"] == ("8" if phase == RecipePhase.COMBINED else "7")
     assert definition["text"]["format"]["strict"] is True
     expected_schema = (
         CombinedRecipeDraft
