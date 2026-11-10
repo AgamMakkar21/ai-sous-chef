@@ -14,7 +14,7 @@ from sous_chef.domain.recipes import StructuredRecipe
 
 @dataclass(frozen=True)
 class OrchestratorPolicy:
-    version: int = 2
+    version: int = 3
     max_model_calls: int = 4
     max_specialist_calls: int = 2
     max_revisions: int = 1

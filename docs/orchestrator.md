@@ -49,7 +49,7 @@ on a revision. The Orchestrator owns fit review; it does not invent nutrition.
 
 ## Backend limits and candidate validation
 
-The frozen policy in `domain/orchestrator.py` is version 2:
+The frozen policy in `domain/orchestrator.py` is version 3:
 
 | Limit | Value |
 | --- | --- |
@@ -92,6 +92,9 @@ uses the existing deterministic ingredient validator against stored restrictions
 blocked/unknown ingredients and over-budget times cannot be accepted by the LLM.
 Raw rejected candidates are not fed back; the Orchestrator gets a rejection
 category and may clarify, stop, or request its one revision.
+Final-gate rejections also include an allowlisted `rejection_code` for structure,
+ingredients, prose or cooking, never rejected text. The coordinator uses it to
+give the specialist a precise correction within the same revision allowance.
 
 The normal path is route -> specialist -> fit review (three model calls).
 For [conditional Web IQ](recipe-specialist.md#conditional-web-iq), the strict
@@ -106,7 +109,8 @@ fit reasons or an explicit rejection, **not** another unbounded review loop.
 [ASC-36's final gate](recipe-specialist.md#final-recipe-gate-asc-36) now checks
 every full structured candidate after enrichment and every revision, including
 ingredient-bearing instructions and cooking policy. It rejects a projection
-that does not match the full recipe. One rejection can use the existing single
+that does not match the full recipe, including each step's ingredient references.
+One rejection can use the existing single
 revision, never a separate model budget; exhausted safety attempts return a fixed
 `unable` response without a recipe. ASC-38 passes the full recipe into the
 chat completion hook, which rereads the current owned profile before rendering

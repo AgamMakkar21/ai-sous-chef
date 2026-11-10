@@ -70,6 +70,11 @@ class ErrorCategory(StrEnum):
     ORCHESTRATOR_TIMEOUT = "orchestrator_timeout"
     ORCHESTRATOR_SPECIALIST_FAILED = "orchestrator_specialist_failed"
     ORCHESTRATOR_CANDIDATE_REJECTED = "orchestrator_candidate_rejected"
+    RECIPE_STRUCTURE = "invalid_recipe_structure"
+    RECIPE_INGREDIENT = "recipe_ingredient_rejected"
+    RECIPE_PROSE = "recipe_prose_unsupported"
+    RECIPE_COOKING = "recipe_cooking_rejected"
+    RECIPE_PROFILE = "recipe_profile_unavailable"
 
 
 class Event(StrEnum):
@@ -89,6 +94,7 @@ class Event(StrEnum):
     RECIPE_COMPLETED = "recipe_completed"
     RECIPE_FAILED = "recipe_failed"
     RECIPE_CANCELLED = "recipe_cancelled"
+    RECIPE_SAFETY_REJECTED = "recipe_safety_rejected"
     USDA_COMPLETED = "usda_completed"
     USDA_UNAVAILABLE = "usda_unavailable"
     USDA_FAILED = "usda_failed"

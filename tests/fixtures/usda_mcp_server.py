@@ -30,6 +30,12 @@ FOODS = [
         "shrt_desc": "CARROTS,RAW",
         "food_group": "Fixture",
     },
+    {
+        "fdc_id": "99905",
+        "long_desc": "chicken breast",
+        "shrt_desc": "CHICKEN BREAST",
+        "food_group": "Fixture",
+    },
 ]
 if MODE == "leading_zero":
     FOODS[0]["fdc_id"] = "00001"

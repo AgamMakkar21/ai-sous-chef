@@ -268,6 +268,7 @@ class OrchestratorService:
             recipe = specialist.recipe
             status = _candidate_status(candidate, context, minutes)
             final_rejected = False
+            rejection_code: RecipeSafetyFailure | None = None
             if recipe is not None:
                 try:
                     recipe = validate_final_recipe(
@@ -280,16 +281,22 @@ class OrchestratorService:
                     if (
                         [(line.line_id, line.name) for line in recipe.ingredients]
                         != [(line.line_id, line.name) for line in candidate.ingredients]
-                        or [step.text for step in recipe.instructions]
-                        != [step.text for step in candidate.instructions]
+                        or [(step.text, step.ingredient_line_ids) for step in recipe.instructions]
+                        != [
+                            (step.text, step.ingredient_line_ids) for step in candidate.instructions
+                        ]
                         or recipe.title != candidate.title
                         or recipe.total_minutes != candidate.total_minutes
                         or recipe.fit_reasons != candidate.fit_reasons
                     ):
                         raise RecipeSafetyError(RecipeSafetyFailure.STRUCTURE)
-                except RecipeSafetyError:
+                except RecipeSafetyError as error:
                     status = "safety_rejected"
                     final_rejected = True
+                    rejection_code = error.code
+                    operational_event(
+                        Event.RECIPE_SAFETY_REJECTED, category=ErrorCategory(error.code.value)
+                    )
             if budget.specialist_calls == POLICY.max_specialist_calls:
                 if final_rejected:
                     return OrchestrationResult(status="unable", explanation=UNABLE)
@@ -308,6 +315,7 @@ class OrchestratorService:
                 {
                     "status": status,
                     "revisions_remaining": POLICY.max_revisions,
+                    "rejection_code": rejection_code,
                     "candidate": candidate.model_dump(mode="json")
                     if status == "candidate"
                     else None,
