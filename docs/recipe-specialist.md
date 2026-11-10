@@ -270,13 +270,18 @@ user or conversation metadata. The logical `usda_nutrition` tool is still one
 reserved composite operation and makes no additional model calls.
 
 Search sends all punctuation-separated terms to FDC as required terms. It reads
-one relevance-ranked page of at most 200 Foundation/SR Legacy records, validates
-it, preserves every term locally, then ranks before the app's 20-candidate limit.
+one relevance-ranked page of at most 20 Foundation/SR Legacy records, validates
+it, preserves every term locally, then ranks before the requested candidate limit.
+The smaller source page keeps ordinary broad searches such as rice and salt
+within the unchanged 2 MiB response budget; requesting 200 verbose source records
+can exceed that budget and abort chat. No additional pages or retries are fetched.
 Preparation words match whole words (`raw` does not match `strawberry`).
 Exact descriptions rank first, then raw ingredients, other entries and prepared
 food categories. This prioritizes raw chicken without inventing a cut/skin.
 `truncated=true` also reports an incomplete upstream page, even with fewer than
 20 eligible candidates: refine the query rather than assume exhaustive results.
+An unresolved broad search leaves that ingredient's nutrition explicitly
+unavailable; it does not prevent delivery of an otherwise valid recipe.
 
 A name-only lookup requires one unambiguous description/short-description match:
 case/whitespace/comma normalization or identical words in a different order.
