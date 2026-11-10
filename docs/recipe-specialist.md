@@ -467,8 +467,13 @@ The ordinary non-web path uses one specialist model invocation:
 3. Supply exactly `{"query_variants":[<unchanged backend query>]}` as untrusted
    tool-argument data, then validate one completed, approved MCP call with that
    exact object. No splitting, rewriting, extra variants, resource selectors
-   or retrieval-limit overrides are accepted. Validate retrieved evidence and the draft,
-   its actual cited source IDs, exact source quotes, time budget, declared skill
+   or retrieval-limit overrides are accepted. Validate retrieved evidence and the draft.
+   The backend attaches the actual retrieved curated source IDs and retains only
+   exact source quotes from their verified snippets. Missing, malformed or
+   unverifiable model-generated attribution is replaced/omitted, with a
+   `recipe_attribution_normalized` operational event containing no source text.
+   Optional display attribution cannot abort an otherwise valid recipe; invalid
+   retrieval evidence still fails closed. Validate the time budget, declared skill
    ceiling and ingredient restrictions. Hard allergies/restrictions take priority
    over current requests, taste and nutrition goals. Explicit preferences outrank
    learned state. A blocked or ambiguous ingredient list is rejected.
@@ -595,8 +600,8 @@ are explicit `null`, not omitted or guessed.
 | `substitutions` | Up to 30 original names/reasons referencing replacement lines actually used in the recipe |
 | `instructions` | 1-30 sequential steps, text up to 500 characters, declared ingredient references; every ingredient is referenced |
 | `fitReasons`, `adaptations` | Up to 10 entries each, 240 characters each; at least one fit reason; adaptations distinguish creative choices from cited source content |
-| `sourceIds` | 1-3 unique curated source IDs actually supplied by retrieval |
-| `sourceClaims` | Up to 10 exact quotes (240 characters each) and their cited source IDs; backend checks each quote against the retrieved snippet. These describe the source, not proof about an adaptation. |
+| `sourceIds` | 1-3 unique curated source IDs attached by the backend from verified retrieval evidence, not trusted from generated metadata |
+| `sourceClaims` | Up to 10 exact quotes (240 characters each) and their cited source IDs; backend retains only quotes verified against their actual retrieved snippets. Unverifiable/malformed optional quotations are omitted and logged, not grounds for discarding the recipe. These describe the source, not proof about an adaptation. |
 | Enriched ingredients | Backend-resolved canonical ID or null, `available/missing/unknown`, and supporting grocery row IDs |
 | `shoppingItems` | Exactly the missing ingredient lines, with shortage amounts where determinable |
 | `nutrition` | `known/partial/unavailable`, serving basis/count, attributed nutrient amounts, exact ingredient mappings, USDA source/version/food IDs, informational-estimate/not-medical-advice notice |
