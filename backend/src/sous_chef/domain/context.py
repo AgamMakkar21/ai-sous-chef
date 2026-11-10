@@ -7,6 +7,12 @@ from pydantic import UUID4, AwareDatetime, Field, StringConstraints
 
 from sous_chef.domain.authorization import AuthenticatedUser
 from sous_chef.domain.conversations import ConversationModel
+from sous_chef.domain.food_safety import (
+    IngredientLine,
+    SafetyProfile,
+    Verdict,
+    validate_ingredients,
+)
 from sous_chef.domain.groceries import GroceryRow
 from sous_chef.domain.profiles import ExplicitPreferences, PreferenceText
 from sous_chef.domain.recipes import StructuredRecipe
@@ -22,6 +28,28 @@ InsightKey = Annotated[
 LearnedField = Literal[
     "likes", "dislikes", "preferredCuisines", "spicePreference", "nutritionGoals"
 ]
+
+
+def conflicts_with_explicit(field: LearnedField, value: str, explicit: ExplicitPreferences) -> bool:
+    normalized = value.casefold()
+    if field == "spicePreference":
+        return normalized != explicit.spice_preference
+    if field == "likes":
+        safety = validate_ingredients(
+            SafetyProfile(
+                allergies=explicit.allergies,
+                dietary_restrictions=explicit.dietary_restrictions,
+                dislikes=explicit.dislikes,
+            ),
+            [IngredientLine(line_id="learned", name=value)],
+        )
+        return safety.verdict != Verdict.PASS or bool(safety.dislike_matches)
+    if field == "dislikes":
+        return normalized in {item.casefold() for item in explicit.likes}
+    selections = (
+        explicit.preferred_cuisines if field == "preferredCuisines" else explicit.nutrition_goals
+    )
+    return bool(selections) and normalized not in {item.casefold() for item in selections}
 
 
 class LearnedCandidate(ConversationModel):

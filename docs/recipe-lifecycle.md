@@ -156,8 +156,10 @@ do not enable keys or public/all-IP access as a workaround. See
 
 The [Functions host](feedback-host.md#feedback-admission-and-deferred-processing)
 now filters immutable feedback revisions through an identity-based change-feed
-trigger. Its processor remains deliberately disconnected until ASC-47/48 deliver
-extraction and durable application. Deploying this API, provisioning the host,
+trigger. ASC-47 supplies the standalone
+[extraction adapter](preference-extraction.md); the processor remains disconnected
+until ASC-48 adds owned-context loading and durable application.
+Deploying this API, provisioning the host,
 or checking host health does not complete asynchronous-learning MVP acceptance.
 The later worker's narrowly scoped product-write/Foundry grants and deployment
 remain separate work. Do not manually mark pending feedback completed or broaden

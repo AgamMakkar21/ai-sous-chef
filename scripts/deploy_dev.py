@@ -814,14 +814,26 @@ def worker_target(
 
 def worker_package(sha: str, output: Path) -> None:
     archive = subprocess.run(
-        ["git", "archive", "--format=zip", sha, "worker"],
+        [
+            "git",
+            "archive",
+            "--format=zip",
+            sha,
+            "worker",
+            "backend/src/sous_chef/__init__.py",
+            "backend/src/sous_chef/domain",
+        ],
         check=True,
         capture_output=True,
         cwd=ROOT,
     ).stdout
     with zipfile.ZipFile(io.BytesIO(archive)) as source, zipfile.ZipFile(output, "w") as dest:
         for entry in source.infolist():
-            relative = entry.filename.removeprefix("worker/")
+            relative = (
+                entry.filename.removeprefix("worker/")
+                if entry.filename.startswith("worker/")
+                else entry.filename.removeprefix("backend/src/")
+            )
             if not entry.is_dir() and relative != "release.json":
                 dest.writestr(relative, source.read(entry.filename))
         dest.writestr("release.json", json.dumps({"commit": sha}))

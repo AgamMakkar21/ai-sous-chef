@@ -423,8 +423,10 @@ class FunctionsDeliveryTests(unittest.TestCase):
     def test_package_uses_committed_worker_and_has_correct_zip_root(self) -> None:
         source = io.BytesIO()
         with zipfile.ZipFile(source, "w") as archive:
-            for name in ("host.json", "function_app.py", "requirements.txt"):
+            for name in ("host.json", "function_app.py", "extraction.py", "requirements.txt"):
                 archive.writestr(f"worker/{name}", name)
+            for name in ("__init__.py", "domain/extraction.py", "domain/food_safety.py"):
+                archive.writestr(f"backend/src/sous_chef/{name}", name)
             archive.writestr("worker/release.json", "stale")
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "worker.zip"
@@ -434,12 +436,30 @@ class FunctionsDeliveryTests(unittest.TestCase):
             ) as run:
                 delivery.worker_package(SHA, path)
             self.assertEqual(
-                run.call_args.args[0], ["git", "archive", "--format=zip", SHA, "worker"]
+                run.call_args.args[0],
+                [
+                    "git",
+                    "archive",
+                    "--format=zip",
+                    SHA,
+                    "worker",
+                    "backend/src/sous_chef/__init__.py",
+                    "backend/src/sous_chef/domain",
+                ],
             )
             with zipfile.ZipFile(path) as archive:
                 self.assertEqual(
                     set(archive.namelist()),
-                    {"host.json", "function_app.py", "requirements.txt", "release.json"},
+                    {
+                        "host.json",
+                        "function_app.py",
+                        "extraction.py",
+                        "requirements.txt",
+                        "release.json",
+                        "sous_chef/__init__.py",
+                        "sous_chef/domain/extraction.py",
+                        "sous_chef/domain/food_safety.py",
+                    },
                 )
                 self.assertEqual(json.loads(archive.read("release.json")), {"commit": SHA})
 
