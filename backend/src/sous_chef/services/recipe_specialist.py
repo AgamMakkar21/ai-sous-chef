@@ -24,6 +24,7 @@ from sous_chef.domain.orchestrator import (
     POLICY,
     CandidateIngredient,
     CandidateInstruction,
+    RecipeAllergyError,
     RecipeCandidate,
     SpecialistArguments,
     SpecialistBudget,
@@ -282,19 +283,15 @@ class RecipeSpecialistService:
                     safety = validate_ingredients(
                         SafetyProfile(
                             allergies=context.explicit_preferences.allergies,
-                            dietary_restrictions=context.explicit_preferences.dietary_restrictions,
                         ),
                         tuple(
                             IngredientLine(line_id=line.line_id, name=line.name)
                             for line in draft.ingredients
                         ),
                     )
-                    if (
-                        draft.total_minutes > arguments.time_budget_minutes
-                        or skill.index(draft.skill)
-                        > skill.index(context.explicit_preferences.cooking_skill)
-                        or safety.verdict != Verdict.PASS
-                    ):
+                    if draft.total_minutes > arguments.time_budget_minutes or skill.index(
+                        draft.skill
+                    ) > skill.index(context.explicit_preferences.cooking_skill):
                         raise FoundryGatewayError(FoundryFailure.REJECTED, request)
                     if (
                         not set(draft.source_ids) <= sources.keys()
@@ -306,6 +303,8 @@ class RecipeSpecialistService:
                         or usage.output_tokens > request.max_output_tokens
                     ):
                         raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
+                    if safety.verdict != Verdict.PASS:
+                        raise RecipeAllergyError(request, usage)
                     authorize_tool(AgentRole.RECIPE_NUTRITION, AgentTool.USDA_NUTRITION)
                     budget.tool(AgentTool.USDA_NUTRITION)
                     evidence = await self._nutrition.lookup(

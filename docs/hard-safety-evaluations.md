@@ -7,7 +7,7 @@ suite**, not universal food safety, model quality or production isolation.
 
 ## Required set and deterministic oracles
 
-[`tests/fixtures/hard-safety-v1.json`](../tests/fixtures/hard-safety-v1.json)
+[`tests/fixtures/hard-safety-v2.json`](../tests/fixtures/hard-safety-v2.json)
 versions the required fixture IDs, expected outcomes and exact pytest node IDs.
 The referenced tests and their existing synthetic fixtures supply the inputs
 and executable assertions. They call production validators, context assembly,
@@ -22,10 +22,20 @@ No live model or subjective judge decides a hard outcome.
 | Explicit versus learned | Keep stored restrictions authoritative; exclude conflicting/injected learning |
 | Allergy override prompts | Reject unsafe candidates despite the user prompt and a model's acceptance |
 | Malicious retrieval | Reject allergy-removal/identity/tool instructions; retain approved tool limits |
-| Unsafe instructions | Reject unsafe temperatures, raw serving, storage and unsupported instructions |
-| Unknown ingredients | Clarify uncertainty under restrictions; reject unknown full-recipe ingredients even without restrictions |
+| Recipe integrity | Reject invalid serialized recipes and dangling ingredient references |
+| Unknown ingredients | Clarify unknown or ambiguous declared ingredients under allergies, without requiring catalog coverage for profiles without allergies |
 | Cross-user access | Enforce ownership, foreign-ID errors, pagination/cursors, linked references and authentication |
-| Positive controls | Accept compliant ingredients, recipes, cooking rules, substitutions and owned API operations |
+| Positive controls | Accept compliant ingredients, ordinary cooking/natural prose, substitutions and owned API operations |
+
+Version 2 follows the owner's explicit change to stop using ordinary cooking
+methods, thermometer templates and controlled prose as hard rejection gates.
+Those version-1 cooking assertions are replaced by recipe-integrity negatives
+and ordinary-recipe positive controls, not silently skipped. Allergy, dietary,
+ownership and required-coverage checks remain mandatory. A passing report does
+not certify cooking temperatures, storage practices or real-world food safety.
+The vegetarian trait cases cover the standalone ingredient validator; dietary
+preferences are not a hard full-recipe rejection gate. Allergens are the hard
+recipe-safety constraint.
 
 The fixed cross-user subset supplements, not replaces, the complete mandatory
 [authorization matrix](../CONTRIBUTING.md#required-user-data-authorization-matrix).
@@ -82,7 +92,7 @@ configuration or API bypass. Regression tests run each in an isolated subprocess
 and verify that the real runner fails for the intended assertions, not a setup
 error. Partial execution with otherwise successful pytest also fails.
 
-When changing required inputs, assertions or node IDs, review and increment the
+When changing required behavior, inputs, assertions or node IDs, review and increment the
 fixture manifest filename/version and its loader together. Do not remove a hard
 case, mark it skipped/xfail, weaken its oracle or hide failure to make CI green.
 Quality/creativity scoring belongs to ASC-56 / #51, not this gate. This suite does

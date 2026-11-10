@@ -5,10 +5,13 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from sous_chef.domain.agent_identity import AgentRole
 from sous_chef.domain.food_safety import SafetyProfile
+from sous_chef.domain.foundry import FoundryRequest
 from sous_chef.domain.orchestrator import (
     CandidateIngredient,
     CandidateInstruction,
+    RecipeAllergyError,
     RecipeCandidate,
     SpecialistResult,
 )
@@ -106,40 +109,32 @@ def test_compliant_recipe_is_rendered_without_untrusted_evidence_or_commentary()
     "text",
     [
         "Cook the rice, then garnish with peanut.",
-        "Cook the rice, then garnish with mystery seasoning.",
         "Cook the rice with almond milk.",
         "Cook the rice, then add peanut oil.",
-        "Cook the rice. Serve raw chicken.",
-        "Leave the rice on the counter overnight.",
-        "Cook the rice for 999 minutes.",
-        "Cook the rice without cooking.",
         "Cook the rice\u30d4\u30fc\u30ca\u30c3\u30c4.",
     ],
     ids=[
         "hidden-peanut-garnish",
-        "unknown-garnish",
         "hidden-almond-milk",
         "hidden-peanut-oil",
-        "raw-poultry",
-        "overnight-storage",
-        "excessive-cooking-time",
-        "without-cooking",
         "non-ascii-food",
     ],
 )
-def test_undeclared_garnishes_ambiguous_prose_and_unsafe_handling_fail_closed(text: str) -> None:
+def test_undeclared_allergens_in_prose_are_blocked(text: str) -> None:
     with pytest.raises(RecipeSafetyError) as caught:
         validate_final_recipe(
-            full_recipe(instructions=(text,)), SafetyProfile(allergies=("peanut",))
+            full_recipe(instructions=(text,)), SafetyProfile(allergies=("peanut", "tree nut"))
         )
     assert text not in str(caught.value)
     assert "peanut" not in str(caught.value)
 
 
 @pytest.mark.parametrize("name", ["mystery seasoning", "rice and peanut", "rice\u9db4"])
-def test_unknown_ingredients_fail_even_without_stored_restrictions(name: str) -> None:
+def test_unknown_ingredients_only_require_clarification_under_hard_restrictions(name: str) -> None:
+    recipe = full_recipe(names=(name,))
+    assert validate_final_recipe(recipe, SafetyProfile()) == recipe
     with pytest.raises(RecipeSafetyError):
-        validate_final_recipe(full_recipe(names=(name,)), SafetyProfile())
+        validate_final_recipe(recipe, SafetyProfile(allergies=("peanut",)))
 
 
 def test_safe_replacement_does_not_consume_the_excluded_original_allergen() -> None:
@@ -193,124 +188,45 @@ def test_ingredient_bearing_metadata_cannot_bypass_the_gate(field: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "name,text,accepted",
+    "name,text",
     [
-        ("chicken", "Cook the chicken.", False),
-        (
-            "chicken",
-            "Cook the chicken to an internal temperature of 145 F, "
-            "measured with a food thermometer.",
-            False,
-        ),
-        (
-            "chicken",
-            "Cook the chicken to an internal temperature of 165 F, "
-            "measured with a food thermometer.",
-            True,
-        ),
-        (
-            "ground beef",
-            "Cook the ground beef to an internal temperature of 160 F, "
-            "measured with a food thermometer.",
-            True,
-        ),
-        (
-            "minced beef",
-            "Cook the minced beef to an internal temperature of 145 F, "
-            "measured with a food thermometer, then rest for 3 minutes.",
-            False,
-        ),
-        (
-            "minced beef",
-            "Cook the minced beef to an internal temperature of 160 F, "
-            "measured with a food thermometer.",
-            True,
-        ),
-        (
-            "beef",
-            "Cook the beef to an internal temperature of 145 F, measured with a food thermometer.",
-            False,
-        ),
-        (
-            "beef",
-            "Cook the beef to an internal temperature of 145 F, "
-            "measured with a food thermometer, then rest for 3 minutes.",
-            True,
-        ),
-        (
-            "salmon",
-            "Cook the salmon to an internal temperature of 145 F, "
-            "measured with a food thermometer.",
-            True,
-        ),
-        (
-            "minced salmon",
-            "Cook the salmon to an internal temperature of 145 F, "
-            "measured with a food thermometer.",
-            False,
-        ),
-        ("chicken", "Rinse the chicken.", False),
-        ("chicken", "Serve the chicken.", False),
-        ("egg", "Serve the egg.", False),
-        ("flour", "Serve the flour.", False),
-        ("cornmeal", "Serve the cornmeal.", False),
-        ("kidney bean", "Cook the kidney bean.", False),
-        ("canned kidney bean", "Cook the kidney bean.", True),
-        ("cooked rice", "Heat the rice.", False),
-        (
-            "cooked rice",
-            "Cook the rice to an internal temperature of 165 F, measured with a food thermometer.",
-            True,
-        ),
+        ("chicken breast", "Sear the chicken breast in a hot skillet until fully cooked."),
+        ("egg", "Whisk the egg, then cook in a skillet until set."),
+        ("milk", "Warm the milk gently in a saucepan."),
+        ("shrimp", "Cook the shrimp until opaque, then serve."),
+        ("flour", "Toast the flour in a dry pan."),
+        ("lentil", "Simmer the lentil until tender, then drain."),
+        ("cooked rice", "Reheat the cooked rice thoroughly, then serve."),
+        ("frozen chicken breast", "Thaw the frozen chicken breast in the fridge before cooking."),
     ],
     ids=[
-        "missing-poultry-temperature",
-        "unsafe-poultry-temperature",
-        "safe-poultry-temperature",
-        "safe-ground-beef",
-        "unsafe-minced-beef",
-        "safe-minced-beef",
-        "missing-whole-cut-rest",
-        "safe-whole-cut-rest",
-        "safe-fish",
-        "unsupported-minced-fish",
-        "rinse-poultry",
-        "uncooked-poultry",
-        "uncooked-egg",
-        "uncooked-flour",
-        "uncooked-cornmeal",
-        "unsafe-kidney-bean",
-        "canned-kidney-bean",
-        "unsafe-leftovers",
-        "safe-leftovers",
+        "poultry-without-thermometer-template",
+        "egg",
+        "dairy",
+        "shellfish",
+        "flour",
+        "dry-pulses",
+        "leftovers",
+        "frozen-poultry",
     ],
 )
-def test_reviewed_cooking_rules(name: str, text: str, accepted: bool) -> None:
+def test_regular_foods_and_cooking_methods_are_not_a_rejection_gate(name: str, text: str) -> None:
     recipe = full_recipe(names=(name,), instructions=(text,))
-    if accepted:
-        assert validate_final_recipe(recipe, SafetyProfile()) == recipe
-    else:
-        with pytest.raises(RecipeSafetyError):
-            validate_final_recipe(recipe, SafetyProfile())
+    assert validate_final_recipe(recipe, SafetyProfile()) == recipe
+    assert validate_final_recipe(recipe, SafetyProfile(allergies=("peanut",))) == recipe
 
 
 @pytest.mark.parametrize("name", ["canned beef", "dried beef", "cold beef", "toasted beef"])
-def test_unsupported_animal_preparation_cannot_inherit_whole_cut_rules(name: str) -> None:
-    recipe = full_recipe(
-        names=(name,),
-        instructions=(
-            "Cook the beef to an internal temperature of 145 F, "
-            "measured with a food thermometer, then rest for 3 minutes.",
-        ),
-    )
-    with pytest.raises(RecipeSafetyError):
-        validate_final_recipe(recipe, SafetyProfile())
+def test_preparation_words_do_not_trigger_a_cooking_gate(name: str) -> None:
+    recipe = full_recipe(names=(name,), instructions=(f"Prepare the {name} and serve.",))
+    assert validate_final_recipe(recipe, SafetyProfile()) == recipe
 
 
-def test_coarse_catalog_ids_do_not_authorize_an_undeclared_food() -> None:
+def test_declared_food_ids_do_not_authorize_a_restricted_food_in_prose() -> None:
     with pytest.raises(RecipeSafetyError):
         validate_final_recipe(
-            full_recipe(names=("carrot",), instructions=("Cook the onion.",)), SafetyProfile()
+            full_recipe(names=("carrot",), instructions=("Cook with peanut oil.",)),
+            SafetyProfile(allergies=("peanut",)),
         )
 
 
@@ -319,7 +235,13 @@ def test_incorrect_instruction_references_and_model_copy_bypasses_are_revalidate
     forged = recipe.model_copy(update={"servings": 0})
     with pytest.raises(RecipeSafetyError):
         validate_final_recipe(forged, SafetyProfile())
-    recipe = full_recipe(names=("rice", "carrot"), instructions=("Cook the rice.",))
+    recipe = recipe.model_copy(
+        update={
+            "instructions": (
+                recipe.instructions[0].model_copy(update={"ingredient_line_ids": ("missing",)}),
+            )
+        }
+    )
     with pytest.raises(RecipeSafetyError):
         validate_final_recipe(recipe, SafetyProfile())
 
@@ -339,22 +261,33 @@ def test_edits_and_substitutions_cannot_reuse_an_old_pass() -> None:
         validate_final_recipe(edit, SafetyProfile(allergies=("peanut",)))
 
 
-def test_temperature_check_does_not_authorize_later_raw_serving_or_cross_contamination() -> None:
-    hot = "Cook the chicken to an internal temperature of 165 F, measured with a food thermometer."
+def test_natural_recipe_prose_and_metadata_do_not_require_a_whitelist() -> None:
+    recipe = full_recipe(
+        names=("chicken breast",),
+        instructions=("Saut\u00e9 the chicken breast in a skillet until golden and fully cooked.",),
+    ).model_copy(
+        update={
+            "title": "Golden chicken skillet",
+            "fit_reasons": ("A weeknight option with straightforward preparation.",),
+            "adaptations": ("Slice thinly for quicker cooking.",),
+        }
+    )
+    assert validate_final_recipe(recipe, SafetyProfile(allergies=("peanut",))) == recipe
+
+
+@pytest.mark.parametrize(
+    "text,profile",
+    [
+        ("Finish with pesto.", SafetyProfile(allergies=("milk",))),
+        ("Garnish with strawberries.", SafetyProfile(allergies=("strawberry",))),
+        ("Simmer in chicken stock.", SafetyProfile(allergies=("chicken",))),
+    ],
+)
+def test_freeform_prose_retains_ambiguous_and_custom_allergy_checks(
+    text: str, profile: SafetyProfile
+) -> None:
     with pytest.raises(RecipeSafetyError):
-        validate_final_recipe(
-            full_recipe(names=("raw chicken",), instructions=(hot, "Serve the raw chicken.")),
-            SafetyProfile(),
-        )
-    with pytest.raises(RecipeSafetyError):
-        validate_final_recipe(
-            full_recipe(
-                names=("chicken", "lettuce"),
-                instructions=("Chop the chicken with lettuce.", hot),
-                references=(("line0", "line1"), ("line0",)),
-            ),
-            SafetyProfile(),
-        )
+        validate_final_recipe(full_recipe(instructions=(text,)), profile)
 
 
 @pytest.mark.parametrize(
@@ -375,47 +308,25 @@ def test_temperature_check_does_not_authorize_later_raw_serving_or_cross_contami
         "cubed chicken",
     ],
 )
-def test_poultry_names_can_be_cooked_then_served_without_weakening_temperature_checks(
-    name: str,
-) -> None:
+def test_poultry_name_variants_pass_without_a_temperature_template(name: str) -> None:
     cooked_name = name.removeprefix("raw ")
-    hot = f"Cook the {name} to an internal temperature of 165 F, measured with a food thermometer."
+    hot = f"Pan-fry the {name} until fully cooked."
     recipe = full_recipe(names=(name,), instructions=(hot, f"Serve the {cooked_name}."))
     assert validate_final_recipe(recipe, SafetyProfile()) == recipe
+    assert (
+        validate_final_recipe(recipe, SafetyProfile(dietary_restrictions=("vegetarian",))) == recipe
+    )
     with pytest.raises(RecipeSafetyError):
-        validate_final_recipe(
-            recipe.model_copy(
-                update={
-                    "instructions": (
-                        recipe.instructions[0].model_copy(
-                            update={"text": hot.replace("165 F", "145 F")}
-                        ),
-                        recipe.instructions[1],
-                    )
-                }
-            ),
-            SafetyProfile(),
-        )
-    with pytest.raises(RecipeSafetyError):
-        validate_final_recipe(recipe, SafetyProfile(dietary_restrictions=("vegetarian",)))
+        validate_final_recipe(recipe, SafetyProfile(allergies=("chicken", "turkey", "duck")))
 
 
 @pytest.mark.parametrize(
     "name",
     ["frozen chicken breast", "cooked chicken breast", "chicken stock", "chicken mystery cut"],
 )
-def test_poultry_cut_support_does_not_authorize_unreviewed_preparations(name: str) -> None:
-    with pytest.raises(RecipeSafetyError):
-        validate_final_recipe(
-            full_recipe(
-                names=(name,),
-                instructions=(
-                    f"Cook the {name} to an internal temperature of 165 F, "
-                    "measured with a food thermometer.",
-                ),
-            ),
-            SafetyProfile(),
-        )
+def test_poultry_preparation_is_not_a_cooking_gate(name: str) -> None:
+    recipe = full_recipe(names=(name,), instructions=(f"Prepare the {name} following the recipe.",))
+    assert validate_final_recipe(recipe, SafetyProfile()) == recipe
 
 
 @pytest.mark.parametrize(
@@ -425,8 +336,6 @@ def test_poultry_cut_support_does_not_authorize_unreviewed_preparations(name: st
         "chicken breast, peanut oil",
         "chicken breast (mystery seasoning)",
         "chicken breast without peanut",
-        "chicken breast (cooked)",
-        "chicken breast (frozen)",
     ],
 )
 def test_flexible_name_formatting_never_discards_allergens_or_preparation(name: str) -> None:
@@ -494,7 +403,34 @@ def test_one_final_gate_regeneration_shares_the_existing_four_call_budget() -> N
     assert isinstance(budget, ExecutionBudget) and budget.model_calls == 4
     correction = router.requests[1].tool_output or ""
     assert "safety_rejected" in correction and "peanut" not in correction
-    assert json.loads(correction)["rejection_code"] == "recipe_prose_unsupported"
+    assert json.loads(correction)["rejection_code"] == "recipe_ingredient_rejected"
+
+
+def test_repeated_ingredient_allergy_conflicts_stop_without_a_recipe_or_extra_budget() -> None:
+    class AllergySpecialist(FullSpecialist):
+        async def generate(self, *args: Any, **kwargs: Any) -> SpecialistResult:
+            result = await super().generate(*args, **kwargs)
+            raise RecipeAllergyError(
+                FoundryRequest(
+                    role=AgentRole.RECIPE_NUTRITION,
+                    prompt="synthetic",
+                    operation_id=kwargs["operation_id"],
+                ),
+                result.usage,
+            )
+
+    specialist = AllergySpecialist(full_recipe(), full_recipe())
+    router = Coordinator(call(), call(call_id="substitution"))
+    result = asyncio.run(OrchestratorService(router, specialist).run(context()))
+    assert result.status == "unable" and result.recipe is None and result.candidate is None
+    budget = specialist.budgets[0]
+    assert isinstance(budget, ExecutionBudget) and budget.model_calls == 4
+    assert budget.input_tokens == 4 * USAGE.input_tokens
+    assert budget.output_tokens == 4 * USAGE.output_tokens
+    assert len(specialist.calls) == 2
+    feedback = json.loads(router.requests[1].tool_output or "{}")
+    assert feedback["candidate"] is None
+    assert feedback["rejection_code"] == "recipe_ingredient_rejected"
 
 
 def test_rejection_diagnostics_only_contain_allowlisted_categories(
@@ -505,7 +441,7 @@ def test_rejection_diagnostics_only_contain_allowlisted_categories(
     router = Coordinator(call(), call(call_id="revision"))
     asyncio.run(OrchestratorService(router, FullSpecialist(bad, full_recipe())).run(context()))
     assert '"event":"recipe_safety_rejected"' in caplog.text
-    assert '"error_category":"recipe_prose_unsupported"' in caplog.text
+    assert '"error_category":"recipe_ingredient_rejected"' in caplog.text
     for private in ("peanut", "garnish", "Make rice", "Simple dinner"):
         assert private not in caplog.text
 

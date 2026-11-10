@@ -205,7 +205,7 @@ def test_real_gate_detects_disabled_safety_and_ownership(
     assert fixtures["compliant-controls"]["passed"], process.stdout
     if control:
         assert result["failed_hard_checks"] > 0
-        target = "unsafe-instructions" if control == "unsafe-candidate" else "wrong-owner-records"
+        target = "recipe-integrity" if control == "unsafe-candidate" else "wrong-owner-records"
         assert not fixtures[target]["passed"]
         assert all(item["outcome"] == "failed" for item in fixtures[target]["results"])
     else:

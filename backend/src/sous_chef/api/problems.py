@@ -62,7 +62,7 @@ def register_problem_handlers(app: FastAPI) -> None:
             422,
             "recipe_safety_rejected",
             "Recipe cannot be accepted",
-            "Request a new recipe that meets the current ingredient and cooking-safety checks.",
+            "Request an allergy-compatible substitution or a recipe matching your request.",
         )
 
     @app.exception_handler(RecipeLifecycleConflict)

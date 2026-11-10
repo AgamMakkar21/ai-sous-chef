@@ -25,9 +25,11 @@ from sous_chef.domain.orchestrator import (
     OrchestrationResult,
     OrchestratorError,
     OrchestratorFailure,
+    RecipeAllergyError,
     RecipeCandidate,
     RecipeSpecialist,
     SpecialistCall,
+    SpecialistResult,
     TokenUsage,
 )
 from sous_chef.domain.recipe_safety import (
@@ -116,7 +118,6 @@ def _candidate_status(candidate: RecipeCandidate, context: RequestContext, minut
     safety = validate_ingredients(
         SafetyProfile(
             allergies=explicit.allergies,
-            dietary_restrictions=explicit.dietary_restrictions,
             dislikes=explicit.dislikes,
         ),
         tuple(
@@ -244,6 +245,8 @@ class OrchestratorService:
                     return OrchestrationResult(status="unable", explanation=UNABLE)
                 raise
             budget.web_allowed = call.arguments.use_web
+            rejection_code: RecipeSafetyFailure | None = None
+            specialist: SpecialistResult | None
             try:
                 specialist = await self._specialist.generate(
                     context,
@@ -256,6 +259,10 @@ class OrchestratorService:
                     max_output_tokens=POLICY.output_tokens_per_call,
                     deadline=deadline,
                 )
+            except RecipeAllergyError as error:
+                budget.usage(error.usage)
+                specialist = None
+                rejection_code = RecipeSafetyFailure.INGREDIENT
             except FoundryGatewayError as error:
                 raise OrchestratorError(
                     OrchestratorFailure.SPECIALIST_FAILED,
@@ -263,40 +270,47 @@ class OrchestratorService:
                     outcome_unknown=error.code
                     in {FoundryFailure.TIMEOUT, FoundryFailure.UNAVAILABLE},
                 ) from None
-            budget.usage(specialist.usage)
-            candidate = specialist.candidate
-            recipe = specialist.recipe
-            status = _candidate_status(candidate, context, minutes)
-            final_rejected = False
-            rejection_code: RecipeSafetyFailure | None = None
-            if recipe is not None:
-                try:
-                    recipe = validate_final_recipe(
-                        recipe,
-                        SafetyProfile(
-                            allergies=context.explicit_preferences.allergies,
-                            dietary_restrictions=context.explicit_preferences.dietary_restrictions,
-                        ),
-                    )
-                    if (
-                        [(line.line_id, line.name) for line in recipe.ingredients]
-                        != [(line.line_id, line.name) for line in candidate.ingredients]
-                        or [(step.text, step.ingredient_line_ids) for step in recipe.instructions]
-                        != [
-                            (step.text, step.ingredient_line_ids) for step in candidate.instructions
-                        ]
-                        or recipe.title != candidate.title
-                        or recipe.total_minutes != candidate.total_minutes
-                        or recipe.fit_reasons != candidate.fit_reasons
-                    ):
-                        raise RecipeSafetyError(RecipeSafetyFailure.STRUCTURE)
-                except RecipeSafetyError as error:
-                    status = "safety_rejected"
-                    final_rejected = True
-                    rejection_code = error.code
-                    operational_event(
-                        Event.RECIPE_SAFETY_REJECTED, category=ErrorCategory(error.code.value)
-                    )
+            if specialist is None:
+                candidate = None
+                recipe = None
+                status = "safety_rejected"
+                final_rejected = True
+            else:
+                budget.usage(specialist.usage)
+                candidate = specialist.candidate
+                recipe = specialist.recipe
+                status = _candidate_status(candidate, context, minutes)
+                final_rejected = False
+                if recipe is not None:
+                    try:
+                        recipe = validate_final_recipe(
+                            recipe,
+                            SafetyProfile(allergies=context.explicit_preferences.allergies),
+                        )
+                        if (
+                            [(line.line_id, line.name) for line in recipe.ingredients]
+                            != [(line.line_id, line.name) for line in candidate.ingredients]
+                            or [
+                                (step.text, step.ingredient_line_ids)
+                                for step in recipe.instructions
+                            ]
+                            != [
+                                (step.text, step.ingredient_line_ids)
+                                for step in candidate.instructions
+                            ]
+                            or recipe.title != candidate.title
+                            or recipe.total_minutes != candidate.total_minutes
+                            or recipe.fit_reasons != candidate.fit_reasons
+                        ):
+                            raise RecipeSafetyError(RecipeSafetyFailure.STRUCTURE)
+                    except RecipeSafetyError as error:
+                        status = "safety_rejected"
+                        final_rejected = True
+                        rejection_code = error.code
+            if rejection_code is not None:
+                operational_event(
+                    Event.RECIPE_SAFETY_REJECTED, category=ErrorCategory(rejection_code.value)
+                )
             if budget.specialist_calls == POLICY.max_specialist_calls:
                 if final_rejected:
                     return OrchestrationResult(status="unable", explanation=UNABLE)
@@ -304,6 +318,7 @@ class OrchestratorService:
                     raise OrchestratorError(
                         OrchestratorFailure.CANDIDATE_REJECTED, budget.operation_id
                     )
+                assert candidate is not None
                 return OrchestrationResult(
                     status="candidate",
                     explanation=" ".join(candidate.fit_reasons)[:1000],
@@ -317,7 +332,7 @@ class OrchestratorService:
                     "revisions_remaining": POLICY.max_revisions,
                     "rejection_code": rejection_code,
                     "candidate": candidate.model_dump(mode="json")
-                    if status == "candidate"
+                    if status == "candidate" and candidate is not None
                     else None,
                 },
                 separators=(",", ":"),

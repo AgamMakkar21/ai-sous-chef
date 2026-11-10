@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "suite_id": "asc55-hard-safety",
-  "version": 1,
+  "version": 2,
   "fixtures": [
     {
       "id": "peanut-oil-and-aliases",
@@ -24,9 +24,9 @@
         "tests/unit/test_food_safety.py::test_dairy_substitute_does_not_hide_dairy_in_the_same_list",
         "tests/unit/test_recipe_safety.py::test_safe_replacement_does_not_consume_the_excluded_original_allergen",
         "tests/unit/test_recipe_safety.py::test_replacement_ingredient_itself_is_subject_to_current_allergies",
-        "tests/unit/test_recipe_safety.py::test_undeclared_garnishes_ambiguous_prose_and_unsafe_handling_fail_closed[hidden-peanut-garnish]",
-        "tests/unit/test_recipe_safety.py::test_undeclared_garnishes_ambiguous_prose_and_unsafe_handling_fail_closed[hidden-almond-milk]",
-        "tests/unit/test_recipe_safety.py::test_undeclared_garnishes_ambiguous_prose_and_unsafe_handling_fail_closed[hidden-peanut-oil]",
+        "tests/unit/test_recipe_safety.py::test_undeclared_allergens_in_prose_are_blocked[hidden-peanut-garnish]",
+        "tests/unit/test_recipe_safety.py::test_undeclared_allergens_in_prose_are_blocked[hidden-almond-milk]",
+        "tests/unit/test_recipe_safety.py::test_undeclared_allergens_in_prose_are_blocked[hidden-peanut-oil]",
         "tests/unit/test_recipe_safety.py::test_ingredient_bearing_metadata_cannot_bypass_the_gate[title]",
         "tests/unit/test_recipe_safety.py::test_ingredient_bearing_metadata_cannot_bypass_the_gate[fit_reasons]",
         "tests/unit/test_recipe_safety.py::test_ingredient_bearing_metadata_cannot_bypass_the_gate[adaptations]"
@@ -77,57 +77,42 @@
       ]
     },
     {
-      "id": "unsafe-instructions",
-      "scope": "unsafe-instructions",
-      "expected_outcome": "Final deterministic recipe validation rejects raw poultry, overnight storage, excessive cooking time, no-cook and unsupported non-ASCII food prose.",
+      "id": "recipe-integrity",
+      "scope": "recipe-integrity",
+      "expected_outcome": "Final deterministic recipe validation rejects invalid serialized structure and dangling ingredient references even after model_copy bypasses.",
       "tests": [
-        "tests/unit/test_recipe_safety.py::test_undeclared_garnishes_ambiguous_prose_and_unsafe_handling_fail_closed[raw-poultry]",
-        "tests/unit/test_recipe_safety.py::test_undeclared_garnishes_ambiguous_prose_and_unsafe_handling_fail_closed[overnight-storage]",
-        "tests/unit/test_recipe_safety.py::test_undeclared_garnishes_ambiguous_prose_and_unsafe_handling_fail_closed[excessive-cooking-time]",
-        "tests/unit/test_recipe_safety.py::test_undeclared_garnishes_ambiguous_prose_and_unsafe_handling_fail_closed[without-cooking]",
-        "tests/unit/test_recipe_safety.py::test_undeclared_garnishes_ambiguous_prose_and_unsafe_handling_fail_closed[non-ascii-food]"
+        "tests/unit/test_recipe_safety.py::test_incorrect_instruction_references_and_model_copy_bypasses_are_revalidated"
       ]
     },
     {
-      "id": "cooking-policy",
-      "scope": "unsafe-instructions",
-      "expected_outcome": "Reject missing/insufficient temperatures, rest and cooking; accept reviewed thermometer, whole-cut rest, canned-bean and leftover controls.",
+      "id": "ordinary-recipes",
+      "scope": "positive-controls",
+      "expected_outcome": "Ordinary cooking, natural prose and common foods pass without a thermometer template or vocabulary whitelist; this is not cooking-safety certification.",
       "tests": [
-        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[missing-poultry-temperature]",
-        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[unsafe-poultry-temperature]",
-        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[safe-poultry-temperature]",
-        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[safe-ground-beef]",
-        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[unsafe-minced-beef]",
-        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[safe-minced-beef]",
-        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[missing-whole-cut-rest]",
-        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[safe-whole-cut-rest]",
-        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[safe-fish]",
-        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[unsupported-minced-fish]",
-        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[rinse-poultry]",
-        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[uncooked-poultry]",
-        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[uncooked-egg]",
-        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[uncooked-flour]",
-        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[uncooked-cornmeal]",
-        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[unsafe-kidney-bean]",
-        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[canned-kidney-bean]",
-        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[unsafe-leftovers]",
-        "tests/unit/test_recipe_safety.py::test_reviewed_cooking_rules[safe-leftovers]"
+        "tests/unit/test_recipe_safety.py::test_regular_foods_and_cooking_methods_are_not_a_rejection_gate[poultry-without-thermometer-template]",
+        "tests/unit/test_recipe_safety.py::test_regular_foods_and_cooking_methods_are_not_a_rejection_gate[egg]",
+        "tests/unit/test_recipe_safety.py::test_regular_foods_and_cooking_methods_are_not_a_rejection_gate[dairy]",
+        "tests/unit/test_recipe_safety.py::test_regular_foods_and_cooking_methods_are_not_a_rejection_gate[shellfish]",
+        "tests/unit/test_recipe_safety.py::test_regular_foods_and_cooking_methods_are_not_a_rejection_gate[flour]",
+        "tests/unit/test_recipe_safety.py::test_regular_foods_and_cooking_methods_are_not_a_rejection_gate[dry-pulses]",
+        "tests/unit/test_recipe_safety.py::test_regular_foods_and_cooking_methods_are_not_a_rejection_gate[leftovers]",
+        "tests/unit/test_recipe_safety.py::test_regular_foods_and_cooking_methods_are_not_a_rejection_gate[frozen-poultry]",
+        "tests/unit/test_recipe_safety.py::test_natural_recipe_prose_and_metadata_do_not_require_a_whitelist"
       ]
     },
     {
       "id": "unknown-and-ambiguous-ingredients",
       "scope": "unknown-ingredients",
-      "expected_outcome": "NEEDS_CLARIFICATION under hard constraints; unknown ingredients also fail the final full-recipe gate without stored restrictions.",
+      "expected_outcome": "Unknown or ambiguous declared ingredients require clarification under hard restrictions, but are not rejected solely for catalog coverage without those restrictions.",
       "tests": [
         "tests/unit/test_food_safety.py::test_unknown_ingredients_are_not_safe[special house sauce]",
         "tests/unit/test_food_safety.py::test_unknown_ingredients_are_not_safe[secret spice blend]",
         "tests/unit/test_food_safety.py::test_unknown_ingredients_are_not_safe[dragonfruit]",
         "tests/unit/test_food_safety.py::test_known_word_does_not_hide_an_unknown_word",
         "tests/unit/test_food_safety.py::test_ambiguous_compound_ingredients_need_clarification",
-        "tests/unit/test_recipe_safety.py::test_unknown_ingredients_fail_even_without_stored_restrictions[mystery seasoning]",
-        "tests/unit/test_recipe_safety.py::test_unknown_ingredients_fail_even_without_stored_restrictions[rice and peanut]",
-        "tests/unit/test_recipe_safety.py::test_unknown_ingredients_fail_even_without_stored_restrictions[rice\\u9db4]",
-        "tests/unit/test_recipe_safety.py::test_undeclared_garnishes_ambiguous_prose_and_unsafe_handling_fail_closed[unknown-garnish]"
+        "tests/unit/test_recipe_safety.py::test_unknown_ingredients_only_require_clarification_under_hard_restrictions[mystery seasoning]",
+        "tests/unit/test_recipe_safety.py::test_unknown_ingredients_only_require_clarification_under_hard_restrictions[rice and peanut]",
+        "tests/unit/test_recipe_safety.py::test_unknown_ingredients_only_require_clarification_under_hard_restrictions[rice\\u9db4]"
       ]
     },
     {

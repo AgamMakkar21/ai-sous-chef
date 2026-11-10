@@ -93,7 +93,7 @@ blocked/unknown ingredients and over-budget times cannot be accepted by the LLM.
 Raw rejected candidates are not fed back; the Orchestrator gets a rejection
 category and may clarify, stop, or request its one revision.
 Final-gate rejections also include an allowlisted `rejection_code` for structure,
-ingredients, prose or cooking, never rejected text. The coordinator uses it to
+ingredients or structure, never rejected text. The coordinator uses it to
 give the specialist a precise correction within the same revision allowance.
 
 The normal path is route -> specialist -> fit review (three model calls).
@@ -108,7 +108,7 @@ fit reasons or an explicit rejection, **not** another unbounded review loop.
 `status=candidate` is intentionally not a durable safety certificate.
 [ASC-36's final gate](recipe-specialist.md#final-recipe-gate-asc-36) now checks
 every full structured candidate after enrichment and every revision, including
-ingredient-bearing instructions and cooking policy. It rejects a projection
+ingredient-bearing prose for profile conflicts, not ordinary cooking methods. It rejects a projection
 that does not match the full recipe, including each step's ingredient references.
 One rejection can use the existing single
 revision, never a separate model budget; exhausted safety attempts return a fixed
