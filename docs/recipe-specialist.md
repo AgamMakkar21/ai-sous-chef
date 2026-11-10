@@ -235,7 +235,15 @@ transports. They never use a real API key.
 ### Runtime and search boundaries
 
 The app's lifespan owns **one serialized MCP process per worker** and reuses it
-after the startup check. It closes the child at shutdown; failed or cancelled
+after the startup check. Cold process creation, imports, MCP initialization and
+tool-schema verification have a separate, bounded 30-second startup allowance.
+Only after initialization succeeds does the real search/profile check begin,
+under the normal `ASC_USDA_MCP_TIMEOUT_SECONDS` budget (ten seconds by default).
+Both checks must pass before the app serves requests; neither is retried.
+An initialization timeout or cancellation closes and reaps the child.
+The startup allowance does not extend normal operations, lock waiting,
+standalone sessions or later process recovery.
+It closes the child at shutdown; failed or cancelled
 protocol exchanges are discarded before a later request starts a new process.
 Requests waiting for the process lock consume their own deadline, and the 2 MiB
 protocol budget resets for each operation. Well-formed quota/authentication

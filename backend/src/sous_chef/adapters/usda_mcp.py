@@ -255,10 +255,10 @@ class UsdaMcpSession:
 
 
 @asynccontextmanager
-async def _bounded(config: UsdaMcpConfig, deadline: float) -> AsyncIterator[None]:
+async def _bounded(timeout_seconds: float, deadline: float) -> AsyncIterator[None]:
     if not isfinite(deadline):
         raise ValueError("The USDA deadline must be finite.")
-    expires_at = min(deadline, monotonic() + config.timeout_seconds)
+    expires_at = min(deadline, monotonic() + timeout_seconds)
     try:
         async with asyncio.timeout_at(expires_at):
             if monotonic() >= deadline:
@@ -313,6 +313,9 @@ async def _stop(session: UsdaMcpSession) -> None:
         await process.wait()
 
 
+STARTUP_TIMEOUT_SECONDS = 30
+
+
 class UsdaMcpClient:
     """One serialized process per app worker; failed exchanges are never reused/replayed."""
 
@@ -321,9 +324,26 @@ class UsdaMcpClient:
         self._session: UsdaMcpSession | None = None
         self._lock = asyncio.Lock()
 
+    async def start(self) -> None:
+        """Bound cold process initialization separately from live API operations."""
+        async with self._exchange(
+            timeout_seconds=STARTUP_TIMEOUT_SECONDS,
+            deadline=monotonic() + STARTUP_TIMEOUT_SECONDS,
+        ):
+            pass
+
     @asynccontextmanager
     async def session(self, *, deadline: float) -> AsyncIterator[UsdaMcpSession]:
-        async with _bounded(self.config, deadline):
+        async with self._exchange(
+            timeout_seconds=self.config.timeout_seconds, deadline=deadline
+        ) as session:
+            yield session
+
+    @asynccontextmanager
+    async def _exchange(
+        self, *, timeout_seconds: float, deadline: float
+    ) -> AsyncIterator[UsdaMcpSession]:
+        async with _bounded(timeout_seconds, deadline):
             async with self._lock:
                 complete = False
                 try:

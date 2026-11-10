@@ -55,7 +55,7 @@ class UsdaNutritionTool:
     async def lifespan(self) -> AsyncIterator[None]:
         self._client = UsdaMcpClient(self.config)
         try:
-            await self.check()
+            await self.check(startup=True)
             yield
         finally:
             await self._client.close()
@@ -84,10 +84,13 @@ class UsdaNutritionTool:
             operational_event(Event.USDA_FAILED, category=ErrorCategory(error.code.value))
             raise
 
-    async def check(self) -> None:
+    async def check(self, *, startup: bool = False) -> None:
         """Check public food data, not just MCP initialization."""
         started = monotonic()
         try:
+            if startup:
+                assert self._client is not None
+                await self._client.start()
             async with self._session(monotonic() + self.config.timeout_seconds) as session:
                 candidates = await session.search("Carrots, raw")
                 if not candidates.foods:

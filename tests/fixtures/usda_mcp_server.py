@@ -199,6 +199,8 @@ for line in sys.stdin:
         continue
     method = request["method"]
     if method == "initialize":
+        if MODE == "slow_initialize":
+            time.sleep(0.75)
         result = {
             "protocolVersion": request["params"]["protocolVersion"],
             "capabilities": {"tools": {}},

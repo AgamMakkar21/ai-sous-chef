@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
+from sous_chef.adapters import usda_mcp
 from sous_chef.adapters.usda_mcp import UsdaMcpConfig
 from sous_chef.app import create_app
 from sous_chef.domain.foundry import FoundryFailure
@@ -43,7 +44,111 @@ def test_starting_app_reuses_one_mcp_process_and_reaps_it_on_shutdown(tmp_path: 
     assert process.returncode is not None
 
 
-@pytest.mark.parametrize("mode", ["no_food", "error", "malformed", "timeout"])
+def test_cold_initialization_does_not_consume_the_live_api_check_budget(tmp_path: Path) -> None:
+    log = tmp_path / "cold-mcp.jsonl"
+    tool = UsdaNutritionTool(config("slow_initialize", log=log, timeout=0.5))
+    settings = Settings(
+        environment="local", adapter_mode="local", usda_enabled=True, _env_file=None
+    )
+    with patch.object(UsdaNutritionTool, "from_settings", return_value=tool):
+        with TestClient(create_app(settings)) as client:
+            assert client.get("/health").status_code == 200
+            assert tool.config.timeout_seconds == 0.5
+            assert tool._client is not None and tool._client._session is not None
+            process = tool._client._session._process
+    messages = [json.loads(line) for line in log.read_text().splitlines()]
+    assert sum(message["method"] == "initialize" for message in messages) == 1
+    calls = [message for message in messages if message["method"] == "tools/call"]
+    assert [message["params"]["name"] for message in calls] == [
+        "search_foods",
+        "get_nutrition_profile",
+    ]
+    assert process.returncode is not None
+
+
+def test_stalled_initialization_is_bounded_and_reaps_the_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(usda_mcp, "STARTUP_TIMEOUT_SECONDS", 0.2)
+
+    async def check() -> None:
+        tool = UsdaNutritionTool(config("slow_initialize", timeout=0.5))
+        sessions: list[usda_mcp.UsdaMcpSession] = []
+        spawn = usda_mcp._spawn
+
+        async def capture(config: UsdaMcpConfig) -> usda_mcp.UsdaMcpSession:
+            session = await spawn(config)
+            sessions.append(session)
+            return session
+
+        started = monotonic()
+        with patch.object(usda_mcp, "_spawn", side_effect=capture):
+            with pytest.raises(ConfigurationError, match="foundry_timeout"):
+                async with tool.lifespan():
+                    pytest.fail("A timed-out initialization must not pass startup.")
+        assert monotonic() - started < 2
+        assert len(sessions) == 1
+        assert sessions[0]._process.returncode is not None
+        assert tool._client is None
+
+    asyncio.run(check())
+
+
+def test_cancelling_initialization_reaps_the_child() -> None:
+    async def check() -> None:
+        tool = UsdaNutritionTool(config("slow_initialize"))
+        spawned = asyncio.Event()
+        sessions: list[usda_mcp.UsdaMcpSession] = []
+        spawn = usda_mcp._spawn
+
+        async def capture(config: UsdaMcpConfig) -> usda_mcp.UsdaMcpSession:
+            session = await spawn(config)
+            sessions.append(session)
+            spawned.set()
+            return session
+
+        async def startup() -> None:
+            async with tool.lifespan():
+                pytest.fail("Cancelled initialization must not pass startup.")
+
+        with patch.object(usda_mcp, "_spawn", side_effect=capture):
+            task = asyncio.create_task(startup())
+            await asyncio.wait_for(spawned.wait(), timeout=2)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert len(sessions) == 1
+        assert sessions[0]._process.returncode is not None
+        assert tool._client is None
+
+    asyncio.run(check())
+
+
+def test_startup_allowance_does_not_extend_runtime_or_replay_timed_out_calls(
+    tmp_path: Path,
+) -> None:
+    async def check() -> None:
+        log = tmp_path / "runtime-timeout.jsonl"
+        tool = UsdaNutritionTool(config("hang_rice", log=log, timeout=0.2))
+        async with tool.lifespan():
+            assert tool._client is not None and tool._client._session is not None
+            process = tool._client._session._process
+            started = monotonic()
+            with pytest.raises(RecipeToolError) as caught:
+                await tool.search("rice", deadline=monotonic() + 10)
+            assert caught.value.code == FoundryFailure.TIMEOUT
+            assert monotonic() - started < 2
+            assert process.returncode is not None
+            assert tool._client._session is None
+        messages = [json.loads(line) for line in log.read_text().splitlines()]
+        assert sum(message["method"] == "initialize" for message in messages) == 1
+        calls = [message["params"] for message in messages if message["method"] == "tools/call"]
+        assert sum(call["arguments"].get("keyword") == "rice" for call in calls) == 1
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("mode", ["schema", "no_food", "error", "malformed", "timeout"])
 def test_enabled_app_does_not_start_with_broken_api_or_mcp(mode: str) -> None:
     tool = UsdaNutritionTool(config(mode, timeout=1))
     settings = Settings(
