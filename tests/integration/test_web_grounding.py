@@ -557,22 +557,29 @@ def test_web_evidence_cannot_override_allergies_or_supply_nutrition() -> None:
     assert len(harness.requests) == 2 and not harness.tools.nutrition_requests
 
 
-@pytest.mark.parametrize(
-    "unsafe_clause", ["garnish with peanut", "leave the rice on the counter overnight"]
-)
-def test_web_final_gate_rejects_unsafe_prose_without_an_extra_revision(
-    unsafe_clause: str,
-) -> None:
+def test_web_final_gate_rejects_hidden_allergens_without_an_extra_revision() -> None:
     harness = WebHarness()
     harness.revision = True
     content = harness.recipe["output"][1]["content"][0]
     draft = json.loads(content["text"])
     step = draft["instructions"][-1]
-    step["text"] = f"{step['text'].rstrip('.')}, then {unsafe_clause}."
+    step["text"] = f"{step['text'].rstrip('.')}, then garnish with peanut."
     content["text"] = json.dumps(draft)
     result = asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
     assert result.status == "unable" and result.explanation == UNABLE
     assert result.recipe is None and result.candidate is None
+    assert len(harness.requests) == 4 and len(harness.tools.nutrition_requests) == 1
+
+
+def test_web_recipe_accepts_natural_cooking_prose() -> None:
+    harness = WebHarness()
+    content = harness.recipe["output"][1]["content"][0]
+    draft = json.loads(content["text"])
+    draft["instructions"][-1]["text"] = "Stir gently until tender, then serve warm."
+    content["text"] = json.dumps(draft)
+    result = asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
+    assert result.status == "candidate" and result.recipe is not None
+    assert result.recipe.instructions[-1].text == "Stir gently until tender, then serve warm."
     assert len(harness.requests) == 4 and len(harness.tools.nutrition_requests) == 1
 
 

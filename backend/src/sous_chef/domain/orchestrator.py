@@ -8,13 +8,13 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from sous_chef.domain.context import RequestContext
-from sous_chef.domain.foundry import FoundryRequest
+from sous_chef.domain.foundry import FoundryFailure, FoundryGatewayError, FoundryRequest
 from sous_chef.domain.recipes import StructuredRecipe
 
 
 @dataclass(frozen=True)
 class OrchestratorPolicy:
-    version: int = 3
+    version: int = 4
     max_model_calls: int = 4
     max_specialist_calls: int = 2
     max_revisions: int = 1
@@ -44,6 +44,14 @@ class CoordinationModel(BaseModel):
 class TokenUsage(CoordinationModel):
     input_tokens: int = Field(ge=1)
     output_tokens: int = Field(ge=0)
+
+
+class RecipeAllergyError(FoundryGatewayError):
+    """A completed draft needs substitution; no rejected text crosses the boundary."""
+
+    def __init__(self, request: FoundryRequest, usage: TokenUsage) -> None:
+        self.usage = usage
+        super().__init__(FoundryFailure.REJECTED, request)
 
 
 class SpecialistArguments(CoordinationModel):

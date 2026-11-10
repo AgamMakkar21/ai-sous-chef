@@ -620,67 +620,47 @@ checks the latest profile and ingredient-bearing prose before display/persistenc
 
 ## Final recipe gate (ASC-36)
 
-`domain/recipe_safety.py` policy **2** revalidates the actual serialized
+`domain/recipe_safety.py` policy **3** revalidates the actual serialized
 `StructuredRecipe`, not just its nominal Python type or fit projection. It uses
 the reviewed ingredient catalog and ASC-35's deterministic hard-constraint checks.
-Every food must resolve unambiguously even when the profile has no restrictions.
-Dislikes and learned preferences never weaken explicit allergies/restrictions.
-Catalog group IDs do not authorize a different ingredient in prose: carrot does
-not authorize onion, nor rice authorize quinoa.
+Dislikes and learned preferences never weaken explicit allergies. Dietary
+restrictions remain generation preferences, not another hard recipe-safety gate.
 
-The gate intentionally supports **controlled English instructions**, not general
-natural-language safety classification. Unsupported text fails closed and can
-consume the existing single revision; no LLM safety decision or keyword blacklist
-approves unknown directions. This can reject otherwise reasonable recipes.
+The owner-approved policy change removes deterministic **ordinary cooking-safety
+classification**. There is no thermometer template, temperature/rest/order rule,
+restricted verb grammar, metadata vocabulary whitelist or blanket exclusion of
+eggs, dairy, shellfish, flour, dry pulses, leftovers or preparation methods.
+Natural instructions and descriptive dish names are accepted. This deliberately
+removes the `recipe_cooking_rejected`/`recipe_prose_unsupported` gates that exhausted
+both attempts in the observed dev chat. A pass is not cooking-safety certification.
 
-- Instructions start with Cook, Boil, Simmer, Steam, Saute, Bake, Roast, Soften,
-  Heat, Chop, Slice, Dice, Peel, Mix, Combine, Stir, Add, Garnish, Top or Serve.
-  Follow with declared food names, optionally joined with and/with/in/into/over/to.
-  Singular/plural and catalog preparation descriptors are normalized, but food
-  identity is not inferred from a coarse catalog ID. References must exactly
-  match every food mentioned in each step.
-- Optional suffixes are `for N minutes`, `until tender`, or `until soft`;
-  clauses may join with `, then`. Unknown foods, pronouns, unspecified sauces,
-  extra sentences, negations, thawing, storage and unsupported techniques are
-  rejected. Titles, fit reasons, adaptations and substitution reasons also have
-  a restricted descriptive vocabulary; they cannot hide extra cooking directions.
-- A substitution references its actual replacement line, which must pass all
-  checks. The excluded original is not consumed. Supported descriptions include
-  `Use olive oil instead of butter.` or `Olive oil replaces butter`; they do not
-  exempt butter from restrictions if it appears elsewhere as a consumed food.
-- Supported animal foods require the exact thermometer form:
-  `Cook the chicken to an internal temperature of 165 F, measured with a food thermometer.`
-  Poultry needs at least 165 F, ground/minced beef/pork/lamb/veal 160 F, and finfish 145 F.
-  Whole beef/pork/lamb/veal/steak cuts need at least 145 F plus
-  `, then rest for 3 minutes`. Raw animal foods cannot be combined/served before
-  their temperature step. Cooked/roasted plant ingredients require a 165 F
-  thermometer step for reheating. Cooking temperatures use integer Fahrenheit.
-- Animal ingredient qualifiers are limited to fresh, raw, whole, boneless,
-  skinless, lean, ground and minced. Other catalog preparation descriptors cannot
-  silently inherit whole-cut cooking rules. Ground/minced finfish is unsupported.
-- Reviewed poultry cuts include chicken breast/thigh/drumstick/wing, turkey breast
-  and duck breast. Plurals, case, hyphens, commas and parentheses are accepted:
-  `CHICKEN BREASTS`, `chicken-breast`, `chicken breast, boneless, skinless` and
-  `chicken breasts (boneless, skinless)` resolve to the same declared food.
-  Poultry may also be chopped, cubed, diced, sliced or trimmed, but still requires
-  the 165 F thermometer step. A declared `raw chicken` can appear in that step;
-  later instructions must omit `raw`. Frozen/cooked qualifiers, unknown words,
-  sauces, coatings and allergens are never discarded to force a match.
-- Eggs, dairy, shellfish, flour/dough, uncanned pulses, processed animal products,
-  frozen/previously cooked animal foods, preservation, fermentation, microwave
-  and arbitrary free-form handling are not approved by this policy version.
-  ASCII food/metadata text is required; the degree sign is supported in the
-  thermometer template. Extending coverage requires reviewed rules and tests.
+- Stored allergies remain mandatory. Under those allergies,
+  declared ingredients must still resolve unambiguously; conflicting,
+  possible-allergen and unknown products remain blocked or need clarification.
+  Without allergies, catalog coverage alone does not reject a recipe.
+- Instructions, titles, fit reasons, adaptations and substitution reasons are
+  scanned using the same catalog traits/custom-allergy matching. Ordinary prose
+  words are not treated as unknown ingredient names. Known forbidden ingredients
+  and relevant ambiguous products cannot be hidden in prose. Name specific oils,
+  milks, stocks and sauces rather than ambiguous generic products.
+- The catalog is English, not a universal language/ingredient classifier.
+  Untranslated non-Latin letters in ingredients or recipe prose fail closed under
+  stored allergies; accented Latin text is supported. Every consumed ingredient
+  must still be declared by the specialist; free prose cannot prove exhaustive
+  extraction of every possible food.
+- A substitution references its actual replacement line, which must pass the
+  current allergies. `Use olive oil instead of butter` / `Olive oil replaces
+  butter` describes an excluded original, not consumption. The optional suffix
+  `to respect the dairy restriction` is also descriptive. These phrases do not
+  excuse butter used elsewhere as a consumed food.
+- Schema/reference integrity, current-profile rereads, projection equality,
+  output size limits, source attribution and honest USDA coverage remain enforced.
+  Unknown foods do not acquire fabricated nutrition because cooking checks changed.
 
-Cooking rules and the backend-authored clean/separate/chill notice are grounded
-in the CDC's [Preventing Food Poisoning](https://www.cdc.gov/food-safety/prevention/index.html)
-(page dated November 24, 2025). Its temperature table specifies 145 F plus
-three-minute rest for whole cuts, 160 F for ground meats, 165 F for poultry and
-leftovers, and 145 F for finfish. It advises against washing raw chicken and
-countertop thawing; perishables must be refrigerated within two hours (one hour
-above 90 F), with a refrigerator at 40 F or below. No network lookup occurs at
-validation time. This is bounded application checking, not certification of
-real-world handling, ingredient labels, cross-contact, recalls or medical fitness.
+The backend-authored clean/separate/chill notice remains general guidance, based
+on the CDC's [Preventing Food Poisoning](https://www.cdc.gov/food-safety/prevention/index.html).
+It is not an enforced cooking test or certification of handling, labels,
+cross-contact, recalls or medical fitness.
 
 ### Regeneration, delivery and save hooks
 
@@ -691,6 +671,12 @@ Rejected text never enters the coordinator function result: it receives only
 allowance. The same code appears in privacy-safe `recipe_safety_rejected`
 operational events, without ingredient names, user text or rejected recipes.
 The Orchestrator includes the corresponding correction in its one revision.
+An ingredient-list allergy conflict detected by the specialist is a typed,
+completed-draft rejection, not an ambiguous provider failure. Its usage is
+accounted, unsafe text is withheld, and the same revision requests substitutions
+before any USDA enrichment of that rejected draft. Nutrition is calculated from
+the replacement draft's actual ingredients, amounts and servings. Only a
+replacement that passes the current allergies can be delivered or saved.
 The request still has at
 most four model calls and two specialist invocations (one regeneration), shared
 with nested tool/model work. Exhausting the final-gate attempt/call budget returns
@@ -706,13 +692,12 @@ including amounts such as `200 g chicken breasts`, `0.5 kg chicken` and
 `1/2 cup rice`. The specialist normalizes explicit amounts into the structured
 `name`, `quantity` and `unit` fields; it must retain every food and preparation
 qualifier, preserve stored restrictions, and leave genuinely ambiguous
-quantities/inventory unknown. It never requires users to write the thermometer
-template themselves.
+quantities/inventory unknown. Neither users nor the specialist must write a
+thermometer template to pass the backend.
 
-The specialist source includes the gate's neutral metadata vocabulary directly
-from `domain/recipe_safety.py`, so an otherwise valid recipe is not rejected for
-invented dish labels or fit claims. Source policy versions are now Orchestrator
-**3**, Recipe + Nutrition **6**, and combined Recipe + Nutrition **7**. These are
+The specialist and Orchestrator source instructions describe natural recipe
+output and the remaining profile/integrity checks. Source policy versions are
+Orchestrator **4**, Recipe + Nutrition **7**, and combined Recipe + Nutrition **8**. These are
 policy versions, **not** Foundry agent-version pins. Existing immutable agents
 do not acquire the new instructions when only backend code changes.
 

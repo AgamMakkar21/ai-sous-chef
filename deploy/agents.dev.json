@@ -4,11 +4,11 @@
   "agents": {
     "orchestrator": {
       "name": "sous-chef-orchestrator-dev",
-      "version": "8"
+      "version": "12"
     },
     "recipe_nutrition": {
       "name": "sous-chef-recipe-nutrition-dev",
-      "version": "12"
+      "version": "16"
     }
   }
 }

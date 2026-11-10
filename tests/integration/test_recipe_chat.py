@@ -146,15 +146,15 @@ def test_combined_app_composition_returns_and_persists_a_grounded_recipe(
     if poultry_request is not None:
         message = transport.combined["output"][-1]["content"][0]
         draft = json.loads(message["text"])
-        draft["title"] = "Chicken breast and rice dinner"
+        draft["title"] = "Chicken and rice skillet"
         draft["ingredients"].append(
             {"lineId": "chicken", "name": "chicken breast", "quantity": 200, "unit": "g"}
         )
         draft["instructions"].append(
             {
                 "step": 3,
-                "text": "Cook the chicken breast to an internal temperature of 165 F, "
-                "measured with a food thermometer.",
+                "text": "Pan-fry the chicken breast in a skillet until fully cooked, "
+                "turning occasionally.",
                 "ingredientLineIds": ["chicken"],
             }
         )
@@ -209,8 +209,9 @@ def test_combined_app_composition_returns_and_persists_a_grounded_recipe(
         assert transport.data.current_request == content
         if poultry_request is not None:
             assert turn["messages"][0]["content"] == content
-            assert turn["recipe"]["title"] == "Chicken breast and rice dinner"
-            assert "165 F" in turn["messages"][1]["content"]
+            assert turn["recipe"]["title"] == "Chicken and rice skillet"
+            assert "Pan-fry the chicken breast" in turn["messages"][1]["content"]
+            assert "thermometer" not in turn["messages"][1]["content"]
             assert "chicken" in {
                 mapping["ingredientLineId"] for mapping in turn["recipe"]["nutrition"]["mappings"]
             }
@@ -231,7 +232,9 @@ def test_combined_app_composition_returns_and_persists_a_grounded_recipe(
     assert len(transport.requests) == 3
 
 
+@pytest.mark.parametrize("allergen_location", ["metadata", "ingredient"])
 def test_combined_revision_preserves_context_and_enriches_only_its_current_ingredients(
+    allergen_location: str,
     combined_settings: Settings,
     auth_headers: dict[str, str],
     harness: tuple[Transport, SyntheticCredential],
@@ -241,7 +244,7 @@ def test_combined_revision_preserves_context_and_enriches_only_its_current_ingre
     original_handle = transport.handle
     draft = json.loads(transport.combined["output"][-1]["content"][0]["text"])
     attempts = 0
-    correction = "Use declared ingredient names and neutral metadata; omit dish labels."
+    correction = "Remove the conflicting garnish and retain the original measured ingredients."
 
     async def handle(request: httpx2.Request) -> httpx2.Response:
         nonlocal attempts
@@ -254,10 +257,10 @@ def test_combined_revision_preserves_context_and_enriches_only_its_current_ingre
             assert feedback == {
                 "status": "safety_rejected",
                 "revisions_remaining": 1,
-                "rejection_code": "recipe_prose_unsupported",
+                "rejection_code": "recipe_ingredient_rejected",
                 "candidate": None,
             }
-            assert "Private rejected skillet" not in request.content.decode()
+            assert "Private rejected peanut skillet" not in request.content.decode()
             transport.arguments = transport.arguments.model_copy(
                 update={"requirements": correction}
             )
@@ -270,7 +273,9 @@ def test_combined_revision_preserves_context_and_enriches_only_its_current_ingre
             attempts += 1
             current = deepcopy(draft)
             if attempts == 1:
-                current["title"] = "Private rejected skillet"
+                current["title"] = "Private rejected peanut skillet"
+                if allergen_location == "ingredient":
+                    current["ingredients"][0]["name"] = "peanut oil"
             else:
                 current["ingredients"][0]["quantity"] = 200
             transport.combined["output"][-1]["content"][0]["text"] = json.dumps(current)
@@ -298,11 +303,10 @@ def test_combined_revision_preserves_context_and_enriches_only_its_current_ingre
             if nutrient["name"] == "energy"
         )
         assert energy["amount"] == 360
-        assert [call.args[0].ingredients[0].quantity for call in lookup.call_args_list] == [
-            100,
-            200,
-        ]
-        assert "Private rejected skillet" not in response.text
+        assert [call.args[0].ingredients[0].quantity for call in lookup.call_args_list] == (
+            [100, 200] if allergen_location == "metadata" else [200]
+        )
+        assert "Private rejected peanut skillet" not in response.text
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
         assert (
             send(client, conversation, content="Make a 30-minute pantry recipe.").json()

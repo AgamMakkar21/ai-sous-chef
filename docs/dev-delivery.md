@@ -128,10 +128,10 @@ exactly verifying the reviewed `--phase combined` source, use this manifest shap
   "schema_version": 4,
   "agents_enabled": true,
   "agents": {
-    "orchestrator": {"name": "sous-chef-orchestrator-dev", "version": "8"},
+    "orchestrator": {"name": "sous-chef-orchestrator-dev", "version": "12"},
     "recipe_nutrition": {
       "name": "sous-chef-recipe-nutrition-dev",
-      "version": "12"
+      "version": "16"
     }
   }
 }
@@ -142,9 +142,9 @@ not assumed next-version numbers. Future releases must read back their selected
 versions again. Deployment sets `ASC_FOUNDRY_RECIPE_NUTRITION_MODE=combined`,
 verifies and clones both exact sources under their existing identities, then pins
 the resulting release versions. It does not publish separate retrieval/web phases.
-Readiness requires the combined strict schema and policy-7 fingerprint. Manually
+Readiness requires the combined strict schema and policy-8 fingerprint. Manually
 adding a web tool/reasoning settings to old version 4 does not automatically meet
-that contract. Source 12 was published from the reviewed combined definition and
+that contract. Source 16 was published from the combined definition and
 read back successfully before enabling the candidate manifest. App Service must
 receive the compatible backend and complete runtime pins together through delivery;
 do not enable its flag manually against the older backend. USDA secrets/enabling
@@ -152,12 +152,14 @@ and the stable `ASC_PAGINATION_KEY` remain owner-managed.
 Post-execution web-query validation is not pre-search privacy isolation; review
 the [combined-agent boundaries](recipe-specialist.md#combined-recipe-agent-with-native-web-search).
 
-The chat-repair sources retain the existing enabled, distinct agent identities.
+The allergy-focused chat sources retain the existing enabled, distinct agent identities.
 Read-back verified the full definitions and metadata, including definition
-fingerprints `0cb334477597a0073d1883540435ec8e39d3e7c04309a1bd3f8c95c2e3949001`
-for Orchestrator source 8 and
-`87abae68aebb6282d4214e3840d95f22f56d2b7a93dfcbc55a6241d91259a155`
-for combined Recipe + Nutrition source 12. These source publications do not
+fingerprints `ce0c57fff2bc549e9550b67c7af71a004e3d2c82043d43725302a1a127419da5`
+for Orchestrator source 12 (policy 4) and
+`f4d8b96b7a41ed18b87db369b9997f92a255bacf5a3ed1df75ee5401b3b03de4`
+for combined Recipe + Nutrition source 16 (policy 8). These instructions remove
+the cooking/format gates, retain hard allergy checks, and request substitutions
+rather than discarding an allergenic source recipe. These source publications do not
 change the running app's pins or prove signed-in chat acceptance; activate them
 only through the reviewed dev delivery workflow.
 
