@@ -1,12 +1,13 @@
-# Feedback Functions host (ASC-09)
+# Feedback Functions host and change-feed filtering (ASC-09, ASC-46)
 
 [Issue #3](https://github.com/AgamMakkar21/ai-sous-chef/issues/3) adds a separate
-Python Function App, not feedback processing. `worker/` registers only
-`GET /api/health`: a fixed `{"status":"ok","scope":"host-only"}` response and
+Python Function App. [ASC-46 / #43](https://github.com/AgamMakkar21/ai-sous-chef/issues/43)
+adds its identity-based `feedback_change_feed` trigger and deterministic admission
+filter. `GET /api/health` still returns a fixed `{"status":"ok","scope":"host-only"}` and
 an `X-ASC-Commit` header from packaged release metadata. It accepts no business
-inputs, returns no user data, and performs no Cosmos reads/writes. There is no
-Cosmos trigger, extraction, Foundry invocation, feedback receipt or learned-state
-mutation. Host health must not be used as evidence that learning works.
+inputs, returns no user data, and performs no Cosmos reads/writes itself.
+Extraction, Foundry invocation, processing receipts and learned-state mutation
+remain ASC-47/48 work. Host health is not evidence that the trigger or learning works.
 
 ## Hosting and versions
 
@@ -54,7 +55,7 @@ No Entra Agent identity is created or reused in this infrastructure-only slice.
 
 Storage Blob Data Owner is a **storage data-plane role**, not Azure resource
 Owner. No queue/table roles or Storage Account Contributor are needed for this
-HTTP-only host. Blob triggers, Durable Functions or other storage features would
+HTTP-health/Cosmos-trigger host. Blob triggers, Durable Functions or other storage features would
 require separately reviewed grants. The worker has no product-container write,
 Users/ChatHistory, Foundry, subscription/group management or RBAC-writing grant.
 Later extraction/receipt work must add its specific required access; this slice
@@ -69,12 +70,72 @@ the existing account, with database/container names in `ASC_COSMOS_DATABASE`,
 exactly `AzureWebJobsStorage`, `FeedbackCosmos` or `FeedbackLeases`: a connection
 string can take precedence over the identity-property group.
 
-The future Cosmos trigger must reference those prefixes, use the precreated
-`leases` container (`/id` partition key), and set
+The Cosmos trigger references those prefixes, uses the precreated
+`leases` container (`/id` partition key), and sets
 `create_lease_container_if_not_exists=False`. Identity-based Cosmos bindings
 cannot create the lease container. User isolation, explicit-over-learned
 precedence and deterministic allergy checks remain responsibilities of future
 application code, not guarantees supplied by container-scoped RBAC.
+
+## Feedback admission and deferred processing
+
+The trigger watches `sous-chef/RecipeHistory`, with the separate lease connection,
+prefix `feedback-v1`, a 50-item invocation hint and `start_from_beginning=True`.
+The hint is not an absolute batch-size limit: Cosmos can preserve transactional
+batches. Existing leases determine subsequent resume positions; do not delete
+leases or change the prefix during an ordinary release.
+
+Only immutable, schema-v1 `recordKind=feedbackRevision` outbox records from the
+[feedback API](recipe-lifecycle.md#versioned-feedback-asc-44) enter the processor.
+The filter checks a positive integer semantic revision, pending eligibility,
+exact rating, bounded normalized optional note, explicit-action provenance,
+aware timestamps, canonical UUIDv4 references and the opaque owner namespace.
+It verifies the event's deterministic owner/history/revision-bound ID, matching
+source/history IDs, and previous-event linkage. Unknown schema versions and
+malformed feedback fail closed. Notes stay private data, never instructions.
+
+Recipe snapshots, operation receipts, processing records, generated chat,
+groceries, profiles and behavioral records cause zero processor calls, even if
+they contain a rating or `pending` marker. Nonpending feedback and modified
+outbox records (`updatedAt != createdAt`) are ignored. Status bookkeeping must
+remain in recipe/processing records, not mutate an immutable feedback event.
+
+Each admitted `FeedbackEvent` carries its owner, source/occasion lineage, rating,
+note, semantic revision, superseded event, observation time and trace reference.
+Its `event_key` is SHA-256 of
+`feedback:v1\0<userId>\0<historyId>\0<feedbackRevision>`, where `\0` denotes
+one NUL byte. ETags and delivery timestamps do not affect it. Different owners
+and genuine edits have different keys. There is deliberately no in-memory
+deduplication: duplicate deliveries can reach the same boundary with the same
+key. ASC-48 must apply the durable ledger before evidence can change, recheck
+current owned/cooked source state and replace superseded evidence.
+
+**The default `process_feedback` boundary refuses acknowledgement.** Tests supply
+a mock handler; hosted code does not invoke a model or manufacture a successful
+no-insight result. Eligible feedback remains pending until ASC-47/48 connect
+validated extraction and durable application. No new product write or Foundry
+permission is granted by this change.
+
+Every document is isolated: an invalid event or processor exception does not
+prevent later documents in the same batch from being attempted. After the batch,
+any failure raises a fixed safe exception. The function-level fixed-delay retry
+policy retries indefinitely at one-minute intervals instead of exhausting a
+finite retry budget and acknowledging unprocessed input. Successful siblings
+can therefore be redelivered; their event keys remain stable. This is not a
+durable exactly-once guarantee.
+
+A poison event or disconnected processor can stall progress on its lease.
+Inspect the aggregate `feedback_batch_pending` counts (`received`, `ignored`,
+`dispatched`, `invalid`, `failed`) and host invocation failures. Application code
+logs no document, owner, event key, note, recipe, raw exception or model content.
+Dead-lettering, durable retries and operator recovery remain ASC-49 work. Do not
+manually mark feedback completed, advance a blocked lease, or disable retries
+to make a smoke test appear successful.
+
+The worker remains a standalone standard-library filter plus its existing
+`azure-functions==1.24.0` pin. It does not import the separately packaged web app.
+An API-to-worker regression test passes real synthetic persisted outbox records
+through this filter to guard contract drift.
 
 Host storage's public network endpoint is enabled but shared keys and anonymous
 blob access are disabled; all access requires Entra authorization. Cosmos keeps
@@ -154,7 +215,7 @@ curl.exe --fail --include https://<worker-hostname>/api/health
 Require HTTP 200, the exact host-only JSON, the reviewed `X-ASC-Commit`, a running
 host, no storage authorization/startup errors, and telemetry arriving in the
 existing workspace. Record the deployment/run and what-if links in the PR.
-Before deploying the future trigger, separately verify its Cosmos/lease access.
+After a reviewed trigger deployment, separately verify its Cosmos/lease access.
 
 Functions host/startup/results logs and metrics go to the existing Log Analytics
 workspace via diagnostic settings. Application Insights uses Entra authentication
@@ -183,16 +244,54 @@ AppRequests
 
 No request body, user ID, recipe, prompt, credential or connection setting is
 logged by worker application code. HTTP extended information, query-string
-tracing, dependency collection and live metrics are disabled. Future trigger code
-must preserve this boundary. Automatic alerts/on-call routing are not configured
+tracing, dependency collection and live metrics are disabled. Trigger code
+preserves this boundary. Automatic alerts/on-call routing are not configured
 here; operators inspect the health metric and deployment gate failures.
 
 Offline checks run with the pinned Bicep compiler and worker requirements:
 `python -m unittest discover -s tests/infrastructure -p test_functions.py -v`.
 They verify compiled infrastructure, scoped grants, health behavior, packaging
 and delivery failure paths without cloud access. Passing these checks is **not**
-live dev host-start acceptance. Azure what-if, provisioning and observed startup
-remain pending until an authorized owner runs them in the approved environment.
+live dev host-start or trigger acceptance.
+
+### Trigger checks and approved dev smoke
+
+Run the focused synthetic checks before delivery:
+
+```bash
+python -m pytest tests/unit/test_feedback_worker.py tests/unit/test_feedback.py
+python -m unittest discover -s tests/infrastructure -p test_functions.py -v
+```
+
+The infrastructure checks compile the existing source-reader/lease-writer grants
+and inspect real pinned-SDK function metadata, including identity prefixes,
+precreated leases, replay position and retry policy. They do not authenticate to Azure.
+
+After peer approval and the normal dev deployment, an authorized operator must:
+
+1. Verify worker health and `X-ASC-Commit` against the reviewed release. Confirm
+   `feedback_change_feed` is indexed, using Python 3.12, extension bundle 4.41.0,
+   the worker's distinct identity, the existing connection prefixes and private
+   Cosmos network path. Do not use function keys or dump application settings.
+2. Observe lease creation/renewal in the precreated `sous-chef/leases` container
+   under `feedback-v1`, with no 401/403 or lease-container-create failures.
+3. Use a dedicated synthetic dev account to cook/save a recipe and submit a
+   rating through the normal API. Confirm its immutable event is version 1 with
+   the expected owner/source. Observe `feedback_batch_pending` with `failed > 0`
+   and `invalid = 0`: the default processor is deliberately disconnected.
+   The persisted rating must remain readable and learning must remain pending.
+4. Repeat the same feedback/key, then edit its note using a new key and current
+   ETag. Confirm one event for replay and a distinct version-2 event for the edit.
+   Ordinary grocery/profile/chat writes must not create feedback revisions.
+   Use local mocks, not private-note logging, to verify exact dispatch identity
+   and zero processor calls for status-only/unrelated records.
+5. Record the deployment/run, reviewed commit, indexing/lease result and observed
+   aggregate counts in the PR. Leave live acceptance unverified until this is
+   actually observed; health alone cannot satisfy it.
+
+Do not run this smoke against production, create resources, broaden roles or
+write test feedback without approval. Local fixture and compiled-template results
+are not proof of deployed Cosmos identity/lease access.
 
 References: [identity-based host/binding connections](https://learn.microsoft.com/azure/azure-functions/manage-connections?pivots=functions-auth-identity&tabs=host),
 [extension bundle 4.41.0](https://github.com/Azure/azure-functions-extension-bundles/releases/tag/4.41.0),

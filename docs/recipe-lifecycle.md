@@ -154,12 +154,14 @@ indexes and no product TTL. Keep the existing private-network access path;
 do not enable keys or public/all-IP access as a workaround. See
 [Cosmos setup](cosmos-access.md) if that foundation is not provisioned yet.
 
-The [Functions host](feedback-host.md) currently has **no change-feed trigger or
-learning implementation**. Deploying this API, provisioning the host, or checking
-host health does not complete asynchronous-learning MVP acceptance. Worker
-implementation, its narrowly scoped product-write/Foundry grants and its
-deployment belong to the separate worker deliverable. Do not manually mark
-pending feedback completed or broaden worker permissions for this API.
+The [Functions host](feedback-host.md#feedback-admission-and-deferred-processing)
+now filters immutable feedback revisions through an identity-based change-feed
+trigger. Its processor remains deliberately disconnected until ASC-47/48 deliver
+extraction and durable application. Deploying this API, provisioning the host,
+or checking host health does not complete asynchronous-learning MVP acceptance.
+The later worker's narrowly scoped product-write/Foundry grants and deployment
+remain separate work. Do not manually mark pending feedback completed or broaden
+worker permissions for this API.
 
 Focused offline checks:
 `python -m pytest tests/unit/test_feedback.py tests/unit/test_authorization_matrix.py tests/unit/test_recipe_lifecycle.py tests/unit/test_recipe_queries.py`.
