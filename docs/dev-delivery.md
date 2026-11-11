@@ -88,8 +88,8 @@ PostgreSQL, import USDA data, register API keys or copy developer credentials.
    | `ASC_FOUNDRY_PROJECT_NAME` | Existing dev project name |
 
 5. Review the explicit stage in `deploy/agents.dev.json`. The current candidate
-   enables combined-mode chat with the read-back-verified Orchestrator source 8
-   and Recipe + Nutrition combined source 12. This is release configuration,
+   enables combined-mode chat with the read-back-verified Orchestrator source 12
+   and Recipe + Nutrition combined source 21. This is release configuration,
    not evidence that the candidate has been deployed or passed live UI acceptance.
    Agent-enabled releases pin the **actual approved agent versions**.
    Both agents must already have separate, enabled Entra Agent identities.
@@ -131,7 +131,7 @@ exactly verifying the reviewed `--phase combined` source, use this manifest shap
     "orchestrator": {"name": "sous-chef-orchestrator-dev", "version": "12"},
     "recipe_nutrition": {
       "name": "sous-chef-recipe-nutrition-dev",
-      "version": "16"
+      "version": "21"
     }
   }
 }
@@ -142,9 +142,9 @@ not assumed next-version numbers. Future releases must read back their selected
 versions again. Deployment sets `ASC_FOUNDRY_RECIPE_NUTRITION_MODE=combined`,
 verifies and clones both exact sources under their existing identities, then pins
 the resulting release versions. It does not publish separate retrieval/web phases.
-Readiness requires the combined strict schema and policy-8 fingerprint. Manually
+Readiness requires the combined strict schema and policy-9 fingerprint. Manually
 adding a web tool/reasoning settings to old version 4 does not automatically meet
-that contract. Source 16 was published from the combined definition and
+that contract. Source 21 was published from the grams-first combined definition and
 read back successfully before enabling the candidate manifest. App Service must
 receive the compatible backend and complete runtime pins together through delivery;
 do not enable its flag manually against the older backend. USDA secrets/enabling
@@ -152,7 +152,7 @@ and the stable `ASC_PAGINATION_KEY` remain owner-managed.
 Post-execution web-query validation is not pre-search privacy isolation; review
 the [combined-agent boundaries](recipe-specialist.md#combined-recipe-agent-with-native-web-search).
 
-The allergy-focused chat sources retain the existing enabled, distinct agent identities.
+The earlier allergy-focused chat sources retain the existing enabled, distinct agent identities.
 Read-back verified the full definitions and metadata, including definition
 fingerprints `ce0c57fff2bc549e9550b67c7af71a004e3d2c82043d43725302a1a127419da5`
 for Orchestrator source 12 (policy 4) and
@@ -162,6 +162,16 @@ the cooking/format gates, retain hard allergy checks, and request substitutions
 rather than discarding an allergenic source recipe. These source publications do not
 change the running app's pins or prove signed-in chat acceptance; activate them
 only through the reviewed dev delivery workflow.
+
+The grams-first nutrition repair in PR #137 requires combined policy 9; source 16
+does not satisfy that contract. Combined source 21 was published under the same
+existing specialist identity and read back with its complete definition and metadata.
+Its verified definition fingerprint is
+`3b8530c2ba0a3c6eb7c5ec0f6a9e653471534387d04b37ef765e3a62f60cc635`.
+The model deployment, approved content-safety policy, MCP/native web tools and
+strict output schema remain unchanged from source 16. Publication changed no app
+settings or runtime pins. The reviewed source-pin merge, successful deployment
+and signed-in calorie acceptance remain required before calling the fix live.
 
 The schema-version-3 instructions below remain for legacy phased releases.
 

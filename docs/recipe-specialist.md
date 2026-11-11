@@ -873,7 +873,7 @@ managed-identity-first. An ambiguous publication error must be inspected before
 retrying. The command changes no app runtime flags or release manifest.
 
 The current `deploy/agents.dev.json` candidate pins read-back-verified combined
-source 5 and Orchestrator source 1 in an enabled schema-version-4 release
+source 21 (policy 9) and Orchestrator source 12 in an enabled schema-version-4 release
 (schema version 3 remains the legacy phased format). Live adapters and final
 safety are composed by the backend; publishing a source or preparing this manifest
 does not deploy that backend or prove end-to-end UI acceptance. Existing manually
