@@ -30,6 +30,7 @@ TOOLS = {
 _SEARCH = TypeAdapter(UsdaFoodSearch)
 _PROFILE = TypeAdapter(UsdaFoodProfile)
 _JSON = TypeAdapter(JsonValue)
+_FOOD_NOUN_SINGULARS = {"apples": "apple", "carrots": "carrot"}
 
 
 def _invalid() -> RecipeToolError:
@@ -44,6 +45,11 @@ def _object(value: JsonValue) -> dict[str, JsonValue]:
 
 def _normalize(value: str) -> str:
     return " ".join(value.casefold().replace(",", " ").split())
+
+
+def _food_words(value: str) -> set[str]:
+    value = re.sub(r"^spices\s*,", "", value.strip().casefold())
+    return {_FOOD_NOUN_SINGULARS.get(word, word) for word in re.findall(r"[^\W_]+", value)}
 
 
 @dataclass(frozen=True)
@@ -215,13 +221,13 @@ class UsdaMcpSession:
         else:
             if search.truncated:
                 raise RecipeToolError(FoundryFailure.NO_RESULTS)
-            words = set(re.findall(r"[^\W_]+", name.casefold()))
+            words = _food_words(name)
             matches = [
                 food
                 for food in search.foods
                 if _normalize(name) in {_normalize(food.long_desc), _normalize(food.shrt_desc)}
-                or words == set(re.findall(r"[^\W_]+", food.long_desc.casefold()))
-                or words == set(re.findall(r"[^\W_]+", food.shrt_desc.casefold()))
+                or words == _food_words(food.long_desc)
+                or words == _food_words(food.shrt_desc)
             ]
         if len(matches) != 1:
             raise RecipeToolError(FoundryFailure.NO_RESULTS)

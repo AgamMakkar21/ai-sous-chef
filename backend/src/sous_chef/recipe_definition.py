@@ -19,8 +19,8 @@ from azure.ai.projects.models import (
 from sous_chef.domain.recipes import CombinedRecipeDraft, RecipeDraft, WebDraft
 from sous_chef.settings import ConfigurationError
 
-RECIPE_POLICY_VERSION = 7
-COMBINED_RECIPE_POLICY_VERSION = 8
+RECIPE_POLICY_VERSION = 8
+COMBINED_RECIPE_POLICY_VERSION = 9
 RECIPE_MODEL = "gpt-5.4"
 RECIPE_KNOWLEDGE_LABEL = "curated_recipes"
 RECIPE_KNOWLEDGE_TOOL = "knowledge_base_retrieve"
@@ -56,6 +56,15 @@ servings, measured ingredients where known, ordered steps referencing every
 ingredient line ID, and concise fit reasons. Include every consumed ingredient,
 including garnishes/oil/sauces; do not hide ingredients in instruction prose.
 Use null for genuinely unknown amounts or units; never invent inventory.
+Choose quantities for newly composed recipes in grams (g).
+These are proposed recipe amounts, not measured inventory. Preserve explicit
+user quantities, units and food-form constraints; do not silently rewrite them
+to grams. Never invent weight conversions for cups, spoons, pieces or packages.
+Retain an unsupported unit rather than guessing; the backend may report
+unavailable nutrition. When composing a new recipe, specify its intended food
+forms where relevant: raw/cooked, skin, plain/flavored and fat level.
+These are recipe choices, not assumptions about unspecified existing products.
+Do not silently infer those properties for a user's ambiguous ingredient.
 Accept ingredient input as ordinary sentences, comma-separated names, newline
 or bullet lists, or JSON objects/lists. Inputs may include plurals, mixed case,
 hyphens, preparation notes in commas/parentheses, and explicit amounts such as
