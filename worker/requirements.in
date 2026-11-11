@@ -8,3 +8,6 @@ aiohttp==3.14.4
 openai==3.27.0
 pydantic==2.14.0
 tiktoken==0.12.0
+azure-cosmos==4.17.1
+pydantic-settings==2.15.0
+opentelemetry-api==1.45.1

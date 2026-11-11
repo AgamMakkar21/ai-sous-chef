@@ -3,12 +3,11 @@
 `worker/extraction.py` supplies one bounded, private New Foundry extraction
 attempt. It returns validated proposals or an explicit successful `no_insight`;
 it never writes profiles, evidence or processing status. Durable application
-belongs to ASC-48 / #42; recovery belongs to ASC-49 / #46.
-
-The change-feed processor remains deliberately disconnected. Connecting a paid
-model to its unlimited delivery retry policy before durable attempt accounting
-and application exist could repeat charges without retaining a result.
-Host health and saved feedback do not mean personalization has updated.
+is implemented by [ASC-48 / #42](preference-learning.md); operational attempt
+budgets and retry handling belong to ASC-49 / #46.
+The change-feed processor invokes this adapter with owned context and retains
+durable application receipts. Host health and saved feedback alone do not mean
+personalization has updated.
 
 ## Configuration and identity
 
@@ -34,11 +33,10 @@ deployment, so this adapter requires separate explicit pins for that deployment.
 This change neither alters the foundation model deployment nor provisions a new
 one. It performs no availability probe or alternative-model evaluation.
 
-The current host grants only source/lease/monitoring access, not Foundry or
-profile access. A later reviewed integration must configure the approved pins,
-grant the worker only its required project-scoped invocation/context permissions
-and retain private networking. Do not copy web credentials, broaden roles or
-deploy infrastructure to make a local test pass.
+The host access template grants scoped source/profile/lease/monitoring access.
+The owner must configure approved pins, grant only the required project-scoped
+invocation permission and retain private networking. Do not copy web credentials,
+broaden roles or deploy infrastructure to make a local test pass.
 
 ## Input and ownership boundary
 
@@ -57,8 +55,8 @@ The request validates deterministic owner/history/revision-bound feedback IDs,
 source linkage, previous revision linkage, cooking chronology, owner agreement,
 distinct histories/occasions and no future evidence. Current feedback must be
 within 180 days. These checks do not replace authenticated, partition-scoped
-storage reads: ASC-48 must load current owned/cooked sources and recheck revisions
-before applying evidence. Supplying an old revision as current is not prevented
+storage reads: ASC-48 loads current owned/cooked sources and checks revisions
+atomically before applying evidence. Supplying an old revision as current is not prevented
 by its internally consistent immutable ID alone.
 
 The existing change-feed filter remains the admission gate. Grocery/profile
@@ -124,14 +122,15 @@ closes clients without starting a replacement request.
 Notes, excerpts, model output and owner IDs are private processing data, not
 operational telemetry. The adapter emits none of them, suppresses SDK diagnostic
 messages/exception text during its attempt and rejects content-capture opt-in.
-Automatic OpenTelemetry export is disabled. Outside extraction, the guard
-preserves the existing logging factory; it does not weaken the web privacy policy.
-Keep returned assertions private when ASC-48 adds processing records.
+Automatic OpenTelemetry export is disabled. The connected worker extends this
+guard over storage I/O. Outside that private scope, it preserves the existing
+logging factory; it does not weaken the web privacy policy.
+Application receipts keep contributions private and outside the profile.
 
 The worker lock is generated from `worker/requirements.in`, constrained by the
-root lock. The deployable ZIP includes root Function files and the shared
-`sous_chef/domain` package, not web routes, services, adapters or application
-settings. It remains separate from the web application and uses no web imports.
+root lock. The deployable ZIP includes root Function files, `worker/extraction.py`
+and shared `sous_chef` backend modules for storage and learning. It remains a
+separate Functions host and does not start/import the web application.
 
 ```powershell
 python -m piptools compile --no-header --no-annotate --no-emit-index-url --no-emit-trusted-host --strip-extras --output-file worker\requirements.txt worker\requirements.in
@@ -143,5 +142,5 @@ Tests use the real pinned SDK with synthetic HTTP, including project-client and
 managed-identity doubles. They cover provenance/scoring, explicit precedence,
 request controls, context bounds, malformed replies, safe service errors,
 cancellation and DEBUG-log privacy with the web policy installed. No live model
-call, paid quality evaluation, deployment, permission change or durable
-application is part of these checks.
+call, paid quality evaluation, deployment or live permission change is part of
+these checks. The separate learning tests exercise durable application.

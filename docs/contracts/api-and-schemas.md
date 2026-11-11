@@ -227,7 +227,7 @@ Transactions are limited to one container and logical partition; sharing
 
 | Record kind | Required domain fields |
 | --- | --- |
-| `Users.profile` | `onboardingCompleted`, `groceries[]`, `explicitPreferences`, `learnedPreferences[]`, current revisions |
+| `Users.profile` | `onboardingCompleted`, `groceries[]`, `explicitPreferences`, `learnedPreferences[]`, internal monotonic `learningGeneration` projection watermark (absent means zero), current revisions |
 | Grocery row | `groceryId`, `name`, `ingredientId?`, `quantity: number or null`, `unit: string or null`, `updatedAt` |
 | Explicit preferences | `allergies[]`, `dietaryRestrictions[]`, `likes[]`, `dislikes[]`, `preferredCuisines[]`, `spicePreference`, `cookingSkill`, `typicalTimeBudgetMinutes`, `nutritionGoals[]` |
 | Learned candidate | `insightKey`, `insight`, `confidence`, `evidenceCount`, `supportingCookedCount`, `supportUnits`, `oppositionUnits`, `source: "recipe_feedback"`, `lastUpdated`, `latestEvidenceAt`, `policyVersion` |
@@ -240,12 +240,12 @@ Transactions are limited to one container and logical partition; sharing
 | `RecipeHistory.recipeOperation` | Private operation-scoped request hash, action and result reference; committed atomically with the lifecycle effect |
 | `RecipeHistory.behavior` | `occasionId`, owned generated/history reference, `kind: saved/rejected/revisionRequested`, bounded reason, behavior revision, provenance |
 | `RecipeHistory.feedbackRevision` | History/occasion reference, feedback revision, current rating/note at that revision, superseded revision reference, processing provenance |
-| `RecipeHistory.processing` | Owned source/revision, policy version, status/attempts, validated evidence references, result/receipt and safe failure classification |
+| `RecipeHistory.processing` | Typed policy-v1 `feedbackApplication` receipts with owned source/revision and bounded contributions; one `learningWindow` with generation and at most 100 independent source pointers; operational attempts/failures follow ASC-49 |
 
 The [lifecycle and feedback guide](../recipe-lifecycle.md) documents the implemented
 save, cooking, rejection, revision and feedback mutations plus history GETs,
 including their replay, ETag and immutable feedback-event rules. Asynchronous
-learning remains a separate deliverable.
+learning uses the [durable reducer and recovery contract](../preference-learning.md).
 
 Provider response and optional provider conversation IDs are internal references
 to New Foundry Responses/Conversations, not classic Threads/Runs. Map them

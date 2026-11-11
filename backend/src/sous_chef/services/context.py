@@ -36,7 +36,6 @@ from sous_chef.domain.profiles import ExplicitPreferences, ProfileModel, require
 from sous_chef.services.conversations import ConversationService
 from sous_chef.services.groceries import _rows as grocery_rows
 from sous_chef.services.profiles import _view as profile_view
-from sous_chef.settings import ConfigurationError
 
 
 class _LearnedState(ProfileModel):
@@ -158,11 +157,10 @@ class ContextService:
         learned: tuple[ContextPreference, ...] = ()
         now = datetime.now(UTC)
         if candidates:
-            if self.learned_reader is None:
-                raise ConfigurationError("Learned context requires a current-evidence reader.")
-            resolved = await self.learned_reader.resolve(
-                user, candidates, now=now, deadline=deadline
-            )
+            from sous_chef.services.learning import LearningPreferenceReader
+
+            reader = self.learned_reader or LearningPreferenceReader(repository)
+            resolved = await reader.resolve(user, candidates, now=now, deadline=deadline)
             learned = _eligible(user, resolved, candidates, explicit, now)
 
         exchanges: list[ContextExchange] = []

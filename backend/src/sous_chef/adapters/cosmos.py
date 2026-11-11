@@ -549,6 +549,54 @@ class CosmosRepository:
 
         return await self._run(action, deadline=deadline, read_only=False)
 
+    async def commit_learning(
+        self,
+        user: AuthenticatedUser,
+        *,
+        receipt: NewRecord,
+        window: NewRecord | tuple[StoredRecord, RecordPatch],
+        source: StoredRecord,
+    ) -> tuple[StoredRecord, ...]:
+        """Commit a receipt/window and check the current source in one partition."""
+        if (
+            receipt.kind != RecordKind.PROCESSING
+            or receipt.fields.get("role") != "feedbackApplication"
+            or source.body.get("recordKind") != "recipe"
+        ):
+            raise ValueError("Learning requires a typed processing receipt.")
+        creates: tuple[NewRecord, ...] = (receipt,)
+        patches: tuple[tuple[StoredRecord, RecordPatch], ...] = (
+            (
+                source,
+                RecordPatch(
+                    etag=source.etag,
+                    fields={"processingStatus": source.body.get("processingStatus")},
+                ),
+            ),
+        )
+        if isinstance(window, NewRecord):
+            if window.kind != RecordKind.PROCESSING or window.fields.get("role") != (
+                "learningWindow"
+            ):
+                raise ValueError("Learning requires a typed processing window.")
+            creates += (window,)
+        else:
+            record, patch = window
+            if record.body.get("role") != "learningWindow" or set(patch.fields) != {
+                "generation",
+                "sources",
+            }:
+                raise ValueError("Only the learning generation/window can change.")
+            patches += (window,)
+        return await self._commit_history(
+            user,
+            ProductContainer.RECIPE_HISTORY,
+            creates,
+            patches,
+            create_kinds={RecordKind.PROCESSING},
+            patch_kinds={RecordKind.PROCESSING, RecordKind.RECIPE},
+        )
+
     async def generated_recipe(
         self, user: AuthenticatedUser, generated_recipe_id: str
     ) -> StoredRecord:
@@ -599,7 +647,12 @@ class CosmosRepository:
         deadline = self._deadline(deadline)
         request = RecordPatch.model_validate(request)
         if container == ProductContainer.USERS and (
-            "learnedPreferences" in request.fields and len(request.fields) > 1
+            "learnedPreferences" in request.fields
+            and set(request.fields)
+            not in (
+                {"learnedPreferences"},
+                {"learnedPreferences", "learningGeneration"},
+            )
         ):
             raise ValueError("A learned-state patch cannot change other profile sections.")
         current = await self.read(user, container, item_id, deadline=deadline)
@@ -764,7 +817,11 @@ class CosmosRepository:
 
 @asynccontextmanager
 async def open_cosmos(
-    settings: Settings, *, deadline: float | None = None
+    settings: Settings,
+    *,
+    deadline: float | None = None,
+    containers: tuple[ProductContainer, ...] = tuple(ProductContainer),
+    lifetime_seconds: float | None = None,
 ) -> AsyncIterator[CosmosRepository]:
     """Open one short unit of work; setup and its operations share a deadline."""
     if (
@@ -778,9 +835,18 @@ async def open_cosmos(
     policy.RetryOptions = type(policy.RetryOptions)(max_retry_attempt_count=0)
     if deadline is not None and not isfinite(deadline):
         raise ValueError("A deadline must be a finite monotonic timestamp.")
+    if lifetime_seconds is not None and (
+        not isfinite(lifetime_seconds) or not 0 < lifetime_seconds <= 60
+    ):
+        raise ValueError("A Cosmos unit of work must be bounded to sixty seconds.")
     deadline = min(
         deadline if deadline is not None else float("inf"),
-        monotonic() + settings.cosmos_operation_timeout_seconds,
+        monotonic()
+        + (
+            lifetime_seconds
+            if lifetime_seconds is not None
+            else settings.cosmos_operation_timeout_seconds
+        ),
     )
     async with build_async_credential(settings) as credential:
         client = CosmosClient(
@@ -794,19 +860,19 @@ async def open_cosmos(
             retry_write=0,
             enable_endpoint_discovery=False,
             availability_strategy=False,
+            logging_enable=False,
+            tracing_enable=False,
             connection_timeout=settings.cosmos_operation_timeout_seconds,
             read_timeout=settings.cosmos_operation_timeout_seconds,
         )
         try:
             database = client.get_database_client(settings.cosmos_database)
-            containers = {
-                name: database.get_container_client(name.value) for name in ProductContainer
-            }
-            repository = CosmosRepository(settings, containers, deadline=deadline)
+            proxies = {name: database.get_container_client(name.value) for name in containers}
+            repository = CosmosRepository(settings, proxies, deadline=deadline)
 
             async def initialize() -> None:
                 await client.__aenter__()
-                for container in containers.values():
+                for container in proxies.values():
                     properties = await container.read()
                     partition = properties.get("partitionKey")
                     if not isinstance(partition, dict) or (
@@ -819,7 +885,7 @@ async def open_cosmos(
                             "Cosmos product containers require /userId, Hash v2 and no TTL."
                         )
 
-            await repository._run(initialize, deadline=deadline)
+            await repository._run(initialize, deadline=repository._deadline(deadline))
             yield repository
         finally:
             await client.close()

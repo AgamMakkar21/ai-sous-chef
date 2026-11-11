@@ -39,6 +39,14 @@ retries, waits and response validation share that budget; a later operation
 does not get another five seconds. Pass the request's existing absolute
 `time.monotonic()` deadline if less time remains.
 
+The feedback worker explicitly selects only `Users`/`RecipeHistory` and a
+60-second `lifetime_seconds` for extraction plus projection. Each individual
+Cosmos operation/setup still has its original at-most-five-second deadline.
+Default API units of work retain the shared five-second lifetime.
+`commit_learning` atomically commits receipt/window/source guards only inside
+`RecipeHistory`; the separate Users projection is recoverable, not transactional
+across containers. See [the learning contract](preference-learning.md).
+
 ```python
 from sous_chef.adapters.cosmos import open_cosmos
 from sous_chef.domain.cosmos import ProductContainer, RecordPatch
@@ -82,7 +90,8 @@ allergy checks. This layer does not grant a learning agent access to profiles.
 There is no upsert, unconditional replace or arbitrary SQL interface.
 Patches set only named top-level fields plus server-controlled `updatedAt`.
 They reject metadata overrides and JSON-pointer paths. A learned-preference
-patch cannot combine learned state with another profile section.
+patch can include its monotonic `learningGeneration` watermark, but cannot
+combine learned state with another profile section.
 
 Updates and deletes require a nonempty ETag, read the owned record and send
 `If-Match` to Cosmos. Another writer can still win between that read and write;

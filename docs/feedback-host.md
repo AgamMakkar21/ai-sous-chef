@@ -6,10 +6,10 @@ adds its identity-based `feedback_change_feed` trigger and deterministic admissi
 filter. `GET /api/health` still returns a fixed `{"status":"ok","scope":"host-only"}` and
 an `X-ASC-Commit` header from packaged release metadata. It accepts no business
 inputs, returns no user data, and performs no Cosmos reads/writes itself.
-ASC-47 supplies a standalone [extraction adapter](preference-extraction.md);
-the trigger does not invoke it. Owned-context loading, durable application and
-processing receipts remain ASC-48 work. Host health is not evidence that the
-trigger or learning works.
+ASC-47 supplies the [extraction adapter](preference-extraction.md); ASC-48
+connects owned context, durable application and recovery through the
+[learning ledger](preference-learning.md). Host health is not evidence that the
+trigger, configured model access or learning works.
 
 ## Hosting and versions
 
@@ -50,7 +50,8 @@ No Entra Agent identity is created or reused in this infrastructure-only slice.
 | --- | --- | --- |
 | Worker identity | Dedicated host storage account | Storage Blob Data Owner (`b7e6dc6d-f1e8-4753-8033-0f276bb0955b`): host locks, host-key blobs and containers |
 | Worker identity | Existing Cosmos account | Custom `readMetadata` only, for SDK account discovery |
-| Worker identity | `sous-chef/RecipeHistory` container | Cosmos DB Built-in Data Reader (`...0001`), including change-feed reads |
+| Worker identity | `sous-chef/RecipeHistory` container | Cosmos DB Built-in Data Contributor (`...0002`), for change-feed reads and atomic learning receipts/window/source guards |
+| Worker identity | `sous-chef/Users` container | Cosmos DB Built-in Data Contributor (`...0002`), for owned context and conditional learned-only profile projection |
 | Worker identity | Precreated `sous-chef/leases` container | Cosmos DB Built-in Data Contributor (`...0002`), to create/update/delete lease items |
 | Worker identity | Existing Application Insights resource | Monitoring Metrics Publisher (`3913510d-42f4-4e42-8a64-420c390055eb`), Entra-authenticated telemetry ingestion |
 | GitHub delivery identity | This Function App only | Website Contributor, added by `infra/dev-delivery.bicep` |
@@ -58,10 +59,11 @@ No Entra Agent identity is created or reused in this infrastructure-only slice.
 Storage Blob Data Owner is a **storage data-plane role**, not Azure resource
 Owner. No queue/table roles or Storage Account Contributor are needed for this
 HTTP-health/Cosmos-trigger host. Blob triggers, Durable Functions or other storage features would
-require separately reviewed grants. The worker has no product-container write,
-Users/ChatHistory, Foundry, subscription/group management or RBAC-writing grant.
-Later extraction/receipt work must add its specific required access; this slice
-does not pregrant it.
+require separately reviewed grants. The worker has no ChatHistory,
+subscription/group management or RBAC-writing grant. Owner-configured
+project-scoped Foundry invocation access and extraction pins are required
+separately. Container RBAC cannot enforce learned-only JSON-property writes;
+the application boundary and ETag checks do so.
 
 Host storage uses `AzureWebJobsStorage__accountName`, `__credential=managedidentity`
 and `__clientId=<worker-client-id>` with standard public-Azure DNS.
@@ -79,7 +81,7 @@ cannot create the lease container. User isolation, explicit-over-learned
 precedence and deterministic allergy checks remain responsibilities of future
 application code, not guarantees supplied by container-scoped RBAC.
 
-## Feedback admission and deferred processing
+## Feedback admission and durable processing
 
 The trigger watches `sous-chef/RecipeHistory`, with the separate lease connection,
 prefix `feedback-v1`, a 50-item invocation hint and `start_from_beginning=True`.
@@ -109,15 +111,11 @@ Its `event_key` is SHA-256 of
 one NUL byte. ETags and delivery timestamps do not affect it. Different owners
 and genuine edits have different keys. There is deliberately no in-memory
 deduplication: duplicate deliveries can reach the same boundary with the same
-key. ASC-48 must apply the durable ledger before evidence can change, recheck
-current owned/cooked source state and replace superseded evidence.
-
-**The default `process_feedback` boundary refuses acknowledgement.** Tests supply
-a mock handler; hosted code does not invoke a model or manufacture a successful
-no-insight result. Eligible feedback remains pending until ASC-48 connects
-the available extraction adapter to owned context and durable application.
-No new product write or Foundry
-permission is granted by this change.
+key. ASC-48 checks a durable owner/version/policy receipt, reloads current
+owned/cooked source state and replaces superseded evidence. The default
+`process_feedback` now invokes the configured extractor and learning service;
+missing configuration/access fails rather than manufacturing a no-insight result.
+See [transaction boundaries and recovery](preference-learning.md).
 
 Every document is isolated: an invalid event or processor exception does not
 prevent later documents in the same batch from being attempted. After the batch,
@@ -127,7 +125,7 @@ finite retry budget and acknowledging unprocessed input. Successful siblings
 can therefore be redelivered; their event keys remain stable. This is not a
 durable exactly-once guarantee.
 
-A poison event or disconnected processor can stall progress on its lease.
+A poison event or unavailable dependency can stall progress on its lease.
 Inspect the aggregate `feedback_batch_pending` counts (`received`, `ignored`,
 `dispatched`, `invalid`, `failed`) and host invocation failures. Application code
 logs no document, owner, event key, note, recipe, raw exception or model content.
@@ -135,11 +133,11 @@ Dead-lettering, durable retries and operator recovery remain ASC-49 work. Do not
 manually mark feedback completed, advance a blocked lease, or disable retries
 to make a smoke test appear successful.
 
-The admission filter remains standard-library-only plus
-`azure-functions==1.24.0`. The separately invoked extraction adapter adds pinned
-New Foundry dependencies and shared domain models to the worker ZIP, but no web
-routes, adapters or services. An API-to-worker regression test passes real
-synthetic persisted outbox records through the filter to guard contract drift.
+Admission still performs no model/storage calls itself. The worker ZIP now
+includes shared backend storage/services plus pinned New Foundry dependencies;
+it starts only the Functions host, never the web application. API-to-worker
+regressions pass synthetic persisted outbox records through admission and durable
+application to guard contract drift.
 
 Host storage's public network endpoint is enabled but shared keys and anonymous
 blob access are disabled; all access requires Entra authorization. Cosmos keeps
