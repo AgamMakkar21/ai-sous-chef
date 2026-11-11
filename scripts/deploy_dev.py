@@ -820,8 +820,7 @@ def worker_package(sha: str, output: Path) -> None:
             "--format=zip",
             sha,
             "worker",
-            "backend/src/sous_chef/__init__.py",
-            "backend/src/sous_chef/domain",
+            "backend/src/sous_chef",
         ],
         check=True,
         capture_output=True,
@@ -834,6 +833,8 @@ def worker_package(sha: str, output: Path) -> None:
                 if entry.filename.startswith("worker/")
                 else entry.filename.removeprefix("backend/src/")
             )
+            if relative == "extraction.py":
+                relative = "worker/extraction.py"
             if not entry.is_dir() and relative != "release.json":
                 dest.writestr(relative, source.read(entry.filename))
         dest.writestr("release.json", json.dumps({"commit": sha}))

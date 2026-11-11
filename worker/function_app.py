@@ -1,5 +1,6 @@
-"""Feedback-only change-feed admission; extraction and application remain deferred."""
+"""Feedback-only admission and durable preference application."""
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -12,6 +13,13 @@ from pathlib import Path
 from uuid import UUID
 
 import azure.functions as func
+from sous_chef.adapters.cosmos import open_cosmos
+from sous_chef.domain.authorization import AuthenticatedUser
+from sous_chef.domain.cosmos import ProductContainer
+from sous_chef.services.learning import LearningService
+from sous_chef.settings import Settings
+
+from worker.extraction import ExtractionConfig, PreferenceExtractor, private_sdk_diagnostics
 
 app = func.FunctionApp()
 
@@ -153,8 +161,29 @@ def eligible_feedback(document: Mapping[str, object]) -> FeedbackEvent | None:
 
 
 def process_feedback(event: FeedbackEvent) -> None:
-    """ASC-47/48 replace this boundary; never acknowledge a mock as applied learning."""
-    raise RuntimeError("Feedback extraction and durable application are not connected.")
+    with private_sdk_diagnostics():
+        asyncio.run(_process_feedback(event))
+
+
+async def _process_feedback(event: FeedbackEvent) -> None:
+    config = ExtractionConfig.from_environment()
+    settings = Settings.model_validate(
+        {
+            "environment": os.environ["ASC_ENVIRONMENT"],
+            "adapter_mode": "live",
+            "agents_enabled": False,
+            "cosmos_endpoint": os.environ["FeedbackCosmos__accountEndpoint"],
+            "cosmos_database": os.environ["ASC_COSMOS_DATABASE"],
+        }
+    )
+    async with open_cosmos(
+        settings,
+        containers=(ProductContainer.USERS, ProductContainer.RECIPE_HISTORY),
+        lifetime_seconds=60,
+    ) as repository:
+        await LearningService(repository, PreferenceExtractor(config)).process(
+            AuthenticatedUser(event.user_id), UUID(event.feedback_id)
+        )
 
 
 def process_batch(

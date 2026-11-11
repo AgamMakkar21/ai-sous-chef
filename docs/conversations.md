@@ -78,14 +78,15 @@ turns casual conversation into a durable preference.
 
 `LearnedCandidate` types the bounded stored summary from the contract;
 `policyVersion` is integer `1` for the reviewed MVP rule. When nonempty learned
-state exists, inject `LearnedPreferenceReader` through
-`create_app(learned_preference_reader=...)`. Its `resolve` method must validate
+state exists, the default `LearningPreferenceReader` uses the
+[durable learning ledger](preference-learning.md). Tests may inject
+`LearnedPreferenceReader` through `create_app(learned_preference_reader=...)`.
+Its `resolve` method validates
 current owned source revisions, deletion/supersession, and the latest 100 independent
 occasions against backend history. It returns one `ResolvedPreference` per candidate,
 including empty evidence for invalidated candidates. Large evidence lists remain
-outside `Users`. This interface does not implement the extraction worker.
-Until a real reader is wired, nonempty state returns explicit safe 503
-`configuration_unavailable`, rather than treating unverified summaries as learning.
+outside `Users`. Summaries without current ledger evidence are excluded, never
+trusted as learning; storage/configuration errors still fail explicitly.
 
 The context builder rejects foreign evidence, duplicate occasion contributions,
 missing/duplicate/mismatched candidates and unsupported stored schemas. It rechecks

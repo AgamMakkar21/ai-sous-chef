@@ -9,8 +9,8 @@ import logging
 import os
 import re
 import unicodedata
-from collections.abc import AsyncIterator, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from datetime import timedelta
 from functools import lru_cache
@@ -103,6 +103,17 @@ def _guard_sdk_diagnostics() -> None:
 
     guarded._asc_extraction_guard = True  # type: ignore[attr-defined]
     logging.setLogRecordFactory(guarded)
+
+
+@contextmanager
+def private_sdk_diagnostics() -> Iterator[None]:
+    """Keep the same content guard active during owned-context and ledger I/O."""
+    _guard_sdk_diagnostics()
+    token = _extracting.set(True)
+    try:
+        yield
+    finally:
+        _extracting.reset(token)
 
 
 class ExtractionConfig(ExtractionModel):

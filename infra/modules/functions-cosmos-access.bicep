@@ -28,13 +28,23 @@ resource metadataGrant 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments
   }
 }
 
-resource sourceReader 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2025-04-15' = {
+resource sourceWriter 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2025-04-15' = {
   parent: account
-  name: guid(account.id, principalId, 'feedback-source-reader')
+  name: guid(account.id, principalId, 'feedback-source-writer')
   properties: {
     principalId: principalId
-    roleDefinitionId: '${account.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000001'
+    roleDefinitionId: '${account.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
     scope: '${account.id}/dbs/sous-chef/colls/RecipeHistory'
+  }
+}
+
+resource profileWriter 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2025-04-15' = {
+  parent: account
+  name: guid(account.id, principalId, 'feedback-profile-writer')
+  properties: {
+    principalId: principalId
+    roleDefinitionId: '${account.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
+    scope: '${account.id}/dbs/sous-chef/colls/Users'
   }
 }
 

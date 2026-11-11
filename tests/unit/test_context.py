@@ -333,7 +333,7 @@ def test_evidence_backed_learning_is_filtered_and_explicit_state_stays_authorita
     assert document(harness[0]) == before
 
 
-@pytest.mark.parametrize("bad", ["foreign", "duplicate", "mismatch", "missing-reader"])
+@pytest.mark.parametrize("bad", ["foreign", "duplicate", "mismatch"])
 def test_invalid_or_unverifiable_learned_state_fails_before_admission(
     bad: str,
     chat_api: TestClient,
@@ -356,19 +356,30 @@ def test_invalid_or_unverifiable_learned_state_fails_before_admission(
         create_app(
             conversation_settings,
             chat_executor=executor,
-            learned_preference_reader=None if bad == "missing-reader" else EvidenceReader((item,)),
+            learned_preference_reader=EvidenceReader((item,)),
         ),
         headers=auth_headers,
     ) as client:
         conversation = create(client)
         result = send(client, conversation)
-    assert result.status_code == (
-        404 if bad == "foreign" else 503 if bad == "missing-reader" else 502
-    )
+    assert result.status_code == (404 if bad == "foreign" else 502)
     assert executor.calls == []
     assert not any(
         item["recordKind"] in {"turn", "sendOperation"} for item in harness[0].documents.values()
     )
+
+
+def test_default_evidence_reader_excludes_unbacked_profile_candidates(
+    chat_api: TestClient,
+    executor: FakeExecutor,
+    harness: tuple[Transport, SyntheticCredential],
+) -> None:
+    document(harness[0])["learnedPreferences"] = [
+        candidate().model_dump(mode="json", by_alias=True)
+    ]
+    result = send(chat_api, create(chat_api))
+    assert result.status_code == 200
+    assert executor.calls[-1].context.learned_preferences == ()
 
 
 def test_context_overflow_returns_safe_problem_without_admitting_a_turn(

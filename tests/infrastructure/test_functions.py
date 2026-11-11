@@ -107,12 +107,14 @@ class FunctionsInfrastructureTests(unittest.TestCase):
         self.assertEqual(len(policies), 2)
         self.assertTrue(all(not policy["properties"]["allow"] for policy in policies))
 
-    def test_cosmos_is_source_reader_lease_writer_and_metadata_only(self) -> None:
+    def test_cosmos_writes_are_scoped_to_learning_profiles_sources_and_leases(self) -> None:
         grants = resources(self.access, "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments")
-        self.assertEqual(len(grants), 3)
-        source, lease = grants[1:]
+        self.assertEqual(len(grants), 4)
+        source, profile, lease = grants[1:]
         self.assertIn("/dbs/sous-chef/colls/RecipeHistory", source["properties"]["scope"])
-        self.assertIn("00000000-0000-0000-0000-000000000001", str(source))
+        self.assertIn("00000000-0000-0000-0000-000000000002", str(source))
+        self.assertIn("/dbs/sous-chef/colls/Users", profile["properties"]["scope"])
+        self.assertIn("00000000-0000-0000-0000-000000000002", str(profile))
         self.assertIn("/dbs/sous-chef/colls/leases", lease["properties"]["scope"])
         self.assertIn("00000000-0000-0000-0000-000000000002", str(lease))
         role = resources(self.access, "Microsoft.DocumentDB/databaseAccounts/sqlRoleDefinitions")[0]
@@ -120,7 +122,7 @@ class FunctionsInfrastructureTests(unittest.TestCase):
             role["properties"]["permissions"],
             [{"dataActions": ["Microsoft.DocumentDB/databaseAccounts/readMetadata"]}],
         )
-        for forbidden in ("Owner", "listKeys", "ChatHistory", "/colls/Users"):
+        for forbidden in ("Owner", "listKeys", "ChatHistory"):
             self.assertNotIn(forbidden, json.dumps(self.access))
 
     def test_monitoring_is_connected_and_does_not_collect_payloads(self) -> None:
@@ -425,7 +427,14 @@ class FunctionsDeliveryTests(unittest.TestCase):
         with zipfile.ZipFile(source, "w") as archive:
             for name in ("host.json", "function_app.py", "extraction.py", "requirements.txt"):
                 archive.writestr(f"worker/{name}", name)
-            for name in ("__init__.py", "domain/extraction.py", "domain/food_safety.py"):
+            for name in (
+                "__init__.py",
+                "domain/extraction.py",
+                "domain/food_safety.py",
+                "adapters/cosmos.py",
+                "services/learning.py",
+                "settings.py",
+            ):
                 archive.writestr(f"backend/src/sous_chef/{name}", name)
             archive.writestr("worker/release.json", "stale")
         with tempfile.TemporaryDirectory() as directory:
@@ -443,8 +452,7 @@ class FunctionsDeliveryTests(unittest.TestCase):
                     "--format=zip",
                     SHA,
                     "worker",
-                    "backend/src/sous_chef/__init__.py",
-                    "backend/src/sous_chef/domain",
+                    "backend/src/sous_chef",
                 ],
             )
             with zipfile.ZipFile(path) as archive:
@@ -453,12 +461,15 @@ class FunctionsDeliveryTests(unittest.TestCase):
                     {
                         "host.json",
                         "function_app.py",
-                        "extraction.py",
+                        "worker/extraction.py",
                         "requirements.txt",
                         "release.json",
                         "sous_chef/__init__.py",
                         "sous_chef/domain/extraction.py",
                         "sous_chef/domain/food_safety.py",
+                        "sous_chef/adapters/cosmos.py",
+                        "sous_chef/services/learning.py",
+                        "sous_chef/settings.py",
                     },
                 )
                 self.assertEqual(json.loads(archive.read("release.json")), {"commit": SHA})

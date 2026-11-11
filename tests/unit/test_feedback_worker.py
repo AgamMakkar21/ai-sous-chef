@@ -200,7 +200,7 @@ def test_delivery_metadata_does_not_change_event_keys_but_owner_and_revision_do(
     assert handler.call_args_list[3].args[0].supersedes_feedback_id == first["id"]
 
 
-def test_deferred_processor_cannot_acknowledge_feedback_or_mutate_it() -> None:
+def test_unconfigured_processor_cannot_acknowledge_feedback_or_mutate_it() -> None:
     document = record()
     before = deepcopy(document)
     with pytest.raises(worker.FeedbackBatchFailed):
