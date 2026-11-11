@@ -25,23 +25,28 @@ export default function IngredientLookup({
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState("");
+  const [invalidName, setInvalidName] = useState(false);
   const [candidates, setCandidates] = useState<FoodSearch | null>(null);
   const active = useRef<AbortController | null>(null);
+  const input = useRef<HTMLInputElement>(null);
   useEffect(() => () => active.current?.abort(), []);
 
   async function lookup(candidate?: FoodCandidate) {
     if (active.current) return;
     setResult(null);
     setError("");
+    setInvalidName(false);
     const ingredient = name.trim();
     if (
       !ingredient ||
       [...ingredient].length > 100 ||
       /[%_\p{Cc}\p{Cs}]/u.test(ingredient)
     ) {
+      setInvalidName(true);
       setError(
         "Enter an ingredient name without wildcards or control characters.",
       );
+      input.current?.focus();
       return;
     }
     const controller = new AbortController();
@@ -136,18 +141,21 @@ export default function IngredientLookup({
             <label htmlFor="nutrition-name">USDA ingredient name</label>
             <input
               id="nutrition-name"
+              ref={input}
               value={name}
               onChange={(event) => {
                 setName(event.target.value);
                 setResult(null);
                 setError("");
+                setInvalidName(false);
                 setCandidates(null);
               }}
               required
               maxLength={100}
               placeholder="Carrots, raw"
               autoComplete="off"
-              aria-describedby="nutrition-help"
+              aria-invalid={invalidName}
+              aria-describedby={`nutrition-help${error ? " nutrition-error" : ""}`}
               disabled={busy}
             />
           </div>
@@ -157,7 +165,11 @@ export default function IngredientLookup({
         </div>
       </form>
       {busy && <p role="status">Reading USDA nutrition through MCP...</p>}
-      {error && <p role="alert">{error}</p>}
+      {error && (
+        <p id="nutrition-error" role="alert">
+          {error}
+        </p>
+      )}
       {candidates && (
         <section aria-label="USDA food matches">
           <h3>Choose the USDA food</h3>

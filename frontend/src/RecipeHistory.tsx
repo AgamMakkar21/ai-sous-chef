@@ -61,9 +61,11 @@ function FeedbackForm({
   const [base, setBase] = useState(current);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [invalidNote, setInvalidNote] = useState(false);
   const [notice, setNotice] = useState("");
   const [needsReview, setNeedsReview] = useState(false);
   const lock = useRef(false);
+  const noteInput = useRef<HTMLTextAreaElement>(null);
   const attempt = useRef<{ key: string; payload: string; etag: string } | null>(
     null,
   );
@@ -107,13 +109,16 @@ function FeedbackForm({
     event.preventDefault();
     if (lock.current || !rating || needsReview) return;
     if ([...note.trim()].length > 2000) {
+      setInvalidNote(true);
       setError("Keep your note to 2,000 characters or fewer.");
+      noteInput.current?.focus();
       return;
     }
     lock.current = true;
     setBusy(true);
     onBusy(true);
     setError("");
+    setInvalidNote(false);
     setNotice("");
     const input = { rating, note: note.trim() || null };
     const payload = JSON.stringify(input);
@@ -179,9 +184,17 @@ function FeedbackForm({
           <span>Cooking notes (optional)</span>
           <textarea
             id={`${id}-note`}
+            ref={noteInput}
             value={note}
-            onChange={(event) => setNote(event.target.value)}
-            aria-describedby={`${id}-note-help`}
+            onChange={(event) => {
+              setNote(event.target.value);
+              if (invalidNote) {
+                setInvalidNote(false);
+                setError("");
+              }
+            }}
+            aria-invalid={invalidNote}
+            aria-describedby={`${id}-note-help${invalidNote ? ` ${id}-error` : ""}`}
             rows={3}
             maxLength={4000}
           />
@@ -197,7 +210,11 @@ function FeedbackForm({
               : "Save rating"}
         </button>
       </fieldset>
-      {error && <p role="alert">{error}</p>}
+      {error && (
+        <p id={`${id}-error`} role="alert">
+          {error}
+        </p>
+      )}
       {needsReview && (
         <button
           type="button"
@@ -228,9 +245,10 @@ function RecipeDetail({
   const { session, onExpired } = props;
   const heading = useRef<HTMLHeadingElement>(null);
   const historyId = current?.data.historyId;
+  const recipeState = current?.data.state;
   useEffect(() => {
     if (historyId) heading.current?.focus();
-  }, [historyId]);
+  }, [historyId, recipeState]);
   useEffect(() => {
     const controller = new AbortController();
     void getRecipe(session, id, controller.signal)
@@ -458,6 +476,14 @@ export default function RecipeHistory(props: Props) {
   const [selected, setSelected] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const returning = useRef(false);
+  useEffect(() => {
+    if (!selected && returning.current) {
+      heading.current?.focus();
+      returning.current = false;
+    }
+  }, [selected]);
   const onDirty = useCallback(
     (value: boolean) => {
       setDirty(value);
@@ -485,6 +511,7 @@ export default function RecipeHistory(props: Props) {
           (!dirty || window.confirm("Discard your unsaved recipe feedback?"))
         ) {
           onDirty(false);
+          returning.current = true;
           setSelected(null);
         }
       }}
@@ -492,7 +519,9 @@ export default function RecipeHistory(props: Props) {
   ) : (
     <div className="recipe-history">
       <header className="history-heading">
-        <h1>Recipe History</h1>
+        <h1 ref={heading} tabIndex={-1}>
+          Recipe History
+        </h1>
         <p>Saved for later. Cooked your way.</p>
       </header>
       <HistoryList {...props} pending onOpen={setSelected} />

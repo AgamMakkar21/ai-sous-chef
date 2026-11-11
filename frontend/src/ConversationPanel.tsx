@@ -68,6 +68,7 @@ function Transcript({
   owner,
   onBusy,
   onDirty,
+  focusRequest,
 }: {
   id: string;
   title: string;
@@ -77,6 +78,7 @@ function Transcript({
   owner: string;
   onBusy: (busy: boolean) => void;
   onDirty: (dirty: boolean) => void;
+  focusRequest: number;
 }) {
   const load = useCallback(
     (cursor: string | null, signal: AbortSignal) =>
@@ -116,7 +118,9 @@ function Transcript({
     refreshHistory(true);
   }, [refreshHistory]);
   const heading = useRef<HTMLHeadingElement>(null);
-  useEffect(() => heading.current?.focus(), []);
+  useEffect(() => {
+    if (focusRequest > 0) heading.current?.focus();
+  }, [focusRequest]);
   useEffect(() => {
     if (history.index === 0 && history.state.kind === "ready") {
       const first = history.state.page.items[0]?.messages[0];
@@ -321,6 +325,7 @@ export default function ConversationPanel({
   }, [creating, sending, onBusy]);
   const lifetime = useRef<AbortController | null>(null);
   const [titles, setTitles] = useState<Record<string, string>>({});
+  const [focusRequest, setFocusRequest] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(
     () => !window.matchMedia("(max-width: 720px)").matches,
   );
@@ -387,6 +392,7 @@ export default function ConversationPanel({
     )
       return;
     remember({ ...current.current, selectedId: id });
+    setFocusRequest((value) => value + 1);
     setNotice("");
     if (window.matchMedia("(max-width: 720px)").matches) setSidebarOpen(false);
   }
@@ -419,6 +425,7 @@ export default function ConversationPanel({
         selectedId: conversation.conversationId,
         creationKey: null,
       });
+      setFocusRequest((value) => value + 1);
       recordTitle(
         conversation.conversationId,
         conversation.title === "New conversation"
@@ -606,6 +613,7 @@ export default function ConversationPanel({
             owner={navigation!.owner}
             onBusy={trackBusy}
             onDirty={trackDirty}
+            focusRequest={focusRequest}
           />
         ) : (
           <section

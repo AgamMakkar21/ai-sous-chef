@@ -49,9 +49,12 @@ export default function Groceries({
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const [notice, setNotice] = useState("");
+  const [invalidName, setInvalidName] = useState(false);
   const [removing, setRemoving] = useState<Grocery | null>(null);
   const lock = useRef(false);
   const addForm = useRef<HTMLFormElement>(null);
+  const removalTrigger = useRef<HTMLElement | null>(null);
+  const focusEntry = useRef(false);
   const expired = useRef(onExpired);
   useEffect(() => {
     expired.current = onExpired;
@@ -77,6 +80,23 @@ export default function Groceries({
       });
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    if (busy || !focusEntry.current) return;
+    focusEntry.current = false;
+    if (!failed)
+      addForm.current
+        ?.querySelector<HTMLInputElement>("#grocery-name")
+        ?.focus();
+  }, [busy, failed]);
+
+  function requestRemoval(row: Grocery) {
+    removalTrigger.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setRemoving(row);
+  }
 
   function working(value: boolean) {
     lock.current = value;
@@ -131,6 +151,8 @@ export default function Groceries({
     if (lock.current || failed || !inventory) return;
     working(true);
     setNotice("");
+    setInvalidName(false);
+    focusEntry.current = change.method === "DELETE";
     setRemoving(null);
     try {
       await changeGroceries(session, inventory, change);
@@ -150,9 +172,13 @@ export default function Groceries({
     const data = new FormData(event.currentTarget);
     const name = String(data.get("name") ?? "").trim();
     if (!name || [...name].length > 100 || /[\p{Cc}\p{Cs}]/u.test(name)) {
+      setInvalidName(true);
       setNotice(
         "Enter an ingredient name of 1 to 100 characters without control characters.",
       );
+      addForm.current
+        ?.querySelector<HTMLInputElement>("#grocery-name")
+        ?.focus();
       return;
     }
     const unit = String(data.get("unit") ?? "");
@@ -169,7 +195,7 @@ export default function Groceries({
   function adjust(row: Grocery, step: number) {
     if (row.quantity === null) return;
     const next = Math.round((row.quantity + step) * 1000) / 1000;
-    if (next <= 0) setRemoving(row);
+    if (next <= 0) requestRemoval(row);
     else
       void save({
         method: "PATCH",
@@ -207,7 +233,11 @@ export default function Groceries({
             </button>
           </div>
         )}
-        {!failed && notice && <p role="status">{notice}</p>}
+        {!failed && notice && (
+          <p id="grocery-notice" role={invalidName ? "alert" : "status"}>
+            {notice}
+          </p>
+        )}
         {busy && <p role="status">Updating your groceries...</p>}
         {inventory && (
           <>
@@ -226,6 +256,14 @@ export default function Groceries({
                       required
                       maxLength={200}
                       autoComplete="off"
+                      aria-invalid={invalidName}
+                      aria-describedby={`grocery-help${invalidName ? " grocery-notice" : ""}`}
+                      onChange={() => {
+                        if (invalidName) {
+                          setInvalidName(false);
+                          setNotice("");
+                        }
+                      }}
                     />
                   </div>
                   <div className="field">
@@ -300,7 +338,7 @@ export default function Groceries({
                         className="button secondary"
                         disabled={busy || failed}
                         aria-label={`Delete ${row.name}`}
-                        onClick={() => setRemoving(row)}
+                        onClick={() => requestRemoval(row)}
                       >
                         Delete
                       </button>
@@ -364,7 +402,10 @@ export default function Groceries({
               <button
                 autoFocus
                 className="button secondary"
-                onClick={() => setRemoving(null)}
+                onClick={() => {
+                  setRemoving(null);
+                  removalTrigger.current?.focus();
+                }}
               >
                 Cancel
               </button>
