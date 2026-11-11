@@ -22,6 +22,39 @@ def api_tool(mode: str = "") -> UsdaNutritionTool:
     return UsdaNutritionTool(UsdaMcpConfig(Path(sys.executable), fixture, {"TEST_USDA_MODE": mode}))
 
 
+@pytest.mark.parametrize(
+    ("name", "known"),
+    [
+        ("raw apple with skin", True),
+        ("raw carrot", True),
+        ("ground cinnamon", True),
+        ("apple", False),
+        ("raw apple without skin", False),
+        ("cooked apple with skin", False),
+        ("cinnamon", False),
+        ("cinnamon oil", False),
+        ("plain whole milk Greek yogurt", False),
+    ],
+)
+def test_food_wording_equivalents_preserve_preparation_and_composition(
+    name: str, known: bool
+) -> None:
+    evidence = asyncio.run(api_tool().lookup(request(ingredient(name)), deadline=monotonic() + 10))
+    assert (evidence.status == "known") is known
+    if not known:
+        assert not evidence.nutrients and not evidence.mappings
+
+
+@pytest.mark.parametrize("mode", ["ambiguous_wording", "truncated_wording"])
+def test_equivalent_food_words_still_require_one_match_from_a_complete_search(mode: str) -> None:
+    evidence = asyncio.run(
+        api_tool(mode).lookup(request(ingredient("raw apple with skin")), deadline=monotonic() + 10)
+    )
+    assert evidence.status == "unavailable"
+    assert not evidence.nutrients and not evidence.mappings and not evidence.sources
+    assert evidence.unknown_components[0].reason == "food_unavailable"
+
+
 def test_starting_app_reuses_one_mcp_process_and_reaps_it_on_shutdown(tmp_path: Path) -> None:
     log = tmp_path / "mcp.jsonl"
     tool = UsdaNutritionTool(config(log=log))

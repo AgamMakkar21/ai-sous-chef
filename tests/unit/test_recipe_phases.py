@@ -19,7 +19,7 @@ def test_persisted_phase_has_only_its_capabilities_and_strict_output(phase: Reci
     definition = source.definition.as_dict()
     assert source.name == "recipe-agent"
     assert source.metadata["asc_recipe_phase"] == phase.value
-    assert source.metadata["asc_policy_version"] == ("8" if phase == RecipePhase.COMBINED else "7")
+    assert source.metadata["asc_policy_version"] == ("9" if phase == RecipePhase.COMBINED else "8")
     assert definition["text"]["format"]["strict"] is True
     expected_schema = (
         CombinedRecipeDraft
@@ -45,7 +45,9 @@ def test_persisted_phase_has_only_its_capabilities_and_strict_output(phase: Reci
     verify_recipe_source(version(source), phase, knowledge_tool=tool)
 
 
-@pytest.mark.parametrize("fault", ["metadata", "extra-tool", "choice", "inactive", "draft"])
+@pytest.mark.parametrize(
+    "fault", ["metadata", "extra-tool", "choice", "inactive", "draft", "household-policy"]
+)
 def test_phase_drift_is_rejected_before_release_or_readiness(fault: str) -> None:
     source = prepare_agent_source(config(), AgentRole.RECIPE_NUTRITION)
     stored = version(source)
@@ -59,6 +61,13 @@ def test_phase_drift_is_rejected_before_release_or_readiness(fault: str) -> None
         stored.definition.tool_choice = "auto"
     elif fault == "inactive":
         stored.status = "inactive"
+    elif fault == "household-policy":
+        assert isinstance(stored.definition, PromptAgentDefinition)
+        assert stored.definition.instructions is not None
+        stored.definition.instructions = stored.definition.instructions.replace(
+            "Choose quantities for newly composed recipes in grams (g).",
+            "Choose quantities for newly composed recipes in household measures.",
+        )
     else:
         stored.draft = True
     with pytest.raises(ConfigurationError):

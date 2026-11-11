@@ -1,6 +1,6 @@
 # Recipe + Nutrition structured output and grounding (ASC-26 / ASC-30 / ASC-34)
 
-This slice implements the GPT-5.4 specialist's version-6 combined source policy, strict
+This slice implements the GPT-5.4 specialist's version-9 combined source policy, strict
 draft/full-recipe schemas, one-call New Foundry generation, backend enrichment,
 identity-bound Foundry IQ recipe retrieval and conditional Web IQ. It does not activate chat
 or an Azure release, save/cook a recipe, or replace
@@ -44,7 +44,7 @@ different from the isolated web phase; do not describe combined mode as providin
 that phase's pre-search privacy isolation. No live combined invocation was made
 while implementing this change.
 
-Combined source policy 6 has its own exact definition/phase/fingerprint checks.
+Combined source policy 9 has its own exact definition/phase/fingerprint checks.
 Manually attaching web search to an older retrieval version is not sufficient:
 the old instructions/output schema and stale fingerprint metadata do not meet
 this contract. Preserve existing agent identities and versions, and publish a
@@ -284,7 +284,12 @@ An unresolved broad search leaves that ingredient's nutrition explicitly
 unavailable; it does not prevent delivery of an otherwise valid recipe.
 
 A name-only lookup requires one unambiguous description/short-description match:
-case/whitespace/comma normalization or identical words in a different order.
+case/whitespace/comma normalization or equivalent words in a different order.
+The matcher accepts only the noun inflections `apple`/`apples` and
+`carrot`/`carrots`, plus USDA's optional `Spices,` category prefix. It preserves every
+food-form qualifier: `raw apple with skin` can match `Apples, raw, with skin`,
+and `ground cinnamon` can match `Spices, cinnamon, ground`, but generic `apple`
+or `cinnamon` cannot choose a preparation or skin state.
 It does not infer a cut, skin, preparation, synonym or food form from a generic
 name. Empty searches never broaden by dropping terms; a saturated
 20-row result cannot establish uniqueness and is never automatically selected.
@@ -304,6 +309,40 @@ The backend converts only these mass units:
 | `kg` | 1000 |
 | `oz` | 28.349523125 |
 | `lb` | 453.59237 |
+
+### Grams-first generated recipes
+
+The specialist chooses gram quantities for newly composed recipes, with the
+intended food form stated explicitly when it affects nutrition: raw/cooked,
+skin, flavor and fat level. These are proposed recipe amounts, not measurements
+of the user's inventory. Explicit user-provided quantities, units and food-form
+constraints remain unchanged. The model must not invent a gram conversion for
+cups, spoons, pieces or packages, or silently choose an unspecified product form.
+Those ingredients can still have unavailable nutrition.
+
+The backend continues to resolve names against real USDA candidates, require a
+unique match from a complete result set, and verify the selected profile before
+calculating values. No first-hit selection, model-generated FDC IDs, extra model
+call or relaxed source validation is introduced. Supported matching does not
+guarantee that USDA has a unique record or all six nutrients.
+
+This instruction change requires a newly published and verified specialist
+source: combined policy **9**, or policy **8** for legacy phases. Policy numbers
+are not Foundry source-version pins. After review and owner approval, publish
+the required specialist phase(s), retain the actual returned versions and update
+`deploy/agents.dev.json` through the reviewed delivery flow. The Orchestrator
+policy is unchanged. Do not deploy the new verifier against old specialist pins:
+readiness will reject their stale instructions/fingerprint.
+
+Offline regression coverage uses the production MCP server with synthetic HTTP
+data for an apple/yogurt/honey/lemon/cinnamon recipe, exact per-serving arithmetic,
+source IDs and unchanged unsupported household units. It does not prove that a
+live model follows the new instructions. Signed-in acceptance must generate a new
+recipe after the coordinated backend/source release and inspect its quantities,
+food mappings, nutrition coverage and history reload. Existing saved snapshots
+are not recalculated or rewritten.
+
+### Nutrition arithmetic and coverage
 
 For each supported nutrient, whole-recipe amount is the sum of
 `source amount per 100 g * ingredient grams / 100`. Per-serving amount divides
@@ -707,7 +746,7 @@ thermometer template to pass the backend.
 
 The specialist and Orchestrator source instructions describe natural recipe
 output and the remaining profile/integrity checks. Source policy versions are
-Orchestrator **4**, Recipe + Nutrition **7**, and combined Recipe + Nutrition **8**. These are
+Orchestrator **4**, Recipe + Nutrition **8**, and combined Recipe + Nutrition **9**. These are
 policy versions, **not** Foundry agent-version pins. Existing immutable agents
 do not acquire the new instructions when only backend code changes.
 

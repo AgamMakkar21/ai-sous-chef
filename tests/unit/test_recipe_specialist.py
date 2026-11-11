@@ -618,7 +618,7 @@ def test_recipe_publication_versions_the_existing_distinct_identity_without_acti
     invocation = client.agents.create_version.call_args.kwargs
     assert invocation["agent_name"] == "recipe-agent"
     assert invocation["metadata"]["asc_model"] == "gpt-5.4"
-    assert invocation["metadata"]["asc_policy_version"] == "7"
+    assert invocation["metadata"]["asc_policy_version"] == "8"
     assert invocation["metadata"]["asc_recipe_phase"] == "generation"
     assert invocation["definition"].as_dict()["rai_config"] == {
         "rai_policy_name": (

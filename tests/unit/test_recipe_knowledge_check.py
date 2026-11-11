@@ -551,7 +551,7 @@ def test_corrected_arguments_use_the_prior_verified_source_without_republication
         client.responses.create.call_args.kwargs["extra_body"]["agent_reference"]["version"] == "3"
     )
     assert stored.definition.as_dict() == definition and stored.metadata == metadata
-    assert stored.metadata["asc_policy_version"] == "7"
+    assert stored.metadata["asc_policy_version"] == "8"
     harness.project.agents.get_version.assert_called_once_with("recipe-agent", "3")
     harness.project.agents.create_version.assert_not_called()
 

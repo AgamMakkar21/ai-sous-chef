@@ -7,13 +7,120 @@ from pathlib import Path
 import pytest
 from sous_chef.adapters.foundry_gateway import FoundryGateway
 from sous_chef.domain.foundry import FoundryFailure, FoundryGatewayError
-from sous_chef.domain.recipes import StructuredRecipe
+from sous_chef.domain.recipes import RecipeGrounding, StructuredRecipe
 from sous_chef.services.nutrition import UsdaNutritionTool
 from sous_chef.services.recipe_specialist import RecipeSpecialistService
 from sous_chef.telemetry import configure_safe_telemetry
 from test_orchestrator_gateway import coordination_settings
-from test_recipe_specialist import FIXTURE, run, setup
+from test_recipe_specialist import FIXTURE, cooking_context, run, setup
 from test_usda_nutrition import config
+from test_usda_startup import api_tool
+
+
+@pytest.mark.parametrize("household_units", [False, True])
+def test_apple_yogurt_recipe_uses_verified_mass_nutrition_not_guessed_portions(
+    household_units: bool,
+) -> None:
+    draft = copy.deepcopy(FIXTURE["draft"])
+    names = (
+        "raw apple with skin",
+        "plain nonfat Greek yogurt",
+        "honey",
+        "raw lemon juice",
+        "ground cinnamon",
+    )
+    quantities = (2, 1, 1, 1, 0.5) if household_units else (300, 200, 20, 15, 2)
+    draft["ingredients"] = [
+        {
+            "lineId": f"food{index}",
+            "name": name,
+            "quantity": quantity,
+            "unit": unit if household_units else "g",
+        }
+        for index, (name, quantity, unit) in enumerate(
+            zip(names, quantities, ("piece", "cup", "tbsp", "tbsp", "tsp"), strict=True)
+        )
+    ]
+    draft["title"] = "Apple and yogurt bowl"
+    draft["servings"] = 2
+    draft["substitutions"] = []
+    draft["instructions"] = [
+        {
+            "step": 1,
+            "text": "Mix the declared ingredients in a bowl.",
+            "ingredientLineIds": [line["lineId"] for line in draft["ingredients"]],
+        }
+    ]
+    draft["fitReasons"] = ["A simple fruit and yogurt bowl."]
+    draft["adaptations"] = []
+    draft["sourceIds"] = ["fixture-apple-yogurt"]
+    draft["sourceClaims"] = []
+    _, grounding, model = setup(draft)
+    grounding.grounding = RecipeGrounding.model_validate(
+        {
+            "status": "available",
+            "recipes": (
+                {
+                    "source": {
+                        "sourceId": "fixture-apple-yogurt",
+                        "version": "fixture-v1",
+                        "kind": "curated_recipe",
+                        "reference": "https://recipes.example.invalid/synthetic-apple-yogurt",
+                    },
+                    "snippet": (
+                        "Synthetic test recipe: mix raw apple with skin, plain nonfat Greek "
+                        "yogurt, honey, raw lemon juice and ground cinnamon."
+                    ),
+                },
+            ),
+        }
+    )
+    gateway = FoundryGateway(coordination_settings(), client_factory=model.factory)
+    service = RecipeSpecialistService(gateway, grounding, api_tool())
+    context = cooking_context()
+    context = context.model_copy(
+        update={
+            "explicit_preferences": context.explicit_preferences.model_copy(
+                update={"allergies": ()}
+            )
+        }
+    )
+    recipe = run(service, context).recipe
+    assert recipe is not None
+    assert len(model.requests) == 1
+    assert [line.unit for line in recipe.ingredients] == [
+        line["unit"] for line in draft["ingredients"]
+    ]
+    assert [line.quantity for line in recipe.ingredients] == list(quantities)
+    if household_units:
+        assert recipe.nutrition.status == "unavailable"
+        assert not recipe.nutrition.nutrients
+        assert not recipe.nutrition.mappings
+        assert not recipe.nutrition.sources
+        assert [item.reason for item in recipe.nutrition.unknown_components] == [
+            "unsupported_unit"
+        ] * 5
+    else:
+        assert recipe.nutrition.status == "known"
+        assert [item.amount for item in recipe.nutrition.nutrients] == [
+            172,
+            10.52,
+            34.33,
+            0.73,
+            3.52,
+            42.08,
+        ]
+        assert recipe.nutrition.coverage[0].whole_recipe_amount == 344
+        assert all(
+            item.status == "known" and not item.unknown_ingredient_line_ids
+            for item in recipe.nutrition.coverage
+        )
+        assert not recipe.nutrition.unknown_components
+        assert [item.usda_food_id for item in recipe.nutrition.mappings] == [
+            str(5000001 + index) for index in range(5)
+        ]
+        assert [item.weight_grams for item in recipe.nutrition.mappings] == [300, 200, 20, 15, 2]
+        assert all(source.kind == "usda" for source in recipe.nutrition.sources)
 
 
 def test_specialist_accepts_verified_resolver_choices_without_an_extra_model_call() -> None:
