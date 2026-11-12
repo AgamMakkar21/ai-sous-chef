@@ -19,6 +19,50 @@ from test_usda_nutrition import config
 from test_usda_startup import api_tool
 
 
+@pytest.mark.parametrize(
+    ("name", "unit", "reason", "food_id"),
+    [
+        ("chicken, boneless pieces", "g", None, "2345678"),
+        ("chicken, boneless chunks", "g", None, "2345678"),
+        ("raw chicken, boneless piece", "g", None, "2345678"),
+        ("chicken breasts, boneless chunks", "g", None, "2345678"),
+        ("ground chicken", "g", None, "2345681"),
+        ("chicken, boneless pieces", "piece", "unsupported_unit", None),
+        ("cooked chicken, boneless pieces", "g", "food_unavailable", None),
+    ],
+)
+def test_generic_cut_words_do_not_hide_chicken_nutrition_or_invent_piece_weights(
+    name: str, unit: str, reason: str | None, food_id: str | None
+) -> None:
+    request = NutritionRequest.model_validate(
+        {
+            "servings": 2,
+            "allow_estimates": True,
+            "ingredients": ({"line_id": "chicken", "name": name, "quantity": 200, "unit": unit},),
+        }
+    )
+    evidence = asyncio.run(api_tool().lookup(request, deadline=monotonic() + 10))
+    if reason is not None:
+        assert evidence.status == "unavailable"
+        assert evidence.unknown_components[0].reason == reason
+        assert not evidence.nutrients
+    else:
+        assert evidence.status == "known"
+        assert len(evidence.nutrients) == 6
+        assert not evidence.unknown_components
+        mapping = evidence.mappings[0]
+        assert mapping.usda_food_id == food_id
+        assert mapping.food_description == (
+            "Chicken, ground, raw" if food_id == "2345681" else "Chicken, breast, meat only, raw"
+        )
+        assert next(n.amount for n in evidence.nutrients if n.name == "energy") == (
+            143 if food_id == "2345681" else 120
+        )
+        assert mapping.weight_grams == 200 and mapping.quantity == 200
+        assert mapping.unit == "g"
+    assert request.ingredients[0].name == name
+
+
 def test_preparation_names_and_household_units_cover_a_nineteen_ingredient_recipe() -> None:
     foods = (
         ("shrimp, raw, peeled and deveined", 200, "g"),
