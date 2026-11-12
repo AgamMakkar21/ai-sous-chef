@@ -19,6 +19,7 @@ to implement this issue.
 | `ASC_COSMOS_OPERATION_TIMEOUT_SECONDS` | 5 | Positive finite value, at most 5 seconds |
 | `ASC_COSMOS_MAX_ATTEMPTS` | 3 | 1 through 5 total attempts, including the first |
 | `ASC_COSMOS_PAGE_SIZE` | 20 | 1 through 50 |
+| `ASC_CHAT_RETENTION_DAYS` | None | Optional approved ChatHistory creation-age policy, 1 through 3650 days |
 
 Dev/prod use only the configured App Service managed identity through
 `AZURE_CLIENT_ID`. Local live access uses only the developer's explicit
@@ -79,6 +80,8 @@ ETags or changing/deleting records. An absent point read returns `None`.
 Ownerless/foreign records raise `OwnedResourceNotFound`; the shared API handler
 renders the same safe 404 as a missing record. Missing containers, network
 failures and denied permissions are failures, not empty data.
+History access also checks the owner's Users tombstone; a deleted owner gets
+the same safe 404, even with a still-valid token.
 
 `NewRecord` and `RecordPatch` accept JSON fields, not complete business schemas.
 Business services must still validate their feature-specific record schemas,
@@ -87,7 +90,7 @@ allergy checks. This layer does not grant a learning agent access to profiles.
 
 ## Conditional writes
 
-There is no upsert, unconditional replace or arbitrary SQL interface.
+There is no upsert, unconditional replace or caller-supplied SQL interface.
 Patches set only named top-level fields plus server-controlled `updatedAt`.
 They reject metadata overrides and JSON-pointer paths. A learned-preference
 patch can include its monotonic `learningGeneration` watermark, but cannot
@@ -105,7 +108,15 @@ Every application record is limited to 256 KiB of serialized UTF-8 JSON,
 using the pinned SDK's JSON escaping and spacing. SDK system metadata is
 excluded. Patch validation checks the complete projected application record,
 not just the patch body. Invalid input and oversized records fail before a write.
-The nine-field patch limit leaves Cosmos's tenth operation for `updatedAt`.
+The nine-field business patch limit leaves Cosmos's tenth operation for
+`updatedAt`. Optional chat retention adds server-owned fields; when that exceeds
+ten operations, the repository conditionally replaces the complete projected
+application record with the same ETag instead.
+
+History mutations also patch a content-free active privacy fence in the same
+partition transaction. Do not bypass this guard or delete it during ordinary
+record cleanup. User deletion preserves a permanent profile tombstone and two
+closed fences; see the [operator and retention procedure](data-retention.md).
 
 ## Histories
 
@@ -193,6 +204,8 @@ under two unique synthetic identities, checks all three product containers,
 pagination, colliding IDs, missing items and competing ETag writes, then
 conditionally deletes the eight exact keys. It creates no resources or roles,
 does not query real users and never accesses leases.
+Active content-free history fences remain after sentinel cleanup; no smoke
+profile, chat content or recipe payload remains.
 
 Cleanup runs in fresh bounded contexts, including after uncertain creates.
 A failure never reports success. The command prints a synthetic `run_id`

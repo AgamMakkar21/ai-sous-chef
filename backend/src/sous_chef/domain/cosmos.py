@@ -12,7 +12,16 @@ MAX_RECORD_BYTES = 256 * 1024
 MAX_PAGE_SIZE = 50
 MAX_CONTINUATION_LENGTH = 16 * 1024
 RESERVED_FIELDS = frozenset(
-    {"id", "userId", "recordKind", "schemaVersion", "createdAt", "updatedAt", "ttl"}
+    {
+        "id",
+        "userId",
+        "recordKind",
+        "schemaVersion",
+        "createdAt",
+        "updatedAt",
+        "ttl",
+        "retentionExpiresAt",
+    }
 )
 
 
@@ -124,6 +133,13 @@ class StoredRecord:
 class RecordPage:
     items: tuple[StoredRecord, ...] = field(repr=False)
     continuation_token: str | None = field(repr=False)
+
+
+@dataclass(frozen=True)
+class DeletionResult:
+    request_id: UUID
+    complete: bool
+    removed: dict[str, int]
 
 
 class CosmosFailure(StrEnum):

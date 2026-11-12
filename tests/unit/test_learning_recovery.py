@@ -238,6 +238,8 @@ def test_uncertain_claim_is_not_immediately_reissued(
             calls += 1
 
         async with open_cosmos(settings()) as repository:
+            await seed_profile(repository)
+            await seed_source(repository, source())
             harness[0].write_then_disconnect = True
             with pytest.raises(CosmosError) as failure:
                 await LearningRecovery(repository).process(OWNER, identifier, 1, apply, now=NOW)

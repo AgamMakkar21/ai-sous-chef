@@ -63,9 +63,9 @@ and cannot enforce learned-state-only JSON-property writes.
 
 | Container | Partition key | Stored record kinds |
 | --- | --- | --- |
-| `Users` | `/userId`, Hash v2 | One bounded `profile`; point read with `id=userId` |
-| `ChatHistory` | `/userId`, Hash v2 | `conversation`, `conversationCreation`, `turn`, `sendOperation` |
-| `RecipeHistory` | `/userId`, Hash v2 | `recipe`, `recipeOperation`, `behavior`, `feedbackRevision`, `processing` |
+| `Users` | `/userId`, Hash v2 | One bounded `profile`, or permanent `deletionTombstone`; point read with `id=userId` |
+| `ChatHistory` | `/userId`, Hash v2 | `conversation`, `conversationCreation`, `turn`, `sendOperation`, `deletionGuard` |
+| `RecipeHistory` | `/userId`, Hash v2 | `recipe`, `recipeOperation`, `behavior`, `feedbackRevision`, `processing`, `deletionGuard` |
 | `leases` | `/id`, Hash v2 | Future change-feed processor checkpoint/coordination documents only |
 
 Database: `sous-chef`. The discriminator is `recordKind`, containing the unprefixed
@@ -87,11 +87,16 @@ The [lifecycle APIs](../docs/recipe-lifecycle.md) atomically persist their
 uses the existing scalar indexes and authenticated partition, with `TOP 2` to
 reject duplicate source references. It never queries across users.
 
-No container sets `defaultTtl`: chat metadata/turns/deduplication remain until
-user-requested deletion, independently of profile and saved-recipe retention.
-Do not add per-item `ttl` as a shortcut. Primary-data deletion is ASC-50; backups
-use the separate seven-day recovery tier and require live recovery verification
-before release. Leases have no automatic expiry, so checkpoint state is retained.
+ChatHistory sets `defaultTtl=-1` to enable per-item TTL without an automatic
+container expiry. Chat metadata/turns/deduplication still remain until
+user-requested deletion by default. Only an explicitly approved
+`ASC_CHAT_RETENTION_DAYS` policy stamps server-owned item TTL; Users and
+RecipeHistory have no container TTL and retain their independent policy.
+Permanent privacy markers use `ttl=-1`. See the
+[ASC-50 retention and deletion procedure](../docs/data-retention.md), including
+legacy backfill, writer rollout and external-erasure limits. Backups use the
+separate seven-day recovery tier and require live recovery verification before
+release. Leases have no automatic expiry, so checkpoint state is retained.
 
 ## Query indexes and RU evidence
 
@@ -107,6 +112,7 @@ Cosmos indexes the system `id` property automatically; do not explicitly include
 | Profile | Point read by `id` and `/userId`; no profile array query |
 | Conversations | `recordKind=conversation`; composite `(recordKind ASC, createdAt DESC, id DESC)` |
 | Turns | `recordKind=turn`, `conversationId`; composite `(recordKind ASC, conversationId ASC, turnIndex ASC, id ASC)` |
+| Approved chat retention | Scalar `retentionExpiresAt`; expiry exclusion plus the existing `createdAt` index for legacy rows |
 | Recipe list | `recordKind=recipe`; composite `(recordKind ASC, createdAt DESC, id DESC)` |
 | Recipe filters | Scalar indexes on `accepted`, `cookedAt`, `rating`; cooked/unrated is awaiting feedback |
 | Generated/occasion lookup | Scalar indexes on `generatedRecipeId`, `occasionId` |

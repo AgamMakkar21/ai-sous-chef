@@ -22,7 +22,7 @@ from opentelemetry.trace import SpanKind, StatusCode, get_current_span
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from sous_chef.adapters import cosmos, credentials
 from sous_chef.app import create_app
-from sous_chef.domain.cosmos import CosmosError, HistoryQuery, PageRequest
+from sous_chef.domain.cosmos import CosmosError, HistoryQuery, PageRequest, ProductContainer
 from sous_chef.settings import ConfigurationError, Settings
 from sous_chef.telemetry import configure_safe_telemetry, trace_id
 from sous_chef.tracing import Operation, Telemetry, operation
@@ -262,9 +262,11 @@ def test_cosmos_accounts_for_recovered_and_exhausted_throttling(
                 transport.faults["GET"].extend([429] * throttles)
                 if throttles == 3:
                     with pytest.raises(CosmosError):
-                        await repository.read(ALICE, RECIPES, str(uuid4()))
+                        await repository.read(ALICE, ProductContainer.USERS, ALICE.user_id)
                 else:
-                    assert await repository.read(ALICE, RECIPES, str(uuid4())) is None
+                    assert (
+                        await repository.read(ALICE, ProductContainer.USERS, ALICE.user_id) is None
+                    )
 
     asyncio.run(run())
     span = exporter.get_finished_spans()[-1]
@@ -327,8 +329,12 @@ def test_cosmos_sums_each_query_page_once(
     asyncio.run(run())
     assert calls == 2
     spans = exporter.get_finished_spans()
-    assert len(spans) == 1 and spans[0].attributes is not None
-    assert spans[0].attributes["asc.cosmos.request_charge"] == calls * 2.5
+    assert len(spans) == 2
+    assert {
+        span.attributes["db.collection.name"]: span.attributes["asc.cosmos.request_charge"]
+        for span in spans
+        if span.attributes is not None
+    } == {ProductContainer.USERS.value: 2.5, RECIPES.value: calls * 2.5}
 
 
 def test_concurrent_requests_have_separate_roots_and_restore_context(
