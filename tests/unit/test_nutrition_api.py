@@ -57,6 +57,9 @@ def test_authenticated_lookup_returns_real_stdio_calories_per_100_g(
             "sourceId": "usda:fdc:99901",
             "usdaFoodId": "99901",
             "weightGrams": 100,
+            "foodDescription": "rice",
+            "conversionBasis": "Measured weight",
+            "approximateMatch": False,
         }
     ]
     assert response.headers["cache-control"] == "no-store"

@@ -148,6 +148,35 @@ def test_mass_conversion_and_servings_are_deterministic(
 
 
 @pytest.mark.parametrize(
+    ("unit", "quantity", "grams"),
+    [("ml", 10, 9.2), ("l", 1, 920), ("tbsp", 1, 13.60382359875)],
+)
+def test_oil_volume_fallback_is_food_specific_and_disclosed(
+    unit: str, quantity: int, grams: float
+) -> None:
+    payload = request(ingredient("olive oil", quantity, unit))
+    payload = payload.model_copy(update={"allow_estimates": True})
+    evidence = asyncio.run(
+        UsdaNutritionTool(config("varied")).lookup(payload, deadline=monotonic() + 10)
+    )
+    assert evidence.status == "known"
+    assert evidence.mappings[0].weight_grams == pytest.approx(grams)
+    assert evidence.mappings[0].conversion_basis is not None
+    assert "0.92 g/mL" in evidence.mappings[0].conversion_basis
+    assert evidence.nutrients[0].amount == pytest.approx(round(grams * 9 / 2, 2))
+
+
+def test_approximation_does_not_invent_density_or_count_weights_for_unknown_portions() -> None:
+    for unit in ("ml", "piece", "package"):
+        payload = request(ingredient(unit=unit)).model_copy(update={"allow_estimates": True})
+        evidence = asyncio.run(
+            UsdaNutritionTool(config()).lookup(payload, deadline=monotonic() + 10)
+        )
+        assert evidence.status == "unavailable"
+        assert evidence.unknown_components[0].reason == "unsupported_unit"
+
+
+@pytest.mark.parametrize(
     ("servings", "expected"),
     [
         (1, (350, 5.5, 43.5, 12.3, 5.5, 100)),
@@ -498,7 +527,7 @@ def test_nutrient_row_bound_is_exact(count: int) -> None:
         assert caught.value.code == FoundryFailure.INVALID_RESULT
 
 
-def test_only_nine_food_searches_are_attempted_per_request(tmp_path: Path) -> None:
+def test_all_thirty_recipe_lines_are_attempted(tmp_path: Path) -> None:
     log = tmp_path / "calls.jsonl"
     lines = tuple(ingredient(f"unknown{index}", line_id=f"line{index}") for index in range(30))
     result = asyncio.run(
@@ -509,10 +538,18 @@ def test_only_nine_food_searches_are_attempted_per_request(tmp_path: Path) -> No
     )
     assert result.status == "unavailable"
     messages = [json.loads(line) for line in log.read_text().splitlines()]
-    assert sum(message["method"] == "tools/call" for message in messages) == 9
-    assert [item.reason for item in result.unknown_components] == (
-        ["food_unavailable"] * 9 + ["lookup_limit"] * 21
-    )
+    assert sum(message["method"] == "tools/call" for message in messages) == 30
+    assert [item.reason for item in result.unknown_components] == ["food_unavailable"] * 30
+
+
+def test_large_recipes_get_a_bounded_larger_lookup_budget_and_keep_the_caller_deadline() -> None:
+    lines = tuple(ingredient(f"unknown{index}", line_id=f"line{index}") for index in range(25))
+    tool = UsdaNutritionTool(config("slow_foods", timeout=0.5))
+    result = asyncio.run(tool.lookup(request(*lines), deadline=monotonic() + 3))
+    assert len(result.unknown_components) == 25
+    with pytest.raises(RecipeToolError) as caught:
+        asyncio.run(tool.lookup(request(*lines), deadline=monotonic() + 0.3))
+    assert caught.value.code == FoundryFailure.TIMEOUT
 
 
 def test_live_specialist_factory_selects_real_nutrition_not_fixtures() -> None:

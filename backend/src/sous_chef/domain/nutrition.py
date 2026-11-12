@@ -37,10 +37,18 @@ class UsdaNutrientRow(UsdaModel):
     sr_order: int = Field(strict=True, ge=0, le=100_000)
 
 
+class UsdaFoodPortion(UsdaModel):
+    amount: Decimal = Field(gt=0, le=1_000_000)
+    gram_weight: Decimal = Field(gt=0, le=10_000_000)
+    measure_unit: SourceText
+    modifier: SourceText | None = None
+
+
 class UsdaFoodProfile(UsdaModel):
     food: UsdaFood
     basis: Literal["per_100_g"] = "per_100_g"
     nutrients: tuple[UsdaNutrientRow, ...] = Field(min_length=1, max_length=256, repr=False)
+    portions: tuple[UsdaFoodPortion, ...] = Field(default=(), max_length=128)
 
 
 class UsdaFoodSearch(UsdaModel):

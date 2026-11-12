@@ -30,6 +30,33 @@ FOODS = [
     },
     {"fdcId": 2345680, "description": "Chicken, breast, roasted", "dataType": "SR Legacy"},
     *[
+        {"fdcId": 6000001 + index, "description": description, "dataType": "SR Legacy"}
+        for index, description in enumerate(
+            (
+                "Crustaceans, shrimp, raw",
+                "Tofu, raw, firm",
+                "Rice, white, long-grain, regular, raw, enriched",
+                "Oil, canola",
+                "Onions, raw",
+                "Garlic, raw",
+                "Ginger root, raw",
+                "Peppers, sweet, red, raw",
+                "Tomatoes, red, ripe, raw",
+                "Water, bottled, generic",
+                "Lime juice, raw",
+                "Sauce, fish, ready-to-serve",
+                "Soy sauce made from soy and wheat",
+                "Sugars, brown",
+                "Spices, pepper, red or cayenne",
+                "Spices, cumin seed",
+                "Cornstarch",
+                "Coriander leaves, raw",
+                "Limes, raw",
+                "Rice, white, long-grain, regular, cooked",
+            )
+        )
+    ],
+    *[
         {"fdcId": fdc_id, "description": description, "dataType": "SR Legacy"}
         for fdc_id, description in (
             (5000001, "Apples, raw, with skin"),
@@ -102,7 +129,12 @@ def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200, json={"foods": foods[: body["pageSize"]], "totalHits": total_hits}
         )
-    food = next(food for food in FOODS if str(food["fdcId"]) == request.url.path.rsplit("/", 1)[1])
+    food = next(
+        (food for food in FOODS if str(food["fdcId"]) == request.url.path.rsplit("/", 1)[1]),
+        None,
+    )
+    if food is None:
+        return httpx.Response(404)
     fdc_id = food["fdcId"]
     assert isinstance(fdc_id, int)
     amounts = {
@@ -111,11 +143,33 @@ def respond(request: httpx.Request) -> httpx.Response:
         5000003: (300, 0, 0, 80, 0, 4),
         5000004: (20, 0.4, 0.2, 7, 0.3, 1),
         5000005: (250, 4, 1, 80, 50, 10),
+        6000001: (85, 20, 0.5, 0, 0, 119),
+        6000002: (144, 17, 8.7, 2.8, 2.3, 14),
+        6000003: (365, 7, 0.7, 80, 1.3, 5),
+        6000004: (884, 0, 100, 0, 0, 0),
+        6000010: (0, 0, 0, 0, 0, 5),
+        6000020: (130, 2.7, 0.3, 28, 0.4, 1),
     }.get(fdc_id, (41, 0.93, 0.24, 9.58, 2.8, 69))
     return httpx.Response(
         200,
         json={
             **food,
+            "foodPortions": {
+                5000001: [
+                    {"amount": 1, "modifier": "medium", "gramWeight": 150},
+                    {"amount": 1, "modifier": "large", "gramWeight": 200},
+                ],
+                5000002: [{"amount": 1, "modifier": "cup", "gramWeight": 200}],
+                5000003: [{"amount": 1, "modifier": "tbsp", "gramWeight": 20}],
+                5000004: [{"amount": 1, "modifier": "tbsp", "gramWeight": 15}],
+                5000005: [{"amount": 1, "modifier": "tsp", "gramWeight": 4}],
+                6000003: [{"amount": 1, "modifier": "cup", "gramWeight": 185}],
+                6000004: [{"amount": 1, "modifier": "tablespoon", "gramWeight": 14}],
+                6000006: [{"amount": 1, "modifier": "clove", "gramWeight": 3}],
+                6000011: [{"amount": 1, "modifier": "tbsp", "gramWeight": 15}],
+                6000019: [{"amount": 1, "modifier": "fruit", "gramWeight": 64}],
+                6000020: [{"amount": 1, "modifier": "cup", "gramWeight": 158}],
+            }.get(fdc_id, []),
             "foodNutrients": [
                 {"nutrient": {"id": id, "unitName": unit}, "amount": amount}
                 for (id, unit), amount in zip(

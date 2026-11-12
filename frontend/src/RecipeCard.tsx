@@ -236,6 +236,19 @@ export default function RecipeCard({
                         <li key={item.ingredientLineId}>
                           {ingredientName(item.ingredientLineId)} / Food ID:{" "}
                           {item.usdaFoodId}
+                          {item.foodDescription && (
+                            <>
+                              {" "}
+                              /{" "}
+                              {item.approximateMatch
+                                ? "Estimated match"
+                                : "USDA food"}
+                              : {item.foodDescription}
+                            </>
+                          )}
+                          {item.conversionBasis && (
+                            <> / {item.conversionBasis}</>
+                          )}
                         </li>
                       ))}
                   </ul>

@@ -80,6 +80,8 @@ def tool_output(request: dict[str, object]) -> str:
     arguments = params["arguments"]
     if MODE == "timeout":
         time.sleep(60)
+    if MODE == "slow_foods":
+        time.sleep(0.03)
     if MODE == "hang_rice" and params["name"] == "search_foods" and arguments["keyword"] == "rice":
         time.sleep(60)
     if MODE == "error":

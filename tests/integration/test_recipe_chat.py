@@ -239,7 +239,7 @@ def test_combined_app_composition_returns_and_persists_a_grounded_recipe(
     assert len(transport.requests) == 3
 
 
-def test_combined_chat_delivers_with_broad_api_backed_usda_search(
+def test_combined_chat_keeps_known_components_when_broad_search_details_are_missing(
     combined_settings: Settings,
     auth_headers: dict[str, str],
     harness: tuple[Transport, SyntheticCredential],
@@ -276,13 +276,17 @@ def test_combined_chat_delivers_with_broad_api_backed_usda_search(
         turn = response.json()["data"]
         assert turn["status"] == "completed" and turn["generatedRecipeId"]
         nutrition = turn["recipe"]["nutrition"]
-        assert nutrition["status"] == "unavailable"
-        assert not nutrition["nutrients"] and not nutrition["mappings"]
+        assert nutrition["status"] == "partial"
+        assert nutrition["nutrients"]
+        assert {item["ingredientLineId"] for item in nutrition["mappings"]} == {"carrot"}
         assert any(
             item["ingredientLineId"] == "rice" and item["reason"] == "food_unavailable"
             for item in nutrition["unknownComponents"]
         )
-        assert {source["kind"] for source in turn["recipe"]["sources"]} == {"curated_recipe"}
+        assert {source["kind"] for source in turn["recipe"]["sources"]} == {
+            "curated_recipe",
+            "usda",
+        }
         assert len(transport.requests) == 3
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
 

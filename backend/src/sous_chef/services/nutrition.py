@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from sous_chef.adapters.usda_mcp import UsdaMcpClient, UsdaMcpConfig, UsdaMcpSession, open_usda
 from sous_chef.domain.foundry import FoundryFailure
 from sous_chef.domain.nutrition import UsdaFoodProfile, UsdaFoodSearch
+from sous_chef.domain.nutrition_inputs import MASS, VOLUME, ingredient_weight, recipe_food_query
 from sous_chef.domain.recipes import (
     Nutrient,
     NutrientCoverage,
@@ -25,12 +26,6 @@ from sous_chef.domain.recipes import (
 from sous_chef.settings import ConfigurationError, Settings
 from sous_chef.telemetry import ErrorCategory, Event, operational_event
 
-_MASS = {
-    "g": Decimal(1),
-    "kg": Decimal(1000),
-    "oz": Decimal("28.349523125"),
-    "lb": Decimal("453.59237"),
-}
 _NUTRIENTS: tuple[tuple[str, NutrientName, Literal["kcal", "g", "mg"]], ...] = (
     ("Energy", "energy", "kcal"),
     ("Protein", "protein", "g"),
@@ -39,7 +34,7 @@ _NUTRIENTS: tuple[tuple[str, NutrientName, Literal["kcal", "g", "mg"]], ...] = (
     ("Fiber, total dietary", "fiber", "g"),
     ("Sodium, Na", "sodium", "mg"),
 )
-MAX_FOODS = 9
+MAX_FOODS = 30
 
 
 def _rounded(value: Decimal) -> float:
@@ -62,11 +57,14 @@ class UsdaNutritionTool:
             self._client = None
 
     @asynccontextmanager
-    async def _session(self, deadline: float) -> AsyncIterator[UsdaMcpSession]:
+    async def _session(
+        self, deadline: float, *, ingredient_count: int = 1
+    ) -> AsyncIterator[UsdaMcpSession]:
+        timeout = min(30, self.config.timeout_seconds * ((ingredient_count + 8) // 9))
         manager = (
-            self._client.session(deadline=deadline)
+            self._client.session(deadline=deadline, timeout_seconds=timeout)
             if self._client
-            else open_usda(self.config, deadline=deadline)
+            else open_usda(self.config, deadline=deadline, timeout_seconds=timeout)
         )
         async with manager as session:
             yield session
@@ -140,7 +138,7 @@ class UsdaNutritionTool:
         unknown: list[NutritionUnknownComponent] = []
         totals = {name: Decimal(0) for _, name, _ in _NUTRIENTS}
         covered: dict[NutrientName, list[str]] = {name: [] for _, name, _ in _NUTRIENTS}
-        async with self._session(deadline) as session:
+        async with self._session(deadline, ingredient_count=len(request.ingredients)) as session:
             for line in request.ingredients:
                 if line.quantity is None:
                     unknown.append(
@@ -149,7 +147,7 @@ class UsdaNutritionTool:
                         )
                     )
                     continue
-                if line.unit not in _MASS:
+                if line.unit not in {*MASS, *VOLUME, "piece", "item"}:
                     unknown.append(
                         NutritionUnknownComponent(
                             ingredient_line_id=line.line_id,
@@ -158,7 +156,12 @@ class UsdaNutritionTool:
                     )
                     continue
                 selected = request.selected_food_ids.get(line.line_id)
-                key = " ".join(line.name.casefold().split()) + ":" + (selected or "")
+                query = (
+                    recipe_food_query(line.name)
+                    if request.allow_estimates and selected is None
+                    else line.name
+                )
+                key = " ".join(query.casefold().split()) + ":" + (selected or "")
                 if key not in profiles:
                     if len(profiles) >= MAX_FOODS:
                         unknown.append(
@@ -168,7 +171,9 @@ class UsdaNutritionTool:
                         )
                         continue
                     try:
-                        profiles[key] = await session.food(line.name, food_id=selected)
+                        profiles[key] = await session.food(
+                            query, food_id=selected, approximate=request.allow_estimates
+                        )
                     except RecipeToolError as error:
                         if error.code != FoundryFailure.NO_RESULTS:
                             raise
@@ -181,6 +186,22 @@ class UsdaNutritionTool:
                         )
                     )
                     continue
+                assert line.unit is not None
+                weight = ingredient_weight(
+                    line.name,
+                    line.quantity,
+                    line.unit,
+                    profile,
+                    estimates=request.allow_estimates,
+                )
+                if weight is None:
+                    unknown.append(
+                        NutritionUnknownComponent(
+                            ingredient_line_id=line.line_id, reason="unsupported_unit"
+                        )
+                    )
+                    continue
+                grams, conversion_basis = weight
                 expected_units = {label: unit for label, _, unit in _NUTRIENTS}
                 if any(
                     row.nutrdesc in expected_units
@@ -207,8 +228,6 @@ class UsdaNutritionTool:
                     )
                 if not values:
                     continue
-                assert line.unit is not None
-                grams = line.quantity * _MASS[line.unit]
                 for label, name, _ in _NUTRIENTS:
                     if label in values:
                         totals[name] += values[label] * grams / Decimal(100)
@@ -232,6 +251,9 @@ class UsdaNutritionTool:
                         source_id=source_id,
                         usda_food_id=food_id,
                         weight_grams=float(grams),
+                        food_description=profile.food.long_desc,
+                        conversion_basis=conversion_basis,
+                        approximate_match=request.allow_estimates and selected is None,
                     )
                 )
         nutrients = tuple(
