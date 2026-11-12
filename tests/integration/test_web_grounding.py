@@ -28,11 +28,13 @@ from sous_chef.services import orchestrator, recipe_specialist
 from sous_chef.services.orchestrator import ExecutionBudget, OrchestratorService
 from sous_chef.services.recipe_grounding import retrieval_query
 from sous_chef.services.recipe_specialist import RecipeSpecialistService
+from sous_chef.services.web_grounding import quantity_web_query
 from sous_chef.telemetry import configure_safe_telemetry
 from test_foundry_gateway import Harness, response_body
 from test_grounded_specialist import configuration, live_setup
 from test_orchestrator_gateway import body, function_output
 from test_recipe_specialist import FixtureTools, cooking_context
+from test_usda_startup import api_tool
 
 QUERY = "current rice recalls"
 URL = "https://source.example.invalid/synthetic-advisory"
@@ -207,6 +209,83 @@ class CombinedHarness(WebHarness):
             )
             self.body = body(message)
         return await Harness.handle(self, request)
+
+
+def test_vague_quantity_uses_one_minimized_native_search_then_real_usda_mcp() -> None:
+    harness = CombinedHarness(use_web=False)
+    harness.data = harness.data.model_copy(
+        update={
+            "current_request": "Make dinner with some chicken and rice.",
+        }
+    )
+    harness.service = RecipeSpecialistService(harness.gateway, None, api_tool(), combined=True)
+    query = quantity_web_query(harness.data)
+    assert query is not None
+    message = harness.combined["output"][1]
+    draft = json.loads(message["content"][0]["text"])
+    claim = "Serves 4; 500 g chicken."
+    draft.update(
+        title="Chicken dinner",
+        ingredients=[{"lineId": "chicken", "name": "chicken", "quantity": None, "unit": None}],
+        instructions=[{"step": 1, "text": "Cook chicken.", "ingredientLineIds": ["chicken"]}],
+        fitReasons=["A simple dinner."],
+        adaptations=[],
+        substitutions=[],
+        sourceClaims=[],
+        webClaims=[{"text": claim, "sourceUrl": URL}],
+    )
+    text = json.dumps(draft)
+    message["content"][0].update(
+        text=text,
+        annotations=[
+            {
+                "type": "url_citation",
+                "url": URL,
+                "title": "Comparable chicken recipe",
+                "start_index": text.index(claim),
+                "end_index": text.index(claim) + len(claim),
+            }
+        ],
+    )
+    search = copy.deepcopy(harness.web["output"][0])
+    search["action"]["query"] = query
+    harness.combined["output"].insert(1, search)
+    result = asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
+    assert result.status == "candidate" and result.recipe is not None
+    recipe = result.recipe
+    assert len(harness.requests) == 3  # No extra model call for quantity estimation.
+    assert recipe.nutrition.status == "known"
+    assert recipe.ingredients[0].quantity is None and recipe.ingredients[0].unit is None
+    mapping = recipe.nutrition.mappings[0]
+    assert mapping.weight_grams == 250 and mapping.quantity_estimate is not None
+    assert mapping.quantity_estimate.sources[0].reference == URL
+    assert mapping.usda_food_id == "2345678"
+    assert next(n.amount for n in recipe.nutrition.nutrients if n.name == "energy") == 150
+    assert StructuredRecipe.model_validate_json(recipe.model_dump_json(by_alias=True)) == recipe
+
+
+def test_empty_quantity_search_keeps_phased_recipe_and_explicit_missing_quantity() -> None:
+    harness = WebHarness(use_web=False)
+    harness.data = harness.data.model_copy(
+        update={"current_request": "Make dinner with some rice."}
+    )
+    query = quantity_web_query(harness.data)
+    assert query is not None
+    harness.web["output"][0]["action"]["query"] = query
+    harness.web["output"][1]["content"][0].update(text=json.dumps({"claims": []}), annotations=[])
+    message = harness.recipe["output"][1]
+    draft = json.loads(message["content"][0]["text"])
+    draft["ingredients"][0]["quantity"] = None
+    message["content"][0]["text"] = json.dumps(draft)
+    harness.service = RecipeSpecialistService(harness.gateway, None, api_tool())
+    recipe = harness.generate().recipe
+    assert recipe is not None and recipe.web_grounding is None
+    assert recipe.ingredients[0].quantity is None
+    assert any(
+        component.ingredient_line_id == "rice" and component.reason == "missing_quantity"
+        for component in recipe.nutrition.unknown_components
+    )
+    assert len(harness.requests) == 2  # One web phase, one recipe phase; no retry.
 
 
 @pytest.mark.parametrize("use_web", [False, True])

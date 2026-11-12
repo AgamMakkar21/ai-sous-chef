@@ -125,7 +125,9 @@ class Gateway(Protocol):
         self, request: GroundedRecipeGenerationRequest
     ) -> tuple[RecipeDraft, RecipeGrounding, TokenUsage]: ...
 
-    async def ground_web(self, request: WebGroundingRequest) -> tuple[WebGrounding, TokenUsage]: ...
+    async def ground_web(
+        self, request: WebGroundingRequest
+    ) -> tuple[WebGrounding | None, TokenUsage]: ...
 
     async def generate_combined_recipe(
         self, request: CombinedRecipeGenerationRequest
@@ -168,7 +170,9 @@ class ObservedGateway:
         self.trace.usage.append(result[2])
         return result
 
-    async def ground_web(self, request: WebGroundingRequest) -> tuple[WebGrounding, TokenUsage]:
+    async def ground_web(
+        self, request: WebGroundingRequest
+    ) -> tuple[WebGrounding | None, TokenUsage]:
         event = ToolEvent(name="web_iq")
         self.trace.tools.append(event)
         self.trace.model_attempts += 1
@@ -178,7 +182,8 @@ class ObservedGateway:
             event.status = "error"
             raise
         event.status = "completed"
-        self.trace.web.append(result[0])
+        if result[0] is not None:
+            self.trace.web.append(result[0])
         self.trace.usage.append(result[1])
         return result
 

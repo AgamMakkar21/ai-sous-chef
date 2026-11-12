@@ -132,6 +132,52 @@ async function open(page: Page) {
 const card = (page: Page) =>
   page.getByRole("region", { name: "Simple carrot rice", exact: true });
 
+test("assumed quantity is disclosed with its source without changing the original ingredient", async ({
+  page,
+}) => {
+  const turn = recipeTurn();
+  const recipe = turn.recipe!;
+  recipe.ingredients[0].quantity = null;
+  recipe.ingredients[0].unit = null;
+  const mapping = recipe.nutrition.mappings[0];
+  mapping.quantity = null;
+  mapping.unit = null;
+  mapping.weightGrams = 250;
+  mapping.conversionBasis =
+    "Assumed 250 g for this recipe; original amount unchanged.";
+  mapping.quantityEstimate = {
+    weightGrams: 250,
+    sources: [
+      {
+        reference: recipe.sources[0].reference,
+        quote: "Serves 4; 500 g rice.",
+        servings: 4,
+        weightGrams: 500,
+      },
+    ],
+  };
+  expect(isStructuredRecipe(recipe)).toBe(true);
+  const bad = structuredClone(recipe);
+  bad.nutrition.mappings[0].quantityEstimate!.sources[0].reference =
+    "https://invented.example.invalid/";
+  expect(isStructuredRecipe(bad)).toBe(false);
+  const unattributed = structuredClone(recipe);
+  delete unattributed.nutrition.mappings[0].quantityEstimate;
+  expect(isStructuredRecipe(unattributed)).toBe(false);
+  await recipeBackend(page, [turn]);
+  await open(page);
+  await expect(card(page)).toContainText("Assumed 250 g for this recipe");
+  await expect(
+    card(page).getByRole("region", { name: "Already have" }),
+  ).toContainText("Quantity unavailable");
+  await expect(
+    card(page).getByRole("link", { name: "Quantity estimate source" }),
+  ).toHaveAttribute("href", recipe.sources[0].reference);
+  await expect(card(page)).toContainText("500 g for 4 source servings");
+  await page.reload();
+  await expect(card(page)).toContainText("Assumed 250 g for this recipe");
+});
+
 test("recipes with more than nine USDA sources retain their estimates and conversion evidence", async ({
   page,
 }) => {

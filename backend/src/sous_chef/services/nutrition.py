@@ -144,14 +144,15 @@ class UsdaNutritionTool:
         covered: dict[NutrientName, list[str]] = {name: [] for _, name, _ in _NUTRIENTS}
         async with self._session(deadline, ingredient_count=len(request.ingredients)) as session:
             for line in request.ingredients:
-                if line.quantity is None:
+                estimate = request.quantity_estimates.get(line.line_id)
+                if line.quantity is None and estimate is None:
                     unknown.append(
                         NutritionUnknownComponent(
                             ingredient_line_id=line.line_id, reason="missing_quantity"
                         )
                     )
                     continue
-                if line.unit not in {*MASS, *VOLUME, "piece", "item"}:
+                if line.unit not in {*MASS, *VOLUME, "piece", "item"} and estimate is None:
                     unknown.append(
                         NutritionUnknownComponent(
                             ingredient_line_id=line.line_id,
@@ -190,14 +191,26 @@ class UsdaNutritionTool:
                         )
                     )
                     continue
-                assert line.unit is not None
-                weight = ingredient_weight(
-                    line.name,
-                    line.quantity,
-                    line.unit,
-                    profile,
-                    estimates=request.allow_estimates,
+                weight = (
+                    ingredient_weight(
+                        line.name,
+                        line.quantity,
+                        line.unit,
+                        profile,
+                        estimates=request.allow_estimates,
+                    )
+                    if line.quantity is not None and line.unit is not None
+                    else None
                 )
+                applied_estimate = None
+                if weight is None and estimate is not None:
+                    grams = Decimal(str(estimate.weight_grams))
+                    weight = (
+                        grams,
+                        f"Assumed {grams.normalize():f} g for this recipe, scaled from "
+                        "comparable recipe servings; original amount unchanged.",
+                    )
+                    applied_estimate = estimate
                 if weight is None:
                     unknown.append(
                         NutritionUnknownComponent(
@@ -258,6 +271,7 @@ class UsdaNutritionTool:
                         food_description=profile.food.long_desc,
                         conversion_basis=conversion_basis,
                         approximate_match=request.allow_estimates and selected is None,
+                        quantity_estimate=applied_estimate,
                     )
                 )
         nutrients = tuple(

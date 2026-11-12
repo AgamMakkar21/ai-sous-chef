@@ -60,6 +60,7 @@ def test_authenticated_lookup_returns_real_stdio_calories_per_100_g(
             "foodDescription": "rice",
             "conversionBasis": "Measured weight",
             "approximateMatch": False,
+            "quantityEstimate": None,
         }
     ]
     assert response.headers["cache-control"] == "no-store"

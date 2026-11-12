@@ -258,7 +258,9 @@ class FoundryGateway:
         self._require_agent_pins()
         return await self._execute(request, self._combined_recipe_result)
 
-    async def ground_web(self, request: WebGroundingRequest) -> tuple[WebGrounding, TokenUsage]:
+    async def ground_web(
+        self, request: WebGroundingRequest
+    ) -> tuple[WebGrounding | None, TokenUsage]:
         self._require_recipe_mode("phased")
         self._require_agent_pins()
         return await self._execute(request, self._web_result)
@@ -430,7 +432,9 @@ class FoundryGateway:
             raise FoundryGatewayError(FoundryFailure.REJECTED, request)
 
     @staticmethod
-    def _web_result(request: FoundryRequest, response: Response) -> tuple[WebGrounding, TokenUsage]:
+    def _web_result(
+        request: FoundryRequest, response: Response
+    ) -> tuple[WebGrounding | None, TokenUsage]:
         from sous_chef.services.context import _encoding
 
         assert isinstance(request, WebGroundingRequest)
@@ -476,8 +480,6 @@ class FoundryGateway:
             ):
                 raise ValueError
             draft = WebDraft.model_validate_json(response.output_text)
-            if not draft.claims:
-                raise FoundryGatewayError(FoundryFailure.NO_RESULTS, request)
             searched = {source.url for source in action.sources or []}
             native: dict[str, str] = {}
             for annotation in message.content[0].annotations:
@@ -493,6 +495,12 @@ class FoundryGateway:
             urls = tuple(dict.fromkeys(claim.source_url for claim in draft.claims))
             if not set(urls) <= searched & native.keys():
                 raise ValueError
+            if not draft.claims:
+                if request.allow_empty:
+                    return None, TokenUsage(
+                        input_tokens=usage.input_tokens, output_tokens=usage.output_tokens
+                    )
+                raise FoundryGatewayError(FoundryFailure.NO_RESULTS, request)
             grounding = WebGrounding(
                 claims=draft.claims,
                 citations=tuple(WebCitation(url=url, title=native[url]) for url in urls),

@@ -19,6 +19,48 @@ from test_usda_nutrition import config
 from test_usda_startup import api_tool
 
 
+@pytest.mark.parametrize(("quantity", "unit"), [(None, None), (2, "piece")])
+def test_cited_recipe_quantity_fallback_preserves_original_amount_and_uses_usda(
+    quantity: int | None,
+    unit: str | None,
+) -> None:
+    draft = copy.deepcopy(FIXTURE["draft"])
+    draft.update(
+        title="Chicken dinner",
+        ingredients=[{"lineId": "chicken", "name": "chicken", "quantity": quantity, "unit": unit}],
+        instructions=[{"step": 1, "text": "Cook chicken.", "ingredientLineIds": ["chicken"]}],
+        substitutions=[],
+        sourceClaims=[],
+    )
+    _, grounding, model = setup(draft)
+    source = grounding.grounding.recipes[0].source
+    grounding.grounding = RecipeGrounding.model_validate(
+        {
+            "status": "available",
+            "recipes": (
+                {
+                    "source": source,
+                    "snippet": "Chicken dinner\nServes 4\nIngredient: 500 g chicken",
+                },
+            ),
+        }
+    )
+    service = RecipeSpecialistService(
+        FoundryGateway(coordination_settings(), client_factory=model.factory), grounding, api_tool()
+    )
+    recipe = run(service).recipe
+    assert recipe is not None and recipe.nutrition.status == "known"
+    assert recipe.ingredients[0].quantity == quantity and recipe.ingredients[0].unit == unit
+    mapping = recipe.nutrition.mappings[0]
+    assert mapping.weight_grams == 250 and mapping.quantity_estimate is not None
+    assert mapping.usda_food_id == "2345678"
+    assert mapping.quantity_estimate.sources[0].reference == source.reference
+    assert mapping.quantity_estimate.sources[0].servings == 4
+    assert "Assumed 250 g" in (mapping.conversion_basis or "")
+    assert next(n.amount for n in recipe.nutrition.nutrients if n.name == "energy") == 150
+    assert StructuredRecipe.model_validate_json(recipe.model_dump_json(by_alias=True)) == recipe
+
+
 @pytest.mark.parametrize(
     ("name", "unit", "reason", "food_id"),
     [
