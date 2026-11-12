@@ -13,7 +13,7 @@ deploy anything. Only an explicit Azure deployment command provisions resources.
 - Retention settings on Application Insights tables, not additional services.
 
 No Cosmos DB, Functions, PostgreSQL, storage account,
-agent identities, application instrumentation, dashboards, or alerts are deployed.
+agent identities, dashboards, or alerts are deployed.
 Foundry is added by `modules/foundry.bicep` and hosting by `modules/app-service.bicep`
 (see the Foundry and App Service sections below).
 Hosting defaults to consumer Entra External ID authentication. The explicit
@@ -102,8 +102,9 @@ ask the tenant administrator for enrollment/access guidance rather than trying
 to bypass the policy.
 
 `AgamMakkar21` owns the dev monitoring resources and cost review. The subscription
-owner controls access assignments; this template creates no RBAC grants.
-Existing inherited Azure roles still apply.
+owner controls access assignments. The monitoring module creates no RBAC grants;
+the explicit synchronous-telemetry opt-in below adds one scoped ingestion grant
+for the app identity. Existing inherited Azure roles still apply.
 
 ## Validate, preview, and deploy
 
@@ -165,6 +166,39 @@ environment variables. Set `BICEP_CLI` to the full compiler path if it is not on
 PATH. For the tests, the Python standard library is sufficient; no Azure account
 or backend dependencies are required. Infrastructure checks run separately from
 the default backend pytest suite because they require a Bicep compiler.
+
+### Synchronous application telemetry (ASC-52)
+
+The foundation parameter `telemetryEnabled` defaults to `false` for dev and prod.
+With explicit approval, pass `telemetryEnabled=true` to the foundation
+validation, what-if and deployment commands above. Inspect the preview for the
+app setting and **Monitoring Metrics Publisher**
+(`3913510d-42f4-4e42-8a64-420c390055eb`) assignment on the existing Application
+Insights component, for the existing app managed identity only. Applying the role
+requires an authorized role-assignment operator; never replace it with a
+subscription-wide role or enable local/key-based Insights authentication.
+
+The template manages `ASC_TELEMETRY_ENABLED`; retain the reviewed parameter on
+later foundation deployments. It preserves any existing
+`ASC_TELEMETRY_SAMPLE_RATIO` setting (app default `1`). Automatic Insights
+instrumentation/exporters, GenAI content recording, SDK statistics, remote
+exporter configuration, and disk buffering remain disabled. Only the application's
+manual synchronous trace/metric providers use the configured connection string
+and selected managed identity. Monitoring retention and reader access do not
+change; no dashboards or alerts are added.
+
+Confirm the Foundry project is connected to that same Insights destination and
+that its independent server-side tracing policy disables protected-content
+capture before opt-in. The template does not connect or reconfigure native
+Foundry tracing. Run the synthetic dev verification in
+[the application telemetry guide](../README.md#synchronous-opentelemetry-asc-52);
+successful deployment/RBAC creation does not prove ingestion or native span
+correlation.
+
+To stop application export, deploy with `telemetryEnabled=false` and verify the
+app restart. Incremental deployments do not delete an earlier role assignment;
+an owner must separately review any permission revocation. No cloud deployment
+is required to run the offline span/privacy/infrastructure tests.
 
 ## Foundry project and model deployments
 

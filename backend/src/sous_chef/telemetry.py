@@ -21,10 +21,18 @@ error_category: ContextVar["ErrorCategory | None"] = ContextVar("error_category"
 CAPTURE_DISABLED_ENV = {
     "AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED": "false",
     "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "false",
+    "AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING": "false",
+    "AZURE_TRACING_GEN_AI_INSTRUMENT_RESPONSES_API": "false",
+    "AZURE_TRACING_GEN_AI_INCLUDE_BINARY_DATA": "false",
+    "AZURE_TRACING_GEN_AI_TRACE_CONTEXT_PROPAGATION_INCLUDE_BAGGAGE": "false",
     "OTEL_SDK_DISABLED": "true",
     "OTEL_TRACES_EXPORTER": "none",
     "OTEL_METRICS_EXPORTER": "none",
     "OTEL_LOGS_EXPORTER": "none",
+    "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL": "true",
+    "APPLICATIONINSIGHTS_SDKSTATS_DISABLED": "true",
+    "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED": "true",
+    "APPLICATIONINSIGHTS_OPENTELEMETRY_RESOURCE_METRIC_DISABLED": "true",
 }
 
 
@@ -34,6 +42,8 @@ class ErrorCategory(StrEnum):
     MALFORMED_JSON = "malformed_json"
     INVALID_INPUT = "invalid_input"
     INTERNAL_ERROR = "internal_error"
+    OPERATION_TIMEOUT = "operation_timeout"
+    OPERATION_CANCELLED = "operation_cancelled"
     DEPENDENCY_UNAVAILABLE = "dependency_unavailable"
     FRONTEND_UNAVAILABLE = "frontend_unavailable"
     UNAUTHENTICATED = "unauthenticated"
@@ -192,6 +202,22 @@ def operational_event(
             agent_principal_id,
         ),
     )
+    span = trace.get_current_span()
+    span.add_event(event.value)
+    if category is not None:
+        span.set_attribute("error.type", category.value)
+    if event in {Event.ORCHESTRATOR_INVOKED, Event.RECIPE_INVOKED}:
+        for key, value in (
+            ("gen_ai.agent.name", agent_name),
+            ("asc.agent.version", agent_version),
+            ("gen_ai.agent.id", agent_principal_id),
+        ):
+            if value is not None:
+                span.set_attribute(key, value)
+    if event == Event.RECIPE_SAFETY_REJECTED:
+        from sous_chef.tracing import fail
+
+        fail(category or ErrorCategory.RECIPE_INGREDIENT)
 
 
 def new_trace_id() -> str:
@@ -266,6 +292,6 @@ def configure_safe_telemetry() -> None:
         trace.get_tracer_provider(), (trace.ProxyTracerProvider, trace.NoOpTracerProvider)
     ):
         raise ConfigurationError(
-            "Automatic tracing is not permitted in the MVP. "
+            "Automatic tracing is not permitted. "
             "Start plain Uvicorn without an OpenTelemetry/Application Insights tracing agent."
         )

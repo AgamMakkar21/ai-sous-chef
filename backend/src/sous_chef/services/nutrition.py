@@ -6,6 +6,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from time import monotonic
 from typing import Literal
 
+from opentelemetry import trace
 from pydantic import ValidationError
 
 from sous_chef.adapters.usda_mcp import UsdaMcpClient, UsdaMcpConfig, UsdaMcpSession, open_usda
@@ -25,6 +26,7 @@ from sous_chef.domain.recipes import (
 )
 from sous_chef.settings import ConfigurationError, Settings
 from sous_chef.telemetry import ErrorCategory, Event, operational_event
+from sous_chef.tracing import Operation, observed
 
 _NUTRIENTS: tuple[tuple[str, NutrientName, Literal["kcal", "g", "mg"]], ...] = (
     ("Energy", "energy", "kcal"),
@@ -106,6 +108,7 @@ class UsdaNutritionTool:
             ) from None
         operational_event(Event.USDA_COMPLETED, duration_ms=(monotonic() - started) * 1000)
 
+    @observed(Operation.USDA)
     async def lookup(self, request: NutritionRequest, *, deadline: float) -> NutritionEvidence:
         started = monotonic()
         try:
@@ -124,6 +127,7 @@ class UsdaNutritionTool:
                 duration_ms=(monotonic() - started) * 1000,
             )
             raise
+        trace.get_current_span().set_attribute("asc.nutrition.status", result.status)
         operational_event(
             Event.USDA_COMPLETED if result.status == "known" else Event.USDA_UNAVAILABLE,
             category=None if result.status == "known" else ErrorCategory.FOUNDRY_NO_RESULTS,

@@ -28,6 +28,7 @@ from sous_chef.services.readiness import ReadinessService
 from sous_chef.services.recipe_chat import RecipeChatExecutor
 from sous_chef.settings import ConfigurationError, Settings, load_settings
 from sous_chef.telemetry import configure_safe_telemetry
+from sous_chef.tracing import Telemetry
 
 
 class FrontendFiles(StaticFiles):
@@ -44,6 +45,7 @@ def create_app(
     readiness_probe: ReadinessProbe | None = None,
     chat_executor: ChatExecutor | None = None,
     learned_preference_reader: LearnedPreferenceReader | None = None,
+    telemetry: Telemetry | None = None,
 ) -> FastAPI:
     configure_safe_telemetry()
     config = settings if settings is not None else load_settings()
@@ -64,17 +66,21 @@ def create_app(
         config.environment != "local" or config.adapter_mode != "local"
     ):
         raise ConfigurationError("Local readiness doubles cannot run outside explicit local mode.")
+    telemetry = telemetry if telemetry is not None else Telemetry.from_settings(config)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        if chat_executor is not None:
-            await run_in_threadpool(_encoding)
-        if nutrition is not None:
-            async with nutrition.lifespan():
-                app.state.nutrition = nutrition
+        try:
+            if chat_executor is not None:
+                await run_in_threadpool(_encoding)
+            if nutrition is not None:
+                async with nutrition.lifespan():
+                    app.state.nutrition = nutrition
+                    yield
+            else:
                 yield
-        else:
-            yield
+        finally:
+            await run_in_threadpool(telemetry.shutdown)
 
     app = FastAPI(
         title="AI Sous Chef",
@@ -86,7 +92,7 @@ def create_app(
     register_problem_handlers(app)
     app.add_middleware(ProductBodyLimitMiddleware)
     app.add_middleware(AuthenticationMiddleware, settings=config)
-    app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(RequestLoggingMiddleware, telemetry=telemetry)
     app.include_router(create_auth_router(config))
     app.include_router(create_conversation_router(config, chat_executor, learned_preference_reader))
     app.include_router(create_grocery_router(config))

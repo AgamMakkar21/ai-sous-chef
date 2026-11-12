@@ -1,6 +1,5 @@
 import os
 
-from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity import AzureCliCredential, ManagedIdentityCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
@@ -11,7 +10,7 @@ from sous_chef.settings import ConfigurationError, Settings
 CLIENT_ID_VARIABLE = "AZURE_CLIENT_ID"
 
 
-def build_credential(settings: Settings) -> TokenCredential:
+def build_credential(settings: Settings) -> AzureCliCredential | ManagedIdentityCredential:
     """Pick exactly one credential type for the environment, with no fallback chain.
 
     Deployed (dev/prod): only the App Service's user-assigned managed identity.

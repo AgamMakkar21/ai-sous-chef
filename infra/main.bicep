@@ -54,6 +54,9 @@ param appServiceSku string = 'B1'
 @description('Existing owner-approved delegated subnet for web access to private Cosmos endpoints.')
 param appServiceIntegrationSubnetResourceId string = ''
 
+@description('Explicitly opt the synchronous API into privacy-safe tracing/metrics and ingestion RBAC. Off in both environments by default.')
+param telemetryEnabled bool = false
+
 @description('Nonsecret Cosmos DB endpoint the app connects to.')
 @minLength(1)
 param cosmosEndpoint string
@@ -125,6 +128,7 @@ module appService 'modules/app-service.bicep' = {
     skuName: appServiceSku
     integrationSubnetResourceId: appServiceIntegrationSubnetResourceId
     environment: environment
+    telemetryEnabled: telemetryEnabled
     cosmosEndpoint: cosmosEndpoint
     cosmosDatabase: cosmosDatabase
     authIssuer: authIssuer

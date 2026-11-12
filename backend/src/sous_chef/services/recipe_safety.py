@@ -18,6 +18,7 @@ from sous_chef.domain.recipe_safety import (
 )
 from sous_chef.domain.recipes import StructuredRecipe
 from sous_chef.services.profiles import _view as profile_view
+from sous_chef.tracing import Operation, observed
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ class CheckedRecipe:
     policy_version: str = POLICY_VERSION
 
 
+@observed(Operation.SAFETY)
 async def check_current_recipe(
     repository: CosmosRepository,
     user: AuthenticatedUser,

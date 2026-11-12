@@ -40,6 +40,7 @@ from sous_chef.domain.recipe_safety import (
 )
 from sous_chef.domain.recipes import StructuredRecipe
 from sous_chef.telemetry import ErrorCategory, Event, operational_event, trace_id
+from sous_chef.tracing import Operation, observed, operation
 
 
 class ExecutionBudget:
@@ -136,6 +137,7 @@ class OrchestratorService:
         self._coordinator = coordinator
         self._specialist = specialist
 
+    @observed(Operation.ORCHESTRATOR)
     async def run(
         self,
         context: RequestContext,
@@ -150,7 +152,7 @@ class OrchestratorService:
             deadline if deadline is not None else float("inf"),
             monotonic() + POLICY.deadline_seconds,
         )
-        token = trace_id.set(operation.hex)
+        token = trace_id.set(trace_id.get() or operation.hex)
         started = monotonic()
         try:
             try:
@@ -283,26 +285,27 @@ class OrchestratorService:
                 final_rejected = False
                 if recipe is not None:
                     try:
-                        recipe = validate_final_recipe(
-                            recipe,
-                            SafetyProfile(allergies=context.explicit_preferences.allergies),
-                        )
-                        if (
-                            [(line.line_id, line.name) for line in recipe.ingredients]
-                            != [(line.line_id, line.name) for line in candidate.ingredients]
-                            or [
-                                (step.text, step.ingredient_line_ids)
-                                for step in recipe.instructions
-                            ]
-                            != [
-                                (step.text, step.ingredient_line_ids)
-                                for step in candidate.instructions
-                            ]
-                            or recipe.title != candidate.title
-                            or recipe.total_minutes != candidate.total_minutes
-                            or recipe.fit_reasons != candidate.fit_reasons
-                        ):
-                            raise RecipeSafetyError(RecipeSafetyFailure.STRUCTURE)
+                        with operation(Operation.SAFETY):
+                            recipe = validate_final_recipe(
+                                recipe,
+                                SafetyProfile(allergies=context.explicit_preferences.allergies),
+                            )
+                            if (
+                                [(line.line_id, line.name) for line in recipe.ingredients]
+                                != [(line.line_id, line.name) for line in candidate.ingredients]
+                                or [
+                                    (step.text, step.ingredient_line_ids)
+                                    for step in recipe.instructions
+                                ]
+                                != [
+                                    (step.text, step.ingredient_line_ids)
+                                    for step in candidate.instructions
+                                ]
+                                or recipe.title != candidate.title
+                                or recipe.total_minutes != candidate.total_minutes
+                                or recipe.fit_reasons != candidate.fit_reasons
+                            ):
+                                raise RecipeSafetyError(RecipeSafetyFailure.STRUCTURE)
                     except RecipeSafetyError as error:
                         status = "safety_rejected"
                         final_rejected = True

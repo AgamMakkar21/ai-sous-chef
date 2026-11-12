@@ -25,6 +25,7 @@ from openai import (
     AsyncOpenAI,
 )
 from openai.types.responses import Response
+from opentelemetry import trace
 from pydantic import ValidationError
 
 from sous_chef.adapters.credentials import build_async_credential
@@ -62,6 +63,7 @@ from sous_chef.domain.recipes import (
 from sous_chef.recipe_definition import RecipePhase, build_recipe_definition, recipe_knowledge_tool
 from sous_chef.settings import ConfigurationError, Settings
 from sous_chef.telemetry import ErrorCategory, Event, operational_event, trace_id
+from sous_chef.tracing import Operation, foundry_trace_headers, model_usage, observed
 
 FOUNDRY_API_VERSION = "v1"
 MAX_TOOL_ARGUMENT_CHARACTERS = 32_768
@@ -261,6 +263,7 @@ class FoundryGateway:
         self._require_agent_pins()
         return await self._execute(request, self._web_result)
 
+    @observed(Operation.FOUNDRY)
     async def _execute(
         self,
         request: FoundryRequest,
@@ -276,8 +279,32 @@ class FoundryGateway:
             if isinstance(request, GroundedRecipeGenerationRequest)
             else self._targets[request.role]
         )
+        span = trace.get_current_span()
+        span.set_attribute("gen_ai.provider.name", "azure.ai.foundry")
+        span.set_attribute("gen_ai.operation.name", "invoke_agent")
+        span.set_attribute("gen_ai.agent.name", target.name)
+        span.set_attribute("asc.agent.version", target.version)
+        model = (
+            self._settings.foundry_orchestrator_deployment
+            if request.role == AgentRole.ORCHESTRATOR
+            else self._settings.foundry_recipe_nutrition_deployment
+        )
+        if model is not None:
+            span.set_attribute("gen_ai.request.model", model)
+        span.set_attribute(
+            "asc.foundry.phase",
+            "combined"
+            if isinstance(request, CombinedRecipeGenerationRequest)
+            else "web"
+            if isinstance(request, WebGroundingRequest)
+            else "retrieval"
+            if isinstance(request, GroundedRecipeGenerationRequest)
+            else "generation"
+            if isinstance(request, RecipeGenerationRequest)
+            else "coordination",
+        )
         started = monotonic()
-        token = trace_id.set(request.operation_id.hex)
+        token = trace_id.set(trace_id.get() or request.operation_id.hex)
         try:
             if coordination is not None:
                 operational_event(
@@ -343,8 +370,13 @@ class FoundryGateway:
                             input=request.prompt,
                             max_output_tokens=request.max_output_tokens,
                             extra_body=body,
-                            extra_headers={"X-Client-Request-Id": str(request.operation_id)},
+                            extra_headers={
+                                "X-Client-Request-Id": str(request.operation_id),
+                                **foundry_trace_headers(),
+                            },
                         )
+                        if response.usage is not None:
+                            model_usage(response.usage.input_tokens, response.usage.output_tokens)
                         self._completed(request, response)
                         result = parse(request, response)
             except (TimeoutError, APITimeoutError):
