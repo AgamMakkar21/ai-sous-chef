@@ -133,11 +133,14 @@ It verifies the event's deterministic owner/history/revision-bound ID, matching
 source/history IDs, and previous-event linkage. Unknown schema versions and
 malformed feedback fail closed. Notes stay private data, never instructions.
 
-Recipe snapshots, operation receipts, processing records, generated chat,
+Recipe snapshots, operation receipts, processing/status records, generated chat,
 groceries, profiles and behavioral records cause zero processor calls, even if
 they contain a rating or `pending` marker. Nonpending feedback and modified
 outbox records (`updatedAt != createdAt`) are ignored. Status bookkeeping must
 remain in recipe/processing records, not mutate an immutable feedback event.
+The sole processing-role exception is an immutable, validated `learningReplay`
+outbox created by the operator recovery transaction; ordinary status writes
+cannot dispatch learning.
 
 Each admitted `FeedbackEvent` carries its owner, source/occasion lineage, rating,
 note, semantic revision, superseded event, observation time and trace reference.
@@ -153,20 +156,25 @@ missing configuration/access fails rather than manufacturing a no-insight result
 See [transaction boundaries and recovery](preference-learning.md).
 
 Every document is isolated: an invalid event or processor exception does not
-prevent later documents in the same batch from being attempted. After the batch,
-any failure raises a fixed safe exception. The function-level fixed-delay retry
-policy retries indefinitely at one-minute intervals instead of exhausting a
-finite retry budget and acknowledging unprocessed input. Successful siblings
-can therefore be redelivered; their event keys remain stable. This is not a
-durable exactly-once guarantee.
+prevent later documents in the same batch from being attempted. Durable
+`learningRecovery` records cap attempts, reserve conditional claims, persist
+backoff and stop permanent/exhausted failures. Invalid envelopes require a
+committed `learningQuarantine` record before acknowledgment.
 
-A poison event or unavailable dependency can stall progress on its lease.
-Inspect the aggregate `feedback_batch_pending` counts (`received`, `ignored`,
-`dispatched`, `invalid`, `failed`) and host invocation failures. Application code
-logs no document, owner, event key, note, recipe, raw exception or model content.
-Dead-lettering, durable retries and operator recovery remain ASC-49 work. Do not
-manually mark feedback completed, advance a blocked lease, or disable retries
-to make a smoke test appear successful.
+Pending work or an unconfirmed recovery/quarantine write raises a fixed safe
+exception. The function-level fixed-delay policy retains delivery retries at
+one-minute intervals until a durable outcome permits progress; it does not
+restart an exhausted model budget. Storage outages can still stall a lease
+rather than discard input. Successful siblings can be redelivered and reuse
+ASC-48 application receipts. See the [bounded recovery and operator replay
+runbook](preference-learning.md#recovery-runbook).
+
+Inspect aggregate `feedback_batch_pending` counts (`received`, `ignored`,
+`dispatched`, `invalid`, `failed`, `quarantined`), fixed-category
+`learning_recovery` warnings and host invocation failures. Application code logs
+no document, owner, event key, note, recipe, raw exception or model content.
+There is no assumed built-in dead-letter queue. Do not manually mark feedback
+completed, advance a blocked lease, or disable retries to make a smoke pass.
 
 Admission still performs no model/storage calls itself. The worker ZIP now
 includes shared backend storage/services plus pinned New Foundry dependencies;

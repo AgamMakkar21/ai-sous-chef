@@ -456,7 +456,13 @@ class FunctionsDeliveryTests(unittest.TestCase):
     def test_package_uses_committed_worker_and_has_correct_zip_root(self) -> None:
         source = io.BytesIO()
         with zipfile.ZipFile(source, "w") as archive:
-            for name in ("host.json", "function_app.py", "extraction.py", "requirements.txt"):
+            for name in (
+                "host.json",
+                "function_app.py",
+                "extraction.py",
+                "replay.py",
+                "requirements.txt",
+            ):
                 archive.writestr(f"worker/{name}", name)
             for name in (
                 "__init__.py",
@@ -464,6 +470,7 @@ class FunctionsDeliveryTests(unittest.TestCase):
                 "domain/food_safety.py",
                 "adapters/cosmos.py",
                 "services/learning.py",
+                "services/learning_recovery.py",
                 "settings.py",
             ):
                 archive.writestr(f"backend/src/sous_chef/{name}", name)
@@ -493,6 +500,7 @@ class FunctionsDeliveryTests(unittest.TestCase):
                         "host.json",
                         "function_app.py",
                         "worker/extraction.py",
+                        "worker/replay.py",
                         "worker/__init__.py",
                         "requirements.txt",
                         "release.json",
@@ -501,6 +509,7 @@ class FunctionsDeliveryTests(unittest.TestCase):
                         "sous_chef/domain/food_safety.py",
                         "sous_chef/adapters/cosmos.py",
                         "sous_chef/services/learning.py",
+                        "sous_chef/services/learning_recovery.py",
                         "sous_chef/settings.py",
                     },
                 )
