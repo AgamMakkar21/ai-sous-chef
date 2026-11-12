@@ -848,6 +848,7 @@ def worker_deploy() -> None:
     archive = Path(os.environ["RUNNER_TEMP"]) / "asc-worker-dev.zip"
     try:
         worker_package(sha, archive)
+        validate_worker_bundle(archive)
         deployment = az(
             "webapp",
             "deploy",
@@ -884,6 +885,43 @@ def worker_deploy() -> None:
     )
 
 
+def validate_worker_bundle(archive: Path) -> None:
+    """A GitHub release tag is not proof the Functions CDN serves that bundle."""
+    from urllib.error import URLError
+    from urllib.request import urlopen
+
+    with zipfile.ZipFile(archive) as package:
+        bundle = json.loads(package.read("host.json")).get("extensionBundle", {})
+    version = bundle.get("version")
+    match = re.fullmatch(r"\[(4)\.(\d+)\.(\d+), (\d+)\.(\d+)\.(\d+)\)", version or "")
+    if bundle.get("id") != "Microsoft.Azure.Functions.ExtensionBundle" or match is None:
+        raise DeliveryError("Worker requires one explicitly pinned Functions extension bundle.")
+    major, minor, patch, upper_major, upper_minor, upper_patch = map(int, match.groups())
+    if (upper_major, upper_minor, upper_patch) != (major, minor, patch + 1):
+        raise DeliveryError("Worker extension bundle range must select exactly one patch version.")
+    pinned = f"{major}.{minor}.{patch}"
+    try:
+        with urlopen(
+            "https://cdn.functions.azure.com/public/ExtensionBundles/"
+            "Microsoft.Azure.Functions.ExtensionBundle/index.json",
+            timeout=30,
+        ) as response:
+            versions = json.load(response)
+    except (URLError, TimeoutError, ValueError):
+        raise DeliveryError(
+            "Cannot verify worker extension bundle availability on the Functions CDN."
+        ) from None
+    if (
+        not isinstance(versions, list)
+        or not all(isinstance(item, str) for item in versions)
+        or pinned not in versions
+    ):
+        raise DeliveryError(
+            f"Worker extension bundle {pinned} is not published on the Functions CDN. "
+            "Select a published version before deployment."
+        )
+
+
 def worker_smoke(
     environment: str = "dev", *, expected_commit: str | None = None, allow_dispatch: bool = False
 ) -> None:
@@ -912,7 +950,7 @@ def worker_smoke(
             with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
                 summary.write(
                     f"Worker `{expected_commit}` host health passed. "
-                    "No feedback event processing or learning is implemented in this slice.\n"
+                    "This host-only check does not verify feedback processing or learning.\n"
                 )
             print("Worker host-only smoke passed.")
             return
