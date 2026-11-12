@@ -411,6 +411,66 @@ def profile() -> NewRecord:
     )
 
 
+def test_profile_reads_use_real_aiohttp_transport_without_unsupported_sdk_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aiohttp import web
+    from azure.core.pipeline import PipelineRequest
+    from azure.core.pipeline.transport._aiohttp import AioHttpTransport
+
+    service = Transport()
+    credential = SyntheticCredential()
+    monkeypatch.setattr(cosmos, "build_async_credential", lambda _settings: credential)
+
+    async def exercise() -> None:
+        async def handle(request: web.Request) -> web.Response:
+            response = await service.send(
+                HttpRequest(
+                    request.method,
+                    f"https://cosmos.example.invalid{request.path}",
+                    headers=dict(request.headers),
+                    data=await request.read(),
+                )
+            )
+            return web.Response(
+                status=response.status_code,
+                body=response.body(),
+                headers=dict(response.headers),
+            )
+
+        application = web.Application()
+        application.router.add_route("*", "/{path:.*}", handle)
+        runner = web.AppRunner(application)
+        await runner.setup()
+        assert runner.server is not None
+        server = await asyncio.get_running_loop().create_server(runner.server, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+
+        def redirect(request: PipelineRequest[HttpRequest]) -> None:
+            request.http_request.url = (
+                f"http://127.0.0.1:{port}{urlsplit(request.http_request.url).path}"
+            )
+
+        def factory(*args: Any, **kwargs: Any) -> CosmosClient:
+            return CosmosClient(
+                *args, transport=AioHttpTransport(), raw_request_hook=redirect, **kwargs
+            )
+
+        monkeypatch.setattr(cosmos, "CosmosClient", factory)
+        try:
+            async with cosmos.open_cosmos(settings()) as repository:
+                created = await repository.create(ALICE, profile())
+                current = await repository.read(ALICE, USERS, ALICE.user_id)
+                assert current is not None
+                assert current.body == created.body
+        finally:
+            server.close()
+            await server.wait_closed()
+            await runner.cleanup()
+
+    asyncio.run(exercise())
+
+
 def test_real_sdk_partitioned_crud_and_conditional_delete(
     harness: tuple[Transport, SyntheticCredential],
 ) -> None:

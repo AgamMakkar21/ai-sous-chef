@@ -50,6 +50,31 @@ CDN index before uploading/restarting the worker, and fails explicitly if the
 pin is unpublished or availability cannot be verified. Bundle 4.39.1 is published
 and retains the same Cosmos extension 4.16.1 and managed-identity bindings.
 
+The packaged `worker/extraction.py` must be accompanied by `worker/__init__.py`.
+Without the explicit package, Azure's runtime `worker.py` wins module resolution
+and indexing fails with `'worker' is not a package`, even though a standalone
+import outside the Functions worker succeeds. The packaging regression checks
+this competing-module layout, not just the ZIP filenames.
+
+Host storage also needs an actual network route. If policy disables public
+access on the dedicated host account, the existing Blob Data Owner role alone
+cannot acquire the host lock: requests to the public Blob endpoint fail with
+403 `AuthorizationFailure`. With owner approval, deploy
+`infra/functions-storage-private-network.bicep` using the existing storage
+account, integration VNet and nondelegated private-endpoint subnet IDs:
+
+```powershell
+az deployment group what-if --resource-group <dev-group> --template-file infra\functions-storage-private-network.bicep --parameters location=<vnet-region> storageAccountName=<existing-host-storage> virtualNetworkResourceId=<existing-vnet-id> privateEndpointSubnetResourceId=<existing-private-endpoint-subnet-id>
+az deployment group create --resource-group <dev-group> --name feedback-storage-private-repair --template-file infra\functions-storage-private-network.bicep --parameters location=<vnet-region> storageAccountName=<existing-host-storage> virtualNetworkResourceId=<existing-vnet-id> privateEndpointSubnetResourceId=<existing-private-endpoint-subnet-id>
+```
+
+This adds a billable Blob private endpoint and the linked private DNS zone; it
+does not enable public access, shared keys, or change any role. Verify the
+connection is Approved and the normal `<account>.blob.core.windows.net` name
+resolves to the endpoint's private IP from the Function runtime. Keep using that
+normal hostname for TLS. Do not add queue/table/file endpoints for this
+Blob-only host configuration.
+
 ## Identity, storage and data permissions
 
 The workload identity is named `ai-sous-chef-dev-feedback-identity`, different

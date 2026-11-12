@@ -16,6 +16,14 @@ It does not change identities, connections, hosting plans or permissions.
 Read-only smoke/production/rollback checks still reject drift; deployment errors
 name the mismatched host fields without printing configuration values.
 
+For Cosmos SDK diagnostics, the pinned azure-core transport uses
+`tracing_options={"enabled": False}`, not `tracing_enable=False`. The latter
+survives the Cosmos pipeline as an unknown aiohttp argument and makes profile
+loads return HTTP 500 before a Cosmos request is sent. The repository regression
+exercises the real aiohttp transport against a local service double so permissive
+mock transports cannot hide this failure. A successful static shell or anonymous
+health check alone is not proof that a signed-in kitchen can load its profile.
+
 ## One-time owner setup
 
 The source ZIP includes the app-owned USDA FoodData Central MCP server;

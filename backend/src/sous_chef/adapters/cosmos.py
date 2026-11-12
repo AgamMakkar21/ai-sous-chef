@@ -861,7 +861,7 @@ async def open_cosmos(
             enable_endpoint_discovery=False,
             availability_strategy=False,
             logging_enable=False,
-            tracing_enable=False,
+            tracing_options={"enabled": False},
             connection_timeout=settings.cosmos_operation_timeout_seconds,
             read_timeout=settings.cosmos_operation_timeout_seconds,
         )
