@@ -16,7 +16,16 @@ import azure.functions as func
 from sous_chef.adapters.cosmos import open_cosmos
 from sous_chef.domain.authorization import AuthenticatedUser
 from sous_chef.domain.cosmos import ProductContainer
+from sous_chef.domain.extraction import ExtractionRequest, ExtractionResult
 from sous_chef.services.learning import LearningService
+from sous_chef.services.learning_recovery import (
+    LearningPending,
+    LearningRecovery,
+    LearningReplay,
+    RecoveryPolicy,
+    classify_failure,
+    replay_id,
+)
 from sous_chef.settings import Settings
 
 from worker.extraction import ExtractionConfig, PreferenceExtractor, private_sdk_diagnostics
@@ -49,6 +58,12 @@ class FeedbackEvent:
     note: str | None
     observed_at: datetime
     trace_id: str
+
+
+@dataclass(frozen=True, repr=False)
+class ReplayEvent:
+    user_id: str
+    replay: LearningReplay
 
 
 class InvalidFeedback(ValueError):
@@ -160,14 +175,8 @@ def eligible_feedback(document: Mapping[str, object]) -> FeedbackEvent | None:
     )
 
 
-def process_feedback(event: FeedbackEvent) -> None:
-    with private_sdk_diagnostics():
-        asyncio.run(_process_feedback(event))
-
-
-async def _process_feedback(event: FeedbackEvent) -> None:
-    config = ExtractionConfig.from_environment()
-    settings = Settings.model_validate(
+def _settings() -> Settings:
+    return Settings.model_validate(
         {
             "environment": os.environ["ASC_ENVIRONMENT"],
             "adapter_mode": "live",
@@ -176,37 +185,147 @@ async def _process_feedback(event: FeedbackEvent) -> None:
             "cosmos_database": os.environ["ASC_COSMOS_DATABASE"],
         }
     )
+
+
+class _EnvironmentExtractor:
+    async def extract(self, request: ExtractionRequest) -> ExtractionResult:
+        return await PreferenceExtractor(ExtractionConfig.from_environment()).extract(request)
+
+
+def process_feedback(event: FeedbackEvent) -> None:
+    with private_sdk_diagnostics():
+        asyncio.run(
+            _process_learning(event.user_id, UUID(event.feedback_id), event.feedback_revision)
+        )
+
+
+async def _process_learning(
+    owner: str, feedback_id: UUID, revision: int, *, generation: int | None = None
+) -> None:
     async with open_cosmos(
-        settings,
+        _settings(),
         containers=(ProductContainer.USERS, ProductContainer.RECIPE_HISTORY),
         lifetime_seconds=60,
     ) as repository:
-        await LearningService(repository, PreferenceExtractor(config)).process(
-            AuthenticatedUser(event.user_id), UUID(event.feedback_id)
+        user = AuthenticatedUser(owner)
+
+        async def apply() -> None:
+            await LearningService(repository, _EnvironmentExtractor()).process(user, feedback_id)
+
+        await LearningRecovery(repository, RecoveryPolicy.from_environment()).process(
+            user, feedback_id, revision, apply, generation=generation
         )
+
+
+def eligible_replay(document: Mapping[str, object]) -> ReplayEvent | None:
+    if document.get("recordKind") != "processing" or document.get("role") != "learningReplay":
+        return None
+    owner = document.get("userId")
+    if (
+        type(document.get("schemaVersion")) is not int
+        or document["schemaVersion"] != 1
+        or not isinstance(owner, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", owner)
+        or _timestamp(document.get("createdAt")) != _timestamp(document.get("updatedAt"))
+        or document.get("ttl") is not None
+    ):
+        raise InvalidFeedback
+    replay = LearningReplay.model_validate_json(
+        json.dumps(
+            {
+                field.alias or name: document.get(field.alias or name)
+                for name, field in LearningReplay.model_fields.items()
+            }
+        )
+    )
+    if document.get("id") != str(
+        replay_id(AuthenticatedUser(owner), replay.feedback_id, replay.request_id)
+    ):
+        raise InvalidFeedback
+    return ReplayEvent(owner, replay)
+
+
+def process_replay(event: ReplayEvent) -> None:
+    with private_sdk_diagnostics():
+        asyncio.run(
+            _process_learning(
+                event.user_id,
+                event.replay.feedback_id,
+                event.replay.feedback_revision,
+                generation=event.replay.generation,
+            )
+        )
+
+
+def quarantine_feedback(document: Mapping[str, object]) -> None:
+    with private_sdk_diagnostics():
+        asyncio.run(_quarantine_feedback(document))
+
+
+async def _quarantine_feedback(document: Mapping[str, object]) -> None:
+    async with open_cosmos(
+        _settings(), containers=(ProductContainer.RECIPE_HISTORY,), lifetime_seconds=15
+    ) as repository:
+        await LearningRecovery(repository).quarantine(document)
 
 
 def process_batch(
     documents: Iterable[Mapping[str, object]],
     processor: Callable[[FeedbackEvent], None],
+    *,
+    quarantine: Callable[[Mapping[str, object]], None] | None = None,
+    replay_processor: Callable[[ReplayEvent], None] | None = None,
 ) -> None:
-    counts = {"received": 0, "ignored": 0, "dispatched": 0, "invalid": 0, "failed": 0}
+    counts = {
+        "received": 0,
+        "ignored": 0,
+        "dispatched": 0,
+        "invalid": 0,
+        "failed": 0,
+        "quarantined": 0,
+    }
+    pending = False
+
+    def persist_quarantine(document: Mapping[str, object]) -> bool:
+        if quarantine is not None:
+            try:
+                quarantine(document)
+            except Exception:
+                return False
+            counts["quarantined"] += 1
+            return True
+        return False
+
     for document in documents:
         counts["received"] += 1
         try:
+            replay = eligible_replay(document)
             event = eligible_feedback(document)
         except Exception:
             counts["invalid"] += 1
+            pending = not persist_quarantine(document) or pending
             continue
-        if event is None:
+        if event is None and replay is None:
             counts["ignored"] += 1
             continue
         try:
-            processor(event)
+            if replay is not None:
+                if replay_processor is None:
+                    raise LearningPending
+                replay_processor(replay)
+            elif event is not None:
+                processor(event)
             counts["dispatched"] += 1
-        except Exception:
+        except Exception as error:
+            if (
+                not isinstance(error, LearningPending)
+                and not classify_failure(error)[0]
+                and persist_quarantine(document)
+            ):
+                continue
             counts["failed"] += 1
-    if counts["invalid"] or counts["failed"]:
+            pending = True
+    if pending:
         logging.warning(json.dumps({"event": "feedback_batch_pending", **counts}))
         raise FeedbackBatchFailed from None
 
@@ -229,10 +348,16 @@ def process_batch(
 )
 def feedback_change_feed(documents: func.DocumentList) -> None:
     validate_configuration()
-    process_batch(documents, process_feedback)
+    process_batch(
+        documents,
+        process_feedback,
+        quarantine=quarantine_feedback,
+        replay_processor=process_replay,
+    )
 
 
 def validate_configuration() -> None:
+    RecoveryPolicy.from_environment()
     client = os.environ.get("AZURE_CLIENT_ID", "")
     if not re.fullmatch(r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}", client):
         raise RuntimeError("Host requires its own managed identity client ID.")

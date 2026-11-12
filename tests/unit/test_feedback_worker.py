@@ -184,6 +184,7 @@ def test_one_poison_or_processor_failure_does_not_skip_the_rest_of_a_batch(
         "dispatched": 1,
         "invalid": 1,
         "failed": 1,
+        "quarantined": 0,
     }
     assert "Private" not in message and OWNER not in message
 

@@ -630,6 +630,33 @@ class CosmosRepository:
             patch_kinds={RecordKind.PROCESSING, RecordKind.RECIPE},
         )
 
+    async def commit_learning_replay(
+        self,
+        user: AuthenticatedUser,
+        *,
+        request: NewRecord,
+        current: StoredRecord,
+        patch: RecordPatch,
+    ) -> tuple[StoredRecord, ...]:
+        """Reset a failed attempt and enqueue its immutable replay in one partition."""
+        if (
+            request.kind != RecordKind.PROCESSING
+            or request.fields.get("role") != "learningReplay"
+            or current.body.get("role") != "learningRecovery"
+            or current.body.get("state") != "failed"
+            or set(patch.fields)
+            != {"state", "attempts", "generation", "leaseId", "availableAt", "errorCategory"}
+        ):
+            raise ValueError("A learning replay requires a failed conditional recovery record.")
+        return await self._commit_history(
+            user,
+            ProductContainer.RECIPE_HISTORY,
+            (request,),
+            ((current, patch),),
+            create_kinds={RecordKind.PROCESSING},
+            patch_kinds={RecordKind.PROCESSING},
+        )
+
     async def generated_recipe(
         self, user: AuthenticatedUser, generated_recipe_id: str
     ) -> StoredRecord:

@@ -833,8 +833,8 @@ def worker_package(sha: str, output: Path) -> None:
                 if entry.filename.startswith("worker/")
                 else entry.filename.removeprefix("backend/src/")
             )
-            if relative == "extraction.py":
-                relative = "worker/extraction.py"
+            if relative in {"extraction.py", "replay.py"}:
+                relative = "worker/" + relative
             if not entry.is_dir() and relative != "release.json":
                 dest.writestr(relative, source.read(entry.filename))
         # A namespace package loses to the Functions runtime's top-level worker.py.
