@@ -36,9 +36,19 @@ Python is pinned to **3.12**, the Functions runtime to the supported **v4**
 major (`FUNCTIONS_EXTENSION_VERSION=~4`), and the Python library and all its
 dependencies are exactly pinned in `worker/requirements.txt`. Azure manages host
 patch releases for Linux code apps; `~4` is not a claim of a frozen host patch.
-Extension bundle **4.41.0** is constrained to `[4.41.0, 4.41.1)` in `host.json`;
+Extension bundle **4.39.1** is constrained to `[4.39.1, 4.39.2)` in `host.json`;
 it includes Cosmos extension **4.16.1**, supporting managed-identity connections.
 Upgrade the bundle and pins through review, not by widening to an unbounded range.
+
+The previous 4.41.0 pin existed as an in-progress GitHub release but was absent
+from the Functions CDN index. The host could not resolve the bundle and failed
+before Python indexing with `ValidateBundleRequirements` /
+`System.ArgumentNullException: Value cannot be null. (Parameter 'input')`.
+Increasing health timeouts or redeploying the same archive cannot fix this.
+The deployment now checks the archive's exact pin against the public Functions
+CDN index before uploading/restarting the worker, and fails explicitly if the
+pin is unpublished or availability cannot be verified. Bundle 4.39.1 is published
+and retains the same Cosmos extension 4.16.1 and managed-identity bindings.
 
 ## Identity, storage and data permissions
 
@@ -272,7 +282,7 @@ precreated leases, replay position and retry policy. They do not authenticate to
 After peer approval and the normal dev deployment, an authorized operator must:
 
 1. Verify worker health and `X-ASC-Commit` against the reviewed release. Confirm
-   `feedback_change_feed` is indexed, using Python 3.12, extension bundle 4.41.0,
+   `feedback_change_feed` is indexed, using Python 3.12, extension bundle 4.39.1,
    the worker's distinct identity, the existing connection prefixes and private
    Cosmos network path. Do not use function keys or dump application settings.
 2. Observe lease creation/renewal in the precreated `sous-chef/leases` container
@@ -296,5 +306,5 @@ write test feedback without approval. Local fixture and compiled-template result
 are not proof of deployed Cosmos identity/lease access.
 
 References: [identity-based host/binding connections](https://learn.microsoft.com/azure/azure-functions/manage-connections?pivots=functions-auth-identity&tabs=host),
-[extension bundle 4.41.0](https://github.com/Azure/azure-functions-extension-bundles/releases/tag/4.41.0),
+[extension bundle 4.39.1](https://github.com/Azure/azure-functions-extension-bundles/releases/tag/4.39.1),
 [Cosmos trigger identity guidance](https://learn.microsoft.com/azure/azure-functions/functions-bindings-cosmosdb-v2-trigger).

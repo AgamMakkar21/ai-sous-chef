@@ -132,7 +132,7 @@ class FunctionsInfrastructureTests(unittest.TestCase):
             diagnostic["properties"]["logs"], [{"category": "FunctionAppLogs", "enabled": True}]
         )
         config = json.loads((ROOT / "worker/host.json").read_text())
-        self.assertEqual(config["extensionBundle"]["version"], "[4.41.0, 4.41.1)")
+        self.assertEqual(config["extensionBundle"]["version"], "[4.39.1, 4.39.2)")
         telemetry = config["logging"]["applicationInsights"]
         self.assertFalse(telemetry["enableDependencyTracking"])
         self.assertFalse(
@@ -475,7 +475,14 @@ class FunctionsDeliveryTests(unittest.TestCase):
                 self.assertEqual(json.loads(archive.read("release.json")), {"commit": SHA})
 
     def test_deploy_requires_current_commit_and_successful_build(self) -> None:
-        for mode in ("valid", "stale", "checkout", "failed_build", "cli_failure"):
+        for mode in (
+            "valid",
+            "stale",
+            "checkout",
+            "unpublished_bundle",
+            "failed_build",
+            "cli_failure",
+        ):
             with tempfile.TemporaryDirectory() as directory:
                 archive = Path(directory) / "asc-worker-dev.zip"
                 with (
@@ -495,6 +502,13 @@ class FunctionsDeliveryTests(unittest.TestCase):
                     ) as package,
                     patch.object(
                         delivery,
+                        "validate_worker_bundle",
+                        side_effect=delivery.DeliveryError("Bundle not published")
+                        if mode == "unpublished_bundle"
+                        else None,
+                    ) as validate,
+                    patch.object(
+                        delivery,
                         "az",
                         side_effect=delivery.DeliveryError("ZIP failed")
                         if mode == "cli_failure"
@@ -505,6 +519,7 @@ class FunctionsDeliveryTests(unittest.TestCase):
                     if mode == "valid":
                         delivery.worker_deploy()
                         target.assert_called_once_with(configure_host=True)
+                        validate.assert_called_once_with(archive)
                         self.assertEqual(az.call_count, 2)
                         self.assertEqual(az.call_args.kwargs, {"expect_json": False})
                         self.assertIn("synthetic-worker", az.call_args_list[0].args)
@@ -515,9 +530,73 @@ class FunctionsDeliveryTests(unittest.TestCase):
                         if mode in ("stale", "checkout"):
                             package.assert_not_called()
                             az.assert_not_called()
+                        elif mode == "unpublished_bundle":
+                            az.assert_not_called()
                         else:
                             self.assertEqual(az.call_count, 1)
                     self.assertFalse(archive.exists())
+
+    def test_worker_bundle_must_be_published_on_functions_cdn_not_only_github(self) -> None:
+        from urllib.error import URLError
+
+        config = json.loads((ROOT / "worker/host.json").read_text())
+        cases: tuple[tuple[dict[str, Any], object, Exception | None, str | None], ...] = (
+            (config, ["4.39.1"], None, None),
+            (config, ["4.38.1"], None, "not published"),
+            (config, {}, None, "not published"),
+            (config, [], URLError("private upstream error"), "Cannot verify"),
+            (config, [], ValueError("private malformed response"), "Cannot verify"),
+            (
+                config
+                | {
+                    "extensionBundle": config["extensionBundle"]
+                    | {
+                        "version": "[4.41.0, 4.41.1)",
+                    }
+                },
+                ["4.39.1"],
+                None,
+                "4.41.0 is not published",
+            ),
+            (
+                config
+                | {
+                    "extensionBundle": config["extensionBundle"]
+                    | {
+                        "version": "[4.0.0, 5.0.0)",
+                    }
+                },
+                ["4.39.1"],
+                None,
+                "exactly one patch",
+            ),
+        )
+        for config, versions, error, expected in cases:
+            with self.subTest(config=config, versions=versions, expected=expected):
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "worker.zip"
+                    with zipfile.ZipFile(path, "w") as archive:
+                        archive.writestr("host.json", json.dumps(config))
+                    with patch(
+                        "urllib.request.urlopen",
+                        side_effect=error,
+                        return_value=io.BytesIO(json.dumps(versions).encode()),
+                    ) as request:
+                        if expected is None:
+                            delivery.validate_worker_bundle(path)
+                        else:
+                            with self.assertRaisesRegex(
+                                delivery.DeliveryError, expected
+                            ) as failure:
+                                delivery.validate_worker_bundle(path)
+                            self.assertNotIn("private", str(failure.exception))
+                        if request.called:
+                            self.assertEqual(
+                                request.call_args.args[0],
+                                "https://cdn.functions.azure.com/public/ExtensionBundles/"
+                                "Microsoft.Azure.Functions.ExtensionBundle/index.json",
+                            )
+                            self.assertEqual(request.call_args.kwargs, {"timeout": 30})
 
     def test_smoke_checks_running_revision_and_fails_closed(self) -> None:
         class Response(io.BytesIO):
@@ -550,7 +629,8 @@ class FunctionsDeliveryTests(unittest.TestCase):
                 if mode == "valid":
                     delivery.worker_smoke()
                     self.assertIn(
-                        "No feedback event processing", (Path(directory) / "summary").read_text()
+                        "does not verify feedback processing",
+                        (Path(directory) / "summary").read_text(),
                     )
                 else:
                     with self.assertRaises(delivery.DeliveryError):
