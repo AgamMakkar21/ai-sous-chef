@@ -205,10 +205,14 @@ def test_real_api_backed_mcp_preserves_raw_search_and_original_fdc_ids(
         tool = api_tool()
         async with tool.lifespan():
             raw = await tool.search("chicken, raw", deadline=monotonic() + 10)
-            assert {food.fdc_id for food in raw.foods} == {"2345678", "2345679"}
+            assert {food.fdc_id for food in raw.foods} == {"2345678", "2345679", "2345681"}
             generic = await tool.search("chicken", deadline=monotonic() + 10)
             assert len(generic.foods) == 20 and generic.truncated
-            assert {food.fdc_id for food in generic.foods[:2]} == {"2345678", "2345679"}
+            assert {food.fdc_id for food in generic.foods[:3]} == {
+                "2345678",
+                "2345679",
+                "2345681",
+            }
             selected = request(ingredient("chicken, raw")).model_copy(
                 update={"selected_food_ids": {"rice": "2345678"}}
             )
