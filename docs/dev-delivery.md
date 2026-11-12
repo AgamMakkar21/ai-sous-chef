@@ -4,6 +4,12 @@
 `.github/workflows/deploy-dev.yml`. It publishes the Python source and exact,
 versioned New Foundry prompt-agent configuration to **existing dev resources**
 when agents are explicitly enabled in the reviewed release manifest.
+GitHub can briefly return incomplete merge/review evidence immediately after a
+push. The review gate checks up to six times, waiting five seconds between
+checks (at most 25 seconds of waiting). Every check still requires the exact
+merged commit and a current human peer approval of the final PR head; missing,
+stale, self, bot or dismissed approvals never authorize deployment. GitHub API
+errors remain explicit failures rather than being treated as missing evidence.
 It does not provision the application foundation,
 promote production, implement agent prompts/tools, or claim the full MVP is ready.
 ASC-09 extends the same reviewed job to deploy the
