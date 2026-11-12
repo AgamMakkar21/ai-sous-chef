@@ -7,6 +7,15 @@ type Source = {
   reference: string;
 };
 type Amount = { quantity: number | null; unit: string | null };
+type QuantityEstimate = {
+  weightGrams: number;
+  sources: {
+    reference: string;
+    quote: string;
+    servings: number;
+    weightGrams: number;
+  }[];
+};
 type Ingredient = Amount & {
   lineId: string;
   name: string;
@@ -67,6 +76,8 @@ export type StructuredRecipe = {
       foodDescription?: string | null;
       conversionBasis?: string | null;
       approximateMatch?: boolean;
+      weightGrams?: number | null;
+      quantityEstimate?: QuantityEstimate | null;
     })[];
     coverage?: Coverage[];
     unknownComponents?: {
@@ -151,6 +162,25 @@ function source(value: unknown): value is Source {
 }
 function nutrientName(value: unknown): value is NutrientName {
   return typeof value === "string" && Object.hasOwn(nutrientLabels, value);
+}
+function quantityEstimate(value: unknown): value is QuantityEstimate {
+  return (
+    isRecord(value) &&
+    number(value.weightGrams, Number.MIN_VALUE, 1_000_000) &&
+    list(
+      value.sources,
+      3,
+      (item): item is QuantityEstimate["sources"][number] =>
+        isRecord(item) &&
+        text(item.reference, 500) &&
+        text(item.quote, 1500) &&
+        Number.isInteger(item.servings) &&
+        number(item.servings, 1, 100) &&
+        number(item.weightGrams, Number.MIN_VALUE, 100_000),
+      1,
+    ) &&
+    unique(value.sources.map((item) => item.reference))
+  );
 }
 function coverage(value: unknown): value is Coverage {
   if (
@@ -323,8 +353,10 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
         (item.approximateMatch === undefined ||
           typeof item.approximateMatch === "boolean") &&
         amount(item) &&
-        item.quantity !== null &&
-        item.unit !== null,
+        (item.quantityEstimate == null
+          ? item.quantity !== null && item.unit !== null
+          : quantityEstimate(item.quantityEstimate) &&
+            item.weightGrams === item.quantityEstimate.weightGrams),
     ) ||
     !unique(n.mappings.map((item) => item.ingredientLineId)) ||
     !same(
@@ -452,7 +484,7 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
     return false;
 
   const web = value.webGrounding;
-  return (
+  const validWeb =
     web === null ||
     (isRecord(web) &&
       text(web.retrievedAt, 80) &&
@@ -474,7 +506,27 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
       same(
         web.citations.map((item) => item.url),
         [...new Set(web.claims.map((item) => item.sourceUrl))],
-      ))
+      ));
+  return (
+    validWeb &&
+    n.mappings.every(
+      (mapping) =>
+        mapping.quantityEstimate == null ||
+        mapping.quantityEstimate.sources.every(
+          (evidence) =>
+            sources.some(
+              (source) =>
+                source.kind === "curated_recipe" &&
+                source.reference === evidence.reference,
+            ) ||
+            (isRecord(web) &&
+              Array.isArray(web.citations) &&
+              web.citations.some(
+                (citation) =>
+                  isRecord(citation) && citation.url === evidence.reference,
+              )),
+        ),
+    )
   );
 }
 

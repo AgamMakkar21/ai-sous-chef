@@ -48,6 +48,7 @@ from sous_chef.domain.recipes import (
     StructuredRecipe,
     WebGroundingRequest,
 )
+from sous_chef.services.quantity_estimates import recipe_quantity_estimates
 from sous_chef.services.recipe_grounding import recipe_knowledge_arguments, retrieval_query
 from sous_chef.services.web_grounding import public_web_query
 from sous_chef.settings import ConfigurationError, Settings
@@ -210,6 +211,7 @@ class RecipeSpecialistService:
                                     prompt=query,
                                     max_input_tokens=min(2000, max_input_tokens),
                                     max_output_tokens=request.max_output_tokens,
+                                    allow_empty=not arguments.use_web,
                                 )
                             )
                         budget.usage(web_usage)
@@ -332,6 +334,7 @@ class RecipeSpecialistService:
                             ingredients=draft.ingredients,
                             selected_food_ids=selected_food_ids or {},
                             allow_estimates=True,
+                            quantity_estimates=recipe_quantity_estimates(draft, grounding, web),
                         ),
                         deadline=deadline,
                     )

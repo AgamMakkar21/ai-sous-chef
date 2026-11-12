@@ -303,6 +303,40 @@ but preserves raw/cooked, ground meat, fat, skin and other composition qualifier
 Generic chicken uses `chicken meat raw` as an ingredient-weight estimate to exclude
 spreads and other prepared products. Explicit cooked/ground states and named cuts
 remain distinct; broth is not treated as raw meat.
+
+Vague amounts such as "some chicken" or unconvertible pieces can use a
+**quantity assumption**, separate from the USDA food match. For current requests
+containing vague-amount wording and recognizable public food names, the backend
+authorizes one existing Web IQ search for comparable recipe ingredient masses
+and serving counts. Only matched catalog food aliases leave the application,
+not the original prompt, profile, allergies, inventory or history. Ordinary
+measured requests do not enable this search. The existing one-search, model,
+token and deadline limits remain unchanged in combined and phased modes.
+
+The backend checks cited curated excerpts and native-cited web claims for an
+explicit ingredient mass (g/kg/oz/lb) and source serving count. Compatible amounts
+are scaled to this recipe's servings; the median is used when several cited
+recipes agree within a factor of 1.5. Cooking form, ground meat and meaningful
+cuts cannot be silently swapped. Missing serving counts, incompatible foods,
+ambiguous or substantially conflicting amounts do not support an estimate.
+Each source must supply a plausible mass between 0.001 and 1000 g per serving.
+Conservative outlier caps are lower for salt (10 g), oil/butter (60 g), and
+sugar/honey (100 g) per serving, so bulk brine or frying quantities are not
+silently treated as consumed amounts. These bounds reject estimates, not
+measured user inputs, and are not dietary recommendations.
+
+These are **assumed whole-recipe amounts**, not a fabricated weight per piece.
+Original ingredient quantities, shopping quantities and pantry ownership are
+never rewritten. Supported measured mass/volume and USDA household portions take
+precedence. Mappings disclose `quantityEstimate`, source quotes, source mass and
+servings, and the assumed gram weight in `conversionBasis`. USDA alone supplies
+nutrient values. When no reliable estimate exists, nutrition stays explicitly
+partial/unavailable and the card asks the user to specify an amount or weight.
+Empty comparable-recipe web results do not invent evidence; provider failures
+remain explicit. Older snapshots without quantity assumptions remain readable.
+Rollback to an older strict reader requires compatibility review before exposing
+new nullable-quantity mappings or `quantityEstimate` fields to that reader.
+
 A small documented set of culinary equivalents maps neutral oil to canola oil, jasmine
 rice to long-grain white rice, bell pepper to sweet pepper, cilantro to coriander
 leaves, ground cumin to cumin seed and chili flakes to red/cayenne pepper.

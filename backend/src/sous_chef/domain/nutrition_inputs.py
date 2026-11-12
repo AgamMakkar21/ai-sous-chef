@@ -78,7 +78,7 @@ _PREPARATION = {
     "medium",
     "large",
 }
-_FORMS = {
+FOOD_FORMS = {
     "raw",
     "cooked",
     "roasted",
@@ -134,8 +134,8 @@ def recipe_food_match(food: UsdaFood, query: str) -> bool:
     candidate = food_words(food.long_desc)
     if not requested or not requested <= candidate:
         return False
-    allowed_forms = requested & _FORMS or {"raw"}
-    if (candidate & _FORMS) - allowed_forms:
+    allowed_forms = requested & FOOD_FORMS or {"raw"}
+    if (candidate & FOOD_FORMS) - allowed_forms:
         return False
     if (candidate & {"babyfood", "restaurant", "soup", "sauce"}) - requested:
         return False

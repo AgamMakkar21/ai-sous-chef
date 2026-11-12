@@ -162,16 +162,44 @@ class Nutrient(RecipeModel):
         return self
 
 
+class QuantitySource(RecipeModel):
+    reference: str = Field(min_length=1, max_length=500, repr=False)
+    quote: str = Field(min_length=1, max_length=1500, repr=False)
+    servings: int = Field(ge=1, le=100)
+    weight_grams: float = Field(gt=0, le=100_000, allow_inf_nan=False)
+
+
+class QuantityEstimate(RecipeModel):
+    weight_grams: float = Field(gt=0, le=1_000_000, allow_inf_nan=False)
+    sources: tuple[QuantitySource, ...] = Field(min_length=1, max_length=3, repr=False)
+
+    @model_validator(mode="after")
+    def unique_sources(self) -> Self:
+        if len({source.reference for source in self.sources}) != len(self.sources):
+            raise ValueError("Quantity estimates require distinct recipe sources.")
+        return self
+
+
 class NutritionMapping(RecipeModel):
     ingredient_line_id: LineId
-    quantity: MeasuredQuantity
-    unit: GroceryUnit
+    quantity: MeasuredQuantity | None
+    unit: GroceryUnit | None
     source_id: ReferenceId
     usda_food_id: ReferenceId
     weight_grams: float | None = Field(default=None, gt=0, le=1_000_000_000)
     food_description: str | None = Field(default=None, min_length=1, max_length=500)
     conversion_basis: str | None = Field(default=None, min_length=1, max_length=500)
     approximate_match: bool = False
+    quantity_estimate: QuantityEstimate | None = None
+
+    @model_validator(mode="after")
+    def attributed_quantity(self) -> Self:
+        if self.quantity_estimate is not None:
+            if self.weight_grams != self.quantity_estimate.weight_grams:
+                raise ValueError("Estimated weight must match its quantity evidence.")
+        elif self.quantity is None or self.unit is None:
+            raise ValueError("Missing amounts require a source-backed quantity estimate.")
+        return self
 
 
 class NutrientCoverage(RecipeModel):
@@ -221,7 +249,7 @@ class NutritionUnknownComponent(RecipeModel):
 
 
 class NutritionEvidence(RecipeModel):
-    """Tool-calculated amounts for exactly the requested recipe, never model estimates."""
+    """USDA-calculated nutrition with separately attributed recipe-weight assumptions."""
 
     status: Literal["known", "partial", "unavailable"]
     serving_basis: Literal["per_serving", "whole_recipe"]
@@ -392,6 +420,15 @@ class StructuredRecipe(RecipeDraft):
             line = ingredients.get(mapping.ingredient_line_id)
             if line is None or line.quantity != mapping.quantity or line.unit != mapping.unit:
                 raise ValueError("Nutrition amounts must match the generated recipe.")
+            if mapping.quantity_estimate is not None:
+                references = {source.reference for source in recipe_sources}
+                if self.web_grounding is not None:
+                    references.update(citation.url for citation in self.web_grounding.citations)
+                if any(
+                    source.reference not in references
+                    for source in mapping.quantity_estimate.sources
+                ):
+                    raise ValueError("Quantity assumptions must cite this recipe's evidence.")
         for item in self.shopping_items:
             line = ingredients[item.ingredient_line_id]
             if item.unit != line.unit or (
@@ -407,6 +444,7 @@ class NutritionRequest(RecipeModel):
     ingredients: tuple[DraftIngredient, ...] = Field(min_length=1, max_length=30, repr=False)
     selected_food_ids: dict[LineId, FdcId] = Field(default_factory=dict, max_length=30)
     allow_estimates: bool = False
+    quantity_estimates: dict[LineId, QuantityEstimate] = Field(default_factory=dict, max_length=30)
 
     @model_validator(mode="after")
     def unique_lines(self) -> Self:
@@ -414,6 +452,11 @@ class NutritionRequest(RecipeModel):
             raise ValueError("Nutrition ingredient line IDs must be unique.")
         if not self.selected_food_ids.keys() <= {line.line_id for line in self.ingredients}:
             raise ValueError("Selected USDA foods must reference requested ingredient lines.")
+        if self.quantity_estimates and (
+            not self.allow_estimates
+            or not self.quantity_estimates.keys() <= {line.line_id for line in self.ingredients}
+        ):
+            raise ValueError("Quantity estimates require recipe opt-in and existing ingredients.")
         return self
 
 
@@ -436,10 +479,13 @@ class WebGroundingRequest(FoundryRequest):
     role: Literal[AgentRole.RECIPE_NUTRITION]
     prompt: str = Field(min_length=1, max_length=240, pattern=r"\S", repr=False)
     max_input_tokens: int = Field(default=2000, ge=1, le=2000)
+    allow_empty: bool = False
 
 
 class RecipeGenerator(Protocol):
-    async def ground_web(self, request: WebGroundingRequest) -> tuple[WebGrounding, TokenUsage]: ...
+    async def ground_web(
+        self, request: WebGroundingRequest
+    ) -> tuple[WebGrounding | None, TokenUsage]: ...
 
     async def generate_recipe(
         self, request: RecipeGenerationRequest

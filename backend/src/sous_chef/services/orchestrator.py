@@ -39,6 +39,7 @@ from sous_chef.domain.recipe_safety import (
     validate_final_recipe,
 )
 from sous_chef.domain.recipes import StructuredRecipe
+from sous_chef.services.web_grounding import quantity_web_query
 from sous_chef.telemetry import ErrorCategory, Event, operational_event, trace_id
 from sous_chef.tracing import Operation, observed, operation
 
@@ -246,7 +247,7 @@ class OrchestratorService:
                 if final_rejected and error.code == OrchestratorFailure.BUDGET_EXHAUSTED:
                     return OrchestrationResult(status="unable", explanation=UNABLE)
                 raise
-            budget.web_allowed = call.arguments.use_web
+            budget.web_allowed = call.arguments.use_web or quantity_web_query(context) is not None
             rejection_code: RecipeSafetyFailure | None = None
             specialist: SpecialistResult | None
             try:

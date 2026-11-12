@@ -29,9 +29,9 @@ function quantity(quantity: number | null, unit: string | null) {
 }
 
 const unknownReasons: Record<string, string> = {
-  missing_quantity: "quantity unavailable",
-  missing_unit: "unit unavailable",
-  unsupported_unit: "no supported weight conversion",
+  missing_quantity: "quantity unavailable; please specify an amount",
+  missing_unit: "unit unavailable; please specify a measurement",
+  unsupported_unit: "no supported weight conversion; please specify a weight",
   food_unavailable: "source food unavailable",
   lookup_limit: "source lookup limit reached",
   missing_nutrients: "source nutrients missing",
@@ -248,6 +248,21 @@ export default function RecipeCard({
                           )}
                           {item.conversionBasis && (
                             <> / {item.conversionBasis}</>
+                          )}
+                          {item.quantityEstimate && (
+                            <ul>
+                              {item.quantityEstimate.sources.map((source) => (
+                                <li key={source.reference}>
+                                  <Reference
+                                    reference={source.reference}
+                                    label="Quantity estimate source"
+                                  />{" "}
+                                  / {source.weightGrams.toLocaleString()} g for{" "}
+                                  {source.servings} source servings
+                                  <blockquote>{source.quote}</blockquote>
+                                </li>
+                              ))}
+                            </ul>
                           )}
                         </li>
                       ))}
