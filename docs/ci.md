@@ -27,6 +27,13 @@ runs `npm ci` and `npm run build` in `frontend/` before packaging, so its instal
 wheel contains the browser application. See [frontend setup](frontend.md) for
 browser installation and local commands.
 
+The frontend job uses a version- and digest-pinned Playwright Noble container
+with browsers and system dependencies already installed, avoiding per-run Ubuntu
+package downloads. Keep its Playwright version aligned with
+`frontend/package-lock.json`. Node 24 setup and `npm ci` still install the locked
+JavaScript dependencies; formatting, types, browser tests and evidence uploads
+remain required.
+
 `CI / tests` first runs the [fixed deterministic hard-safety gate](hard-safety-evaluations.md).
 Any failed, skipped or missing required case fails the check. The job retains
 the synthetic-only `hard-safety-evaluation` JSON artifact for 30 days, including
