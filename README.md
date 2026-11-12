@@ -2,9 +2,10 @@
 
 The [feedback Functions host](docs/feedback-host.md) is deployed independently
 from the web app using the reviewed dev workflow. Its change-feed trigger admits
-only immutable feedback revisions. Extraction and durable preference updates
-remain separate work; eligible feedback stays pending rather than reporting
-unimplemented learning as successful.
+only immutable feedback revisions. Extraction and durable preference updates are
+implemented, but host health does not prove live personalization works. The
+[MVP acceptance handoff](docs/mvp-acceptance.md) records the observed dev release,
+automated journey coverage and remaining live configuration/acceptance gates.
 
 AI Sous Chef combines current groceries, grounded recipe generation, and
 feedback-based personalization.
