@@ -283,7 +283,7 @@ food categories. This prioritizes raw chicken without inventing a cut/skin.
 An unresolved broad search leaves that ingredient's nutrition explicitly
 unavailable; it does not prevent delivery of an otherwise valid recipe.
 
-A name-only lookup requires one unambiguous description/short-description match:
+A grocery name-only lookup requires one unambiguous description/short-description match:
 case/whitespace/comma normalization or equivalent words in a different order.
 The matcher accepts only the noun inflections `apple`/`apples` and
 `carrot`/`carrots`, plus USDA's optional `Spices,` category prefix. It preserves every
@@ -296,12 +296,27 @@ name. Empty searches never broaden by dropping terms; a saturated
 An explicit selected FDC ID must belong to the current search results;
 its detail ID, data type and descriptions must match before values are used.
 Unknown/ambiguous foods have unavailable nutrition rather than an invented mapping.
-At most nine distinct name/selection pairs are queried per recipe, reusing
-profiles only within that request; this bounds execution to 18 read-only MCP
-calls (one search and one profile per pair) and nine sources. Additional/unmatched ingredients remain explicitly
-unmapped and the result cannot be `known`.
+Recipe enrichment explicitly enables approximate, source-backed matches. It removes
+non-nutritional preparation words such as sliced, minced, drained and deveined,
+but preserves raw/cooked, fat, skin and other composition qualifiers. A small
+documented set of culinary equivalents maps neutral oil to canola oil, jasmine
+rice to long-grain white rice, bell pepper to sweet pepper, cilantro to coriander
+leaves, ground cumin to cumin seed and chili flakes to red/cayenne pepper.
+Dry/uncooked rice stays raw, never cooked. Unqualified tomatoes use red ripe
+tomatoes; water uses generic bottled water, not plants whose names contain
+"water". Approximate matches reject unrelated prepared dishes, organ meats and
+unrequested poultry skin. Compatible candidates are ranked by exact word match,
+raw form, SR Legacy data (which commonly includes household portions), then
+specificity and stable source identity. A truncated search is not proof of
+uniqueness, but can supply a clearly labeled approximate recipe match. Explicit
+user-selected IDs and grocery lookup retain their existing source validation.
 
-The backend converts only these mass units:
+All 30 supported ingredient lines can be queried, with at most 60 read-only MCP
+calls and 30 USDA sources. Normalized name/selection pairs share one profile
+within a request without combining their quantity mappings. Unmatched ingredients
+remain explicitly unmapped and the result cannot be `known`.
+
+The backend converts these mass units exactly:
 
 | Input unit | Grams per unit |
 | --- | ---: |
@@ -320,11 +335,11 @@ constraints remain unchanged. The model must not invent a gram conversion for
 cups, spoons, pieces or packages, or silently choose an unspecified product form.
 Those ingredients can still have unavailable nutrition.
 
-The backend continues to resolve names against real USDA candidates, require a
-unique match from a complete result set, and verify the selected profile before
-calculating values. No first-hit selection, model-generated FDC IDs, extra model
-call or relaxed source validation is introduced. Supported matching does not
-guarantee that USDA has a unique record or all six nutrients.
+The backend resolves recipe names against real USDA candidates using the
+approximation policy above and verifies the selected profile before calculating
+values. No model-generated FDC IDs, nutrient amounts or extra model calls are
+introduced. Supported matching does not guarantee that USDA has a compatible
+record or all six nutrients.
 
 This instruction change requires a newly published and verified specialist
 source: combined policy **9**, or policy **8** for legacy phases. Policy numbers
@@ -336,7 +351,7 @@ readiness will reject their stale instructions/fingerprint.
 
 Offline regression coverage uses the production MCP server with synthetic HTTP
 data for an apple/yogurt/honey/lemon/cinnamon recipe, exact per-serving arithmetic,
-source IDs and unchanged unsupported household units. It does not prove that a
+source IDs and source-backed household-unit conversion. It does not prove that a
 live model follows the new instructions. Signed-in acceptance must generate a new
 recipe after the coordinated backend/source release and inspect its quantities,
 food mappings, nutrition coverage and history reload. Existing saved snapshots
@@ -352,8 +367,21 @@ rounded to two decimal places using round-half-up, only after aggregation.
 Changing servings without changing ingredient quantities leaves whole-recipe
 amounts unchanged. Changing quantities requires a new calculation.
 
-Volume, pieces, packages, unknown quantities, food density, cooking yield and
-edible-portion weights are never guessed.
+Household volumes (`ml`, `l`, `tsp`, `tbsp`, `cup`) use the selected USDA food's
+`foodPortions` gram weights, including the source portion's amount and unit.
+Equivalent volumes scale using US customary measures (cup 236.5882365 mL,
+tablespoon 14.78676478125 mL, teaspoon 4.92892159375 mL). Preparation-specific
+portions are preferred where available. Recipe pieces/items use compatible
+source portions for common whole produce/eggs or explicit cloves, slices and
+wedges; medium size is the disclosed default when no size was specified.
+Two lime wedges are not treated as two whole limes. If only a whole lime/lemon
+fruit weight is available, a disclosed eight-wedges-per-fruit estimate is used.
+
+When no usable USDA volume portion exists, recipe-only density estimates are
+limited to oil (0.92 g/mL), water (1 g/mL), and lemon/lime juice (1.03 g/mL).
+There is no universal mL-to-gram conversion. Unknown quantities, unsupported
+food-specific densities, unknown package/can sizes and cooking yields remain
+unknown. The original recipe quantities/units are never rewritten.
 Amounts describe the selected food form/ingredient inputs, not an asserted
 laboratory measurement after cooking. Nutrients are energy (kcal), protein,
 carbohydrate, fat, fiber (g) and sodium (mg). An unexpected source unit fails;
@@ -376,6 +404,9 @@ Every newly calculated response includes:
   `food_unavailable`, `lookup_limit` or `missing_nutrients`.
 - `mappings`: the requested quantity/unit, converted `weightGrams`, unchanged
   USDA food ID and source reference for every contributing ingredient.
+  Additive `foodDescription`, `approximateMatch` and `conversionBasis` fields
+  disclose the actual food and measured/source-portion/density basis in the
+  recipe card's nutrition sources. Older snapshots may omit these fields.
 
 A nutrient is `known` only if every ingredient contributes that nutrient;
 `partial` retains attributed subtotals and lists every unknown component;
@@ -403,8 +434,11 @@ Older stored `usda:sr:` citations remain historical evidence and are not rewritt
 or reinterpreted as FDC IDs. A fresh profile must match the selected candidate.
 No nutrition output from model memory is accepted.
 
-`ASC_USDA_MCP_TIMEOUT_SECONDS` defaults to 10 (maximum 10), inside the shared
-specialist deadline. Each response is limited to 128 KiB, a session to 2 MiB,
+`ASC_USDA_MCP_TIMEOUT_SECONDS` defaults to 10 (maximum 10) for ingredient lookups.
+Recipe sessions scale that budget per nine ingredient lines, capped at 30 seconds
+and always bounded by the existing shared specialist deadline. This prevents
+removing the old nine-food cap from merely replacing omissions with a ten-second
+timeout. Each response is limited to 128 KiB, a session to 2 MiB,
 and a profile to 256 unique nutrient rows. Timeout, malformed protocol/data,
 oversized output, child exit and source errors produce safe `RecipeToolError`
 categories and abort enrichment, not successful fallback data. Cancellation
@@ -644,7 +678,7 @@ are explicit `null`, not omitted or guessed.
 | Enriched ingredients | Backend-resolved canonical ID or null, `available/missing/unknown`, and supporting grocery row IDs |
 | `shoppingItems` | Exactly the missing ingredient lines, with shortage amounts where determinable |
 | `nutrition` | `known/partial/unavailable`, serving basis/count, attributed nutrient amounts, exact ingredient mappings, USDA source/version/food IDs, informational-estimate/not-medical-advice notice |
-| `sources` | Up to 12 references, copied from the cited recipe and nutrition tool evidence, never generated by the model |
+| `sources` | Up to 33 references (3 recipe + 30 USDA), copied from cited recipe and nutrition tool evidence, never generated by the model |
 | `webGrounding` | Null on the ordinary path; otherwise 1-3 bounded claims, native citation URLs/titles and UTC retrieval time, validated by the backend |
 
 Inventory comparison is conservative. It uses catalog-recognized ingredients

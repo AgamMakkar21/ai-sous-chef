@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 from sous_chef.domain.nutrition import (
     SourceText,
     UsdaFood,
+    UsdaFoodPortion,
     UsdaFoodProfile,
     UsdaFoodSearch,
     UsdaNutrientRow,
@@ -114,8 +115,20 @@ class _Amount(_ApiModel):
     amount: Decimal | None = Field(default=None, ge=0, le=10_000_000)
 
 
+class _MeasureUnit(_ApiModel):
+    name: SourceText
+
+
+class _Portion(_ApiModel):
+    amount: Decimal | None = Field(default=None, ge=0, le=1_000_000)
+    gram_weight: Decimal | None = Field(default=None, alias="gramWeight", ge=0, le=10_000_000)
+    measure_unit: _MeasureUnit | None = Field(default=None, alias="measureUnit")
+    modifier: SourceText | None = None
+
+
 class _Details(_Food):
     nutrients: list[_Amount] = Field(alias="foodNutrients", max_length=256)
+    portions: list[_Portion] | None = Field(default=None, alias="foodPortions", max_length=128)
 
 
 def _words(value: str) -> list[str]:
@@ -265,7 +278,19 @@ class FoodDataCentral:
             ]
             if not rows:
                 raise FdcError("no_results")
-            return UsdaFoodProfile(food=food, nutrients=tuple(rows))
+            portions = tuple(
+                UsdaFoodPortion(
+                    amount=portion.amount,
+                    gram_weight=portion.gram_weight,
+                    measure_unit=portion.measure_unit.name
+                    if portion.measure_unit is not None
+                    else "undetermined",
+                    modifier=portion.modifier,
+                )
+                for portion in result.portions or ()
+                if portion.amount and portion.gram_weight
+            )
+            return UsdaFoodProfile(food=food, nutrients=tuple(rows), portions=portions)
         except ValidationError:
             raise FdcError("invalid_result") from None
 

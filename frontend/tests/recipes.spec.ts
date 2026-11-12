@@ -132,6 +132,40 @@ async function open(page: Page) {
 const card = (page: Page) =>
   page.getByRole("region", { name: "Simple carrot rice", exact: true });
 
+test("recipes with more than nine USDA sources retain their estimates and conversion evidence", async ({
+  page,
+}) => {
+  const turn = recipeTurn();
+  const recipe = turn.recipe!;
+  recipe.nutrition.mappings[0].foodDescription = "Rice, white, long-grain, raw";
+  recipe.nutrition.mappings[0].approximateMatch = true;
+  recipe.nutrition.mappings[0].conversionBasis = "USDA portion: 1 cup = 185 g";
+  for (let index = 0; index < 10; index++) {
+    const lineId = `extra${index}`;
+    const source = {
+      ...recipe.nutrition.sources[0],
+      sourceId: `usda:fdc:${7000000 + index}`,
+    };
+    recipe.ingredients.push({ ...recipe.ingredients[0], lineId });
+    recipe.instructions[1].ingredientLineIds.push(lineId);
+    recipe.nutrition.sources.push(source);
+    recipe.sources.push(source);
+    recipe.nutrition.mappings.push({
+      ...recipe.nutrition.mappings[0],
+      ingredientLineId: lineId,
+      sourceId: source.sourceId,
+    });
+  }
+  expect(isStructuredRecipe(recipe)).toBe(true);
+  await recipeBackend(page, [turn]);
+  await open(page);
+  await expect(card(page)).toBeVisible();
+  await expect(card(page)).toContainText(
+    "Estimated match: Rice, white, long-grain, raw",
+  );
+  await expect(card(page)).toContainText("USDA portion: 1 cup = 185 g");
+});
+
 test("contract recipe fields, shopping shortfall, citations and lifecycle actions render in saved history", async ({
   page,
 }, testInfo) => {

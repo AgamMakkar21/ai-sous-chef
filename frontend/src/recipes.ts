@@ -64,6 +64,9 @@ export type StructuredRecipe = {
       ingredientLineId: string;
       sourceId: string;
       usdaFoodId: string;
+      foodDescription?: string | null;
+      conversionBasis?: string | null;
+      approximateMatch?: boolean;
     })[];
     coverage?: Coverage[];
     unknownComponents?: {
@@ -234,7 +237,7 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
       (item): item is StructuredRecipe["sourceClaims"][number] =>
         isRecord(item) && referenceId(item.sourceId) && shortText(item.quote),
     ) ||
-    !list(value.sources, 12, source, 1)
+    !list(value.sources, 33, source, 1)
   )
     return false;
 
@@ -290,7 +293,7 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
     n.servings !== value.servings ||
     n.isEstimate !== true ||
     n.notice !== "Informational estimate, not medical advice." ||
-    !list(n.sources, 9, source) ||
+    !list(n.sources, 30, source) ||
     n.sources.some((item) => item.kind !== "usda") ||
     !list(
       n.nutrients,
@@ -315,6 +318,10 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
         lineId(item.ingredientLineId) &&
         referenceId(item.sourceId) &&
         referenceId(item.usdaFoodId) &&
+        (item.foodDescription == null || text(item.foodDescription, 500)) &&
+        (item.conversionBasis == null || text(item.conversionBasis, 500)) &&
+        (item.approximateMatch === undefined ||
+          typeof item.approximateMatch === "boolean") &&
         amount(item) &&
         item.quantity !== null &&
         item.unit !== null,

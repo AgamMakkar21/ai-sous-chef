@@ -9,6 +9,7 @@ import httpx
 import pytest
 from pydantic import SecretStr
 from sous_chef.adapters.usda_mcp import UsdaMcpConfig
+from sous_chef.domain.nutrition_inputs import recipe_food_match, recipe_food_query
 from sous_chef.settings import ConfigurationError, Settings
 from sous_chef.usda_mcp_server import FdcError, FoodDataCentral
 
@@ -19,6 +20,65 @@ FOOD = {
     "foodCategory": {"description": "Poultry Products"},
     "publicationDate": "2024-04-18",
 }
+
+
+def test_recipe_normalization_preserves_meaningful_food_forms_and_composition() -> None:
+    from sous_chef.domain.nutrition import UsdaFood
+
+    def candidate(description: str) -> UsdaFood:
+        return UsdaFood(
+            fdc_id="1234567",
+            long_desc=description,
+            shrt_desc=description,
+            data_type="SR Legacy",
+            food_group="Poultry Products",
+        )
+
+    assert recipe_food_query("shrimp, raw, peeled and deveined") == "shrimp raw"
+    assert recipe_food_query("jasmine rice dry") == "white long grain rice raw"
+    assert (
+        recipe_food_query("boneless skinless chicken breast, sliced") == "meat only chicken breast"
+    )
+    assert recipe_food_query("red bell peppers, sliced") == "red sweet pepper"
+    assert recipe_food_match(candidate("Chicken, breast, meat only, raw"), "chicken raw")
+    assert not recipe_food_match(candidate("Chicken, breast, roasted"), "chicken raw")
+    assert not recipe_food_match(candidate("Chicken, breast, roasted"), "chicken")
+    assert not recipe_food_match(candidate("Yogurt, plain, nonfat"), "yogurt whole milk")
+    assert not recipe_food_match(candidate("Soy sauce, reduced sodium"), "soy sauce regular")
+    assert not recipe_food_match(candidate("Babyfood, chicken, raw"), "chicken raw")
+    assert not recipe_food_match(candidate("Chicken, skin only, raw"), "chicken raw")
+    assert recipe_food_query("water") == "water bottled generic"
+    assert not recipe_food_match(candidate("Water convolvulus, raw"), recipe_food_query("water"))
+    assert recipe_food_query("tomatoes, chopped") == "tomato red ripe"
+
+
+def test_source_portions_retain_amount_and_unit_without_inventing_missing_weights() -> None:
+    async def check() -> None:
+        response = {
+            **FOOD,
+            "foodNutrients": [{"nutrient": {"id": 1008, "unitName": "KCAL"}, "amount": 100}],
+            "foodPortions": [
+                {"amount": 3, "gramWeight": 9, "modifier": "cloves"},
+                {
+                    "amount": 1,
+                    "gramWeight": 150,
+                    "measureUnit": {"name": "cup"},
+                    "modifier": "chopped",
+                },
+                {"amount": 1, "modifier": "package"},
+                {"amount": 0, "gramWeight": 0, "modifier": "not measured"},
+            ],
+        }
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, json=response))
+        ) as client:
+            profile = await FoodDataCentral(client, SecretStr("synthetic-key")).profile("1234567")
+        assert len(profile.portions) == 2
+        assert profile.portions[0].amount == 3 and profile.portions[0].gram_weight == 9
+        assert profile.portions[1].measure_unit == "cup"
+        assert profile.portions[1].modifier == "chopped"
+
+    asyncio.run(check())
 
 
 def test_default_config_needs_only_protected_api_key_not_database_or_download() -> None:

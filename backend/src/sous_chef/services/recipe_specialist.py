@@ -312,6 +312,7 @@ class RecipeSpecialistService:
                             servings=draft.servings,
                             ingredients=draft.ingredients,
                             selected_food_ids=selected_food_ids or {},
+                            allow_estimates=True,
                         ),
                         deadline=deadline,
                     )

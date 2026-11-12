@@ -169,6 +169,9 @@ class NutritionMapping(RecipeModel):
     source_id: ReferenceId
     usda_food_id: ReferenceId
     weight_grams: float | None = Field(default=None, gt=0, le=1_000_000_000)
+    food_description: str | None = Field(default=None, min_length=1, max_length=500)
+    conversion_basis: str | None = Field(default=None, min_length=1, max_length=500)
+    approximate_match: bool = False
 
 
 class NutrientCoverage(RecipeModel):
@@ -225,7 +228,7 @@ class NutritionEvidence(RecipeModel):
     servings: int = Field(ge=1, le=20)
     nutrients: tuple[Nutrient, ...] = Field(max_length=6)
     mappings: tuple[NutritionMapping, ...] = Field(max_length=30)
-    sources: tuple[RecipeSource, ...] = Field(max_length=9)
+    sources: tuple[RecipeSource, ...] = Field(max_length=30)
     is_estimate: Literal[True] = True
     notice: Literal["Informational estimate, not medical advice."] = NUTRITION_NOTICE
     coverage: tuple[NutrientCoverage, ...] = Field(default=(), max_length=6)
@@ -357,7 +360,7 @@ class StructuredRecipe(RecipeDraft):
     ingredients: tuple[RecipeIngredient, ...] = Field(min_length=1, max_length=30, repr=False)
     shopping_items: tuple[ShoppingItem, ...] = Field(max_length=30, repr=False)
     nutrition: RecipeNutrition = Field(repr=False)
-    sources: tuple[RecipeSource, ...] = Field(min_length=1, max_length=12)
+    sources: tuple[RecipeSource, ...] = Field(min_length=1, max_length=33)
     web_grounding: WebGrounding | None = Field(repr=False)
 
     @model_validator(mode="after")
@@ -402,7 +405,8 @@ class StructuredRecipe(RecipeDraft):
 class NutritionRequest(RecipeModel):
     servings: int = Field(ge=1, le=20)
     ingredients: tuple[DraftIngredient, ...] = Field(min_length=1, max_length=30, repr=False)
-    selected_food_ids: dict[LineId, FdcId] = Field(default_factory=dict, max_length=9)
+    selected_food_ids: dict[LineId, FdcId] = Field(default_factory=dict, max_length=30)
+    allow_estimates: bool = False
 
     @model_validator(mode="after")
     def unique_lines(self) -> Self:

@@ -16,6 +16,7 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from sous_chef.domain.foundry import FoundryFailure
 from sous_chef.domain.nutrition import UsdaFood, UsdaFoodProfile, UsdaFoodSearch
+from sous_chef.domain.nutrition_inputs import food_words, recipe_food_match
 from sous_chef.domain.recipes import RecipeToolError
 from sous_chef.settings import ConfigurationError, Settings
 
@@ -212,12 +213,27 @@ class UsdaMcpSession:
             raise _invalid()
         return result
 
-    async def food(self, name: str, *, food_id: str | None = None) -> UsdaFoodProfile:
+    async def food(
+        self, name: str, *, food_id: str | None = None, approximate: bool = False
+    ) -> UsdaFoodProfile:
         search = await self.search(name)
         if food_id is not None:
             if not re.fullmatch(r"[1-9][0-9]{0,9}", food_id):
                 raise RecipeToolError(FoundryFailure.REJECTED)
             matches = [food for food in search.foods if food.fdc_id == food_id]
+        elif approximate:
+            matches = [food for food in search.foods if recipe_food_match(food, name)]
+            matches.sort(
+                key=lambda food: (
+                    0 if food_words(food.long_desc) == food_words(name) else 1,
+                    0 if "raw" in food_words(food.long_desc) else 1,
+                    0 if food.data_type == "SR Legacy" else 1,
+                    len(food_words(food.long_desc) - food_words(name)),
+                    food.long_desc.casefold(),
+                    int(food.fdc_id),
+                )
+            )
+            matches = matches[:1]
         else:
             if search.truncated:
                 raise RecipeToolError(FoundryFailure.NO_RESULTS)
@@ -339,9 +355,14 @@ class UsdaMcpClient:
             pass
 
     @asynccontextmanager
-    async def session(self, *, deadline: float) -> AsyncIterator[UsdaMcpSession]:
+    async def session(
+        self, *, deadline: float, timeout_seconds: float | None = None
+    ) -> AsyncIterator[UsdaMcpSession]:
         async with self._exchange(
-            timeout_seconds=self.config.timeout_seconds, deadline=deadline
+            timeout_seconds=(
+                self.config.timeout_seconds if timeout_seconds is None else timeout_seconds
+            ),
+            deadline=deadline,
         ) as session:
             yield session
 
@@ -378,10 +399,12 @@ class UsdaMcpClient:
 
 
 @asynccontextmanager
-async def open_usda(config: UsdaMcpConfig, *, deadline: float) -> AsyncIterator[UsdaMcpSession]:
+async def open_usda(
+    config: UsdaMcpConfig, *, deadline: float, timeout_seconds: float | None = None
+) -> AsyncIterator[UsdaMcpSession]:
     client = UsdaMcpClient(config)
     try:
-        async with client.session(deadline=deadline) as session:
+        async with client.session(deadline=deadline, timeout_seconds=timeout_seconds) as session:
             yield session
     finally:
         await client.close()

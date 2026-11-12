@@ -1,13 +1,15 @@
 """Real subprocess MCP round-trip through the specialist, using synthetic food data."""
 
+import asyncio
 import copy
 import json
 from pathlib import Path
+from time import monotonic
 
 import pytest
 from sous_chef.adapters.foundry_gateway import FoundryGateway
 from sous_chef.domain.foundry import FoundryFailure, FoundryGatewayError
-from sous_chef.domain.recipes import RecipeGrounding, StructuredRecipe
+from sous_chef.domain.recipes import NutritionRequest, RecipeGrounding, StructuredRecipe
 from sous_chef.services.nutrition import UsdaNutritionTool
 from sous_chef.services.recipe_specialist import RecipeSpecialistService
 from sous_chef.telemetry import configure_safe_telemetry
@@ -17,8 +19,76 @@ from test_usda_nutrition import config
 from test_usda_startup import api_tool
 
 
+def test_preparation_names_and_household_units_cover_a_nineteen_ingredient_recipe() -> None:
+    foods = (
+        ("shrimp, raw, peeled and deveined", 200, "g"),
+        ("tofu, firm, drained and cubed", 150, "g"),
+        ("jasmine rice dry", 1, "cup"),
+        ("neutral oil", 2, "tbsp"),
+        ("onion sliced", 100, "g"),
+        ("garlic minced", 2, "piece"),
+        ("fresh ginger minced", 10, "g"),
+        ("red bell pepper sliced", 100, "g"),
+        ("tomatoes chopped", 150, "g"),
+        ("water", 250, "ml"),
+        ("lime juice", 1, "tbsp"),
+        ("fish sauce", 10, "g"),
+        ("soy sauce", 15, "g"),
+        ("brown sugar", 10, "g"),
+        ("red chili flakes", 1, "g"),
+        ("ground cumin", 1, "g"),
+        ("cornstarch", 5, "g"),
+        ("cilantro chopped", 5, "g"),
+        ("lime wedges", 2, "piece"),
+    )
+    request = NutritionRequest.model_validate(
+        {
+            "servings": 2,
+            "allow_estimates": True,
+            "ingredients": tuple(
+                {"line_id": f"food{i}", "name": name, "quantity": amount, "unit": unit}
+                for i, (name, amount, unit) in enumerate(foods)
+            ),
+        }
+    )
+    evidence = asyncio.run(api_tool().lookup(request, deadline=monotonic() + 10))
+    assert evidence.status == "known"
+    assert len(evidence.sources) == len(evidence.mappings) == 19
+    assert not evidence.unknown_components
+    assert all(item.status == "known" for item in evidence.coverage)
+    assert [item.weight_grams for item in evidence.mappings][2:6] == [185, 28, 100, 6]
+    assert evidence.mappings[-1].weight_grams == 16  # Wedges, not two whole limes.
+    assert evidence.mappings[-1].conversion_basis is not None
+    assert evidence.mappings[-1].conversion_basis.startswith("Estimated 8 wedges per fruit")
+    energy = next(item.amount for item in evidence.nutrients if item.name == "energy")
+    assert 650 < energy < 900
+    assert all(item.approximate_match and item.food_description for item in evidence.mappings)
+    assert evidence.mappings[9].conversion_basis is not None
+    assert "density estimate" in evidence.mappings[9].conversion_basis
+
+
+@pytest.mark.parametrize(
+    ("name", "grams", "energy"),
+    [("jasmine rice dry", 185, 675.25), ("white long grain rice cooked", 158, 205.4)],
+)
+def test_dry_and_cooked_rice_keep_different_source_forms_and_portion_weights(
+    name: str, grams: int, energy: float
+) -> None:
+    request = NutritionRequest.model_validate(
+        {
+            "servings": 1,
+            "allow_estimates": True,
+            "ingredients": ({"line_id": "rice", "name": name, "quantity": 1, "unit": "cup"},),
+        }
+    )
+    evidence = asyncio.run(api_tool().lookup(request, deadline=monotonic() + 10))
+    assert evidence.status == "known"
+    assert evidence.mappings[0].weight_grams == grams
+    assert evidence.nutrients[0].amount == energy
+
+
 @pytest.mark.parametrize("household_units", [False, True])
-def test_apple_yogurt_recipe_uses_verified_mass_nutrition_not_guessed_portions(
+def test_household_and_mass_recipes_produce_equivalent_source_portion_estimates(
     household_units: bool,
 ) -> None:
     draft = copy.deepcopy(FIXTURE["draft"])
@@ -92,35 +162,31 @@ def test_apple_yogurt_recipe_uses_verified_mass_nutrition_not_guessed_portions(
         line["unit"] for line in draft["ingredients"]
     ]
     assert [line.quantity for line in recipe.ingredients] == list(quantities)
+    assert recipe.nutrition.status == "known"
+    assert [item.amount for item in recipe.nutrition.nutrients] == [
+        172,
+        10.52,
+        34.33,
+        0.73,
+        3.52,
+        42.08,
+    ]
+    assert recipe.nutrition.coverage[0].whole_recipe_amount == 344
+    assert all(
+        item.status == "known" and not item.unknown_ingredient_line_ids
+        for item in recipe.nutrition.coverage
+    )
+    assert not recipe.nutrition.unknown_components
+    assert [item.usda_food_id for item in recipe.nutrition.mappings] == [
+        str(5000001 + index) for index in range(5)
+    ]
+    assert [item.weight_grams for item in recipe.nutrition.mappings] == [300, 200, 20, 15, 2]
+    assert all(source.kind == "usda" for source in recipe.nutrition.sources)
     if household_units:
-        assert recipe.nutrition.status == "unavailable"
-        assert not recipe.nutrition.nutrients
-        assert not recipe.nutrition.mappings
-        assert not recipe.nutrition.sources
-        assert [item.reason for item in recipe.nutrition.unknown_components] == [
-            "unsupported_unit"
-        ] * 5
-    else:
-        assert recipe.nutrition.status == "known"
-        assert [item.amount for item in recipe.nutrition.nutrients] == [
-            172,
-            10.52,
-            34.33,
-            0.73,
-            3.52,
-            42.08,
-        ]
-        assert recipe.nutrition.coverage[0].whole_recipe_amount == 344
         assert all(
-            item.status == "known" and not item.unknown_ingredient_line_ids
-            for item in recipe.nutrition.coverage
+            item.conversion_basis and item.conversion_basis.startswith("USDA portion:")
+            for item in recipe.nutrition.mappings
         )
-        assert not recipe.nutrition.unknown_components
-        assert [item.usda_food_id for item in recipe.nutrition.mappings] == [
-            str(5000001 + index) for index in range(5)
-        ]
-        assert [item.weight_grams for item in recipe.nutrition.mappings] == [300, 200, 20, 15, 2]
-        assert all(source.kind == "usda" for source in recipe.nutrition.sources)
 
 
 def test_specialist_accepts_verified_resolver_choices_without_an_extra_model_call() -> None:
