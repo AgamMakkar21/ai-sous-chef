@@ -837,6 +837,8 @@ def worker_package(sha: str, output: Path) -> None:
                 relative = "worker/extraction.py"
             if not entry.is_dir() and relative != "release.json":
                 dest.writestr(relative, source.read(entry.filename))
+        # A namespace package loses to the Functions runtime's top-level worker.py.
+        dest.writestr("worker/__init__.py", "")
         dest.writestr("release.json", json.dumps({"commit": sha}))
 
 

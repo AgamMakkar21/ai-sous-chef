@@ -5,6 +5,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -139,6 +140,36 @@ class FunctionsInfrastructureTests(unittest.TestCase):
             telemetry["httpAutoCollectionOptions"]["enableHttpTriggerExtendedInfoCollection"]
         )
         self.assertFalse(telemetry["httpAutoCollectionOptions"]["enableQueryStringTracing"])
+
+    def test_private_host_storage_adds_only_blob_network_access_not_public_access_or_roles(
+        self,
+    ) -> None:
+        template = compile_bicep("infra/functions-storage-private-network.bicep")
+        endpoint = resources(template, "Microsoft.Network/privateEndpoints")[0]
+        connection = endpoint["properties"]["privateLinkServiceConnections"][0]["properties"]
+        self.assertEqual(connection["groupIds"], ["blob"])
+        self.assertIn("storageAccountName", connection["privateLinkServiceId"])
+        self.assertEqual(
+            endpoint["properties"]["subnet"]["id"],
+            "[parameters('privateEndpointSubnetResourceId')]",
+        )
+        link = resources(template, "Microsoft.Network/privateDnsZones/virtualNetworkLinks")[0]
+        self.assertFalse(link["properties"]["registrationEnabled"])
+        self.assertEqual(
+            link["properties"]["virtualNetwork"]["id"],
+            "[parameters('virtualNetworkResourceId')]",
+        )
+        dns = resources(template, "Microsoft.Network/privateEndpoints/privateDnsZoneGroups")[0]
+        self.assertEqual(len(dns["properties"]["privateDnsZoneConfigs"]), 1)
+        self.assertEqual(
+            {resource["type"] for resource in template["resources"]},
+            {
+                "Microsoft.Network/privateEndpoints",
+                "Microsoft.Network/privateDnsZones",
+                "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+                "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+            },
+        )
 
 
 class FunctionsHostTests(unittest.TestCase):
@@ -462,6 +493,7 @@ class FunctionsDeliveryTests(unittest.TestCase):
                         "host.json",
                         "function_app.py",
                         "worker/extraction.py",
+                        "worker/__init__.py",
                         "requirements.txt",
                         "release.json",
                         "sous_chef/__init__.py",
@@ -473,6 +505,26 @@ class FunctionsDeliveryTests(unittest.TestCase):
                     },
                 )
                 self.assertEqual(json.loads(archive.read("release.json")), {"commit": SHA})
+            with zipfile.ZipFile(path) as archive:
+                archive.extractall(Path(directory) / "app")
+            runtime = Path(directory) / "runtime"
+            runtime.mkdir()
+            (runtime / "worker.py").write_text("raise RuntimeError('runtime module collision')")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    "import sys; sys.path[:0] = sys.argv[1:]; "
+                    "import worker; import importlib.util; "
+                    "assert importlib.util.find_spec('worker.extraction') is not None",
+                    str(Path(directory) / "app"),
+                    str(runtime),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_deploy_requires_current_commit_and_successful_build(self) -> None:
         for mode in (
