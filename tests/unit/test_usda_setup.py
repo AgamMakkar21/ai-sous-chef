@@ -47,6 +47,15 @@ def test_recipe_normalization_preserves_meaningful_food_forms_and_composition() 
     assert not recipe_food_match(candidate("Soy sauce, reduced sodium"), "soy sauce regular")
     assert not recipe_food_match(candidate("Babyfood, chicken, raw"), "chicken raw")
     assert not recipe_food_match(candidate("Chicken, skin only, raw"), "chicken raw")
+    assert not recipe_food_match(candidate("Chicken, ground, raw"), "chicken")
+    assert recipe_food_match(candidate("Chicken, ground, raw"), "ground chicken")
+    assert recipe_food_query("chicken, boneless pieces") == "chicken meat raw"
+    assert recipe_food_query("chicken thighs, boneless chunks") == "chicken thigh"
+    assert recipe_food_query("chicken broth") == "chicken broth"
+    assert recipe_food_query("chicken, cooked pieces") == "chicken cooked"
+    assert not recipe_food_match(
+        candidate("Chicken spread"), recipe_food_query("chicken, boneless pieces")
+    )
     assert recipe_food_query("water") == "water bottled generic"
     assert not recipe_food_match(candidate("Water convolvulus, raw"), recipe_food_query("water"))
     assert recipe_food_query("tomatoes, chopped") == "tomato red ripe"

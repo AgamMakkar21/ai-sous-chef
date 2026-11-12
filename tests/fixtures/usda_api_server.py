@@ -16,6 +16,8 @@ FOODS = [
         "publicationDate": "4/1/2019",
         "foodCategory": "Vegetables",
     },
+    {"fdcId": 2345681, "description": "Chicken, ground, raw", "dataType": "SR Legacy"},
+    {"fdcId": 2345682, "description": "Chicken spread", "dataType": "SR Legacy"},
     {
         "fdcId": 2345678,
         "description": "Chicken, breast, meat only, raw",
@@ -138,6 +140,9 @@ def respond(request: httpx.Request) -> httpx.Response:
     fdc_id = food["fdcId"]
     assert isinstance(fdc_id, int)
     amounts = {
+        2345678: (120, 22.5, 2.6, 0, 0, 45),
+        2345681: (143, 17.4, 8.1, 0, 0, 60),
+        2345682: (158, 18, 8, 4, 0, 720),
         5000001: (52, 0.3, 0.2, 14, 2, 1),
         5000002: (60, 10, 0.4, 4, 0, 40),
         5000003: (300, 0, 0, 80, 0, 4),

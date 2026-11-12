@@ -297,9 +297,13 @@ An explicit selected FDC ID must belong to the current search results;
 its detail ID, data type and descriptions must match before values are used.
 Unknown/ambiguous foods have unavailable nutrition rather than an invented mapping.
 Recipe enrichment explicitly enables approximate, source-backed matches. It removes
-non-nutritional preparation words such as sliced, minced, drained and deveined,
-but preserves raw/cooked, fat, skin and other composition qualifiers. A small
-documented set of culinary equivalents maps neutral oil to canola oil, jasmine
+non-nutritional preparation words such as sliced, minced, drained, deveined,
+boneless and generic pieces/chunks (without removing an actual breast/thigh cut),
+but preserves raw/cooked, ground meat, fat, skin and other composition qualifiers.
+Generic chicken uses `chicken meat raw` as an ingredient-weight estimate to exclude
+spreads and other prepared products. Explicit cooked/ground states and named cuts
+remain distinct; broth is not treated as raw meat.
+A small documented set of culinary equivalents maps neutral oil to canola oil, jasmine
 rice to long-grain white rice, bell pepper to sweet pepper, cilantro to coriander
 leaves, ground cumin to cumin seed and chili flakes to red/cayenne pepper.
 Dry/uncooked rice stays raw, never cooked. Unqualified tomatoes use red ripe

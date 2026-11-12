@@ -42,6 +42,10 @@ _SINGULARS = {
     "eggs": "egg",
     "potatoes": "potato",
     "sugars": "sugar",
+    "breasts": "breast",
+    "thighs": "thigh",
+    "wings": "wing",
+    "drumsticks": "drumstick",
 }
 _PREPARATION = {
     "fresh",
@@ -65,6 +69,10 @@ _PREPARATION = {
     "trimmed",
     "divided",
     "boneless",
+    "piece",
+    "pieces",
+    "chunk",
+    "chunks",
     "and",
     "small",
     "medium",
@@ -112,6 +120,8 @@ def recipe_food_query(name: str) -> str:
     ]
     if "rice" in words:
         words = ["raw" if word == "dry" else word for word in words]
+    if "chicken" in words and set(words) <= {"chicken", "raw"}:
+        words = ["chicken", "meat", "raw"]
     if words == ["water"]:
         words = ["water", "bottled", "generic"]
     elif words == ["tomato"]:
@@ -129,7 +139,9 @@ def recipe_food_match(food: UsdaFood, query: str) -> bool:
         return False
     if (candidate & {"babyfood", "restaurant", "soup", "sauce"}) - requested:
         return False
-    if (candidate & {"liver", "heart", "kidney", "bran", "extract", "concentrate"}) - requested:
+    if (
+        candidate & {"liver", "heart", "kidney", "bran", "extract", "concentrate", "ground"}
+    ) - requested:
         return False
     if candidate & {"chicken", "turkey", "duck"} and "skin" in candidate - requested:
         return False
