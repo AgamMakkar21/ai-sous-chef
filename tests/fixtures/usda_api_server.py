@@ -129,7 +129,12 @@ def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200, json={"foods": foods[: body["pageSize"]], "totalHits": total_hits}
         )
-    food = next(food for food in FOODS if str(food["fdcId"]) == request.url.path.rsplit("/", 1)[1])
+    food = next(
+        (food for food in FOODS if str(food["fdcId"]) == request.url.path.rsplit("/", 1)[1]),
+        None,
+    )
+    if food is None:
+        return httpx.Response(404)
     fdc_id = food["fdcId"]
     assert isinstance(fdc_id, int)
     amounts = {
