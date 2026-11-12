@@ -39,6 +39,9 @@ param foundryDeploymentNames object
 @description('Application Insights resource ID; its connection string is nonsecret.')
 param applicationInsightsResourceId string
 
+@description('Reviewed opt-in to app-owned synchronous telemetry; does not enable automatic instrumentation.')
+param telemetryEnabled bool = false
+
 param authIssuer string
 param authJwksUri string
 param authClientId string
@@ -71,6 +74,16 @@ resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' 
   name: '${namePrefix}-app-identity'
   location: location
   tags: tags
+}
+
+resource telemetryIngestion 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (telemetryEnabled) {
+  name: guid(insights.id, identity.id, 'synchronous-telemetry')
+  scope: insights
+  properties: {
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '3913510d-42f4-4e42-8a64-420c390055eb')
+  }
 }
 
 resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
@@ -132,6 +145,7 @@ var baseAppSettings = [
   { name: 'ASC_FOUNDRY_EXTRACTION_DEPLOYMENT', value: foundryDeploymentNames.extraction }
   { name: 'AZURE_CLIENT_ID', value: identity.properties.clientId }
   { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
+  { name: 'ASC_TELEMETRY_ENABLED', value: string(telemetryEnabled) }
   { name: 'ApplicationInsightsAgent_EXTENSION_VERSION', value: 'disabled' }
   { name: 'AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED', value: 'false' }
   { name: 'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT', value: 'false' }
@@ -139,6 +153,10 @@ var baseAppSettings = [
   { name: 'OTEL_TRACES_EXPORTER', value: 'none' }
   { name: 'OTEL_METRICS_EXPORTER', value: 'none' }
   { name: 'OTEL_LOGS_EXPORTER', value: 'none' }
+  { name: 'APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL', value: 'true' }
+  { name: 'APPLICATIONINSIGHTS_SDKSTATS_DISABLED', value: 'true' }
+  { name: 'APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED', value: 'true' }
+  { name: 'APPLICATIONINSIGHTS_OPENTELEMETRY_RESOURCE_METRIC_DISABLED', value: 'true' }
   { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'true' }
 ]
 

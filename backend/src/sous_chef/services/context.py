@@ -36,6 +36,7 @@ from sous_chef.domain.profiles import ExplicitPreferences, ProfileModel, require
 from sous_chef.services.conversations import ConversationService
 from sous_chef.services.groceries import _rows as grocery_rows
 from sous_chef.services.profiles import _view as profile_view
+from sous_chef.tracing import Operation, observed
 
 
 class _LearnedState(ProfileModel):
@@ -134,6 +135,7 @@ class ContextService:
     def __init__(self, learned_reader: LearnedPreferenceReader | None = None) -> None:
         self.learned_reader = learned_reader
 
+    @observed(Operation.CONTEXT)
     async def build(
         self,
         repository: CosmosRepository,

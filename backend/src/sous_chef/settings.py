@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     environment: Literal["local", "dev", "prod"]
     adapter_mode: Literal["local", "live"]
     agents_enabled: bool = True
+    telemetry_enabled: bool = False
+    telemetry_sample_ratio: float = Field(default=1, ge=0, le=1, allow_inf_nan=False)
     readiness_timeout_seconds: float = Field(default=2, gt=0, le=10, allow_inf_nan=False)
     static_dir: Path = Path(__file__).parent / "static"
     auth_mode: Literal["external_id", "app_service"] = "external_id"

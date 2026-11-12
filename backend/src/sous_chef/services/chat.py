@@ -42,6 +42,7 @@ from sous_chef.services.conversations import ConversationService, StoredConversa
 from sous_chef.services.profiles import _view as profile_view
 from sous_chef.services.recipe_safety import check_current_recipe
 from sous_chef.settings import ConfigurationError, Settings
+from sous_chef.tracing import Operation, observed
 
 CHAT = ProductContainer.CHAT_HISTORY
 SEND_TIMEOUT_SECONDS = 60
@@ -123,6 +124,7 @@ class ChatService:
         self.executor = executor
         self.context_service = ContextService(learned_reader)
 
+    @observed(Operation.PERSISTENCE)
     async def _finish(
         self,
         repository: CosmosRepository,

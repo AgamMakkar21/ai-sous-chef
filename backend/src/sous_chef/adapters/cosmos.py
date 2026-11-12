@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from math import isfinite
 from time import monotonic
-from typing import TypeVar
+from typing import Literal, TypeVar
 from uuid import uuid4
 
 from azure.core import MatchConditions
@@ -27,6 +27,7 @@ from azure.cosmos.exceptions import (
     CosmosClientTimeoutError,
     CosmosHttpResponseError,
 )
+from opentelemetry import trace
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from sous_chef.adapters.credentials import build_async_credential
@@ -47,6 +48,7 @@ from sous_chef.domain.cosmos import (
 )
 from sous_chef.settings import ConfigurationError, Settings
 from sous_chef.telemetry import ErrorCategory, Event, operational_event, trace_id
+from sous_chef.tracing import Operation, cosmos_response, cosmos_throttled, observed
 
 T = TypeVar("T")
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
@@ -205,20 +207,31 @@ class CosmosRepository:
             raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4()) from None
         return delay
 
+    @observed(Operation.COSMOS)
     async def _run(
         self,
         action: Callable[[], Awaitable[T]],
         *,
         deadline: float,
         read_only: bool = True,
+        operation_name: Literal[
+            "read", "create", "batch", "patch", "delete", "query", "initialize"
+        ] = "read",
+        container: ProductContainer | None = None,
     ) -> T:
         operation_id = uuid4()
         context = trace_id.set(trace_id.get() or str(operation_id))
         started = monotonic()
+        span = trace.get_current_span()
+        span.set_attribute("db.system.name", "cosmosdb")
+        span.set_attribute("db.operation.name", operation_name)
+        if container is not None:
+            span.set_attribute("db.collection.name", container.value)
         try:
             try:
                 async with asyncio.timeout_at(deadline):
                     for attempt in range(self._settings.cosmos_max_attempts):
+                        span.set_attribute("asc.cosmos.attempt_count", attempt + 1)
                         try:
                             if monotonic() >= deadline:
                                 raise TimeoutError
@@ -228,6 +241,9 @@ class CosmosRepository:
                             return result
                         except (CosmosHttpResponseError, CosmosBatchOperationError) as error:
                             status = error.status_code
+                            cosmos_response(error.headers, None)
+                            if status == 429:
+                                cosmos_throttled()
                             retryable = status == 429 or (
                                 read_only and status in {408, 500, 502, 503, 504}
                             )
@@ -294,9 +310,12 @@ class CosmosRepository:
 
         async def action() -> StoredRecord | None:
             try:
-                raw = await self._containers[container].read_item(item=item_id, partition_key=scope)
+                raw = await self._containers[container].read_item(
+                    item=item_id, partition_key=scope, response_hook=cosmos_response
+                )
             except CosmosHttpResponseError as error:
                 if error.status_code == 404 and not error.sub_status:
+                    cosmos_response(error.headers, None)
                     return None
                 raise
             record = self._record(raw, user, container)
@@ -304,7 +323,7 @@ class CosmosRepository:
                 raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4())
             return record
 
-        return await self._run(action, deadline=deadline)
+        return await self._run(action, deadline=deadline, container=container)
 
     def _new_body(self, user: AuthenticatedUser, request: NewRecord) -> dict[str, JsonValue]:
         scope = self._scope(user)
@@ -358,6 +377,7 @@ class CosmosRepository:
                 batch_operations=[("create", (receipt,)), ("create", (body,))],
                 partition_key=user.user_id,
                 retry_write=0,
+                response_hook=cosmos_response,
             )
             if len(results) != 2 or any(
                 not isinstance(result, dict) or result.get("statusCode") != 201
@@ -381,7 +401,13 @@ class CosmosRepository:
                 raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4(), outcome_unknown=True)
             return record
 
-        return await self._run(action, deadline=deadline, read_only=False)
+        return await self._run(
+            action,
+            deadline=deadline,
+            read_only=False,
+            operation_name="batch",
+            container=ProductContainer.CHAT_HISTORY,
+        )
 
     async def create(
         self,
@@ -398,13 +424,17 @@ class CosmosRepository:
         body = self._new_body(user, request)
 
         async def action() -> StoredRecord:
-            raw = await self._containers[container].create_item(body=body, retry_write=0)
+            raw = await self._containers[container].create_item(
+                body=body, retry_write=0, response_hook=cosmos_response
+            )
             record = self._record(raw, user, container)
             if record.body["id"] != body["id"]:
                 raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4(), outcome_unknown=True)
             return record
 
-        return await self._run(action, deadline=deadline, read_only=False)
+        return await self._run(
+            action, deadline=deadline, read_only=False, operation_name="create", container=container
+        )
 
     async def commit_chat(
         self,
@@ -530,6 +560,7 @@ class CosmosRepository:
                 batch_operations=operations,
                 partition_key=scope,
                 retry_write=0,
+                response_hook=cosmos_response,
             )
             if len(results) != len(bodies):
                 raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4(), outcome_unknown=True)
@@ -547,7 +578,9 @@ class CosmosRepository:
                 records.append(record)
             return tuple(records)
 
-        return await self._run(action, deadline=deadline, read_only=False)
+        return await self._run(
+            action, deadline=deadline, read_only=False, operation_name="batch", container=container
+        )
 
     async def commit_learning(
         self,
@@ -617,6 +650,7 @@ class CosmosRepository:
                 ],
                 partition_key=scope,
                 max_item_count=2,
+                response_hook=cosmos_response,
             )
             records: list[StoredRecord] = []
             async for raw in items:
@@ -633,7 +667,12 @@ class CosmosRepository:
                 raise OwnedResourceNotFound
             return records[0]
 
-        return await self._run(action, deadline=self._deadline(None))
+        return await self._run(
+            action,
+            deadline=self._deadline(None),
+            operation_name="query",
+            container=ProductContainer.CHAT_HISTORY,
+        )
 
     async def patch(
         self,
@@ -676,13 +715,16 @@ class CosmosRepository:
                 etag=request.etag,
                 match_condition=MatchConditions.IfNotModified,
                 retry_write=0,
+                response_hook=cosmos_response,
             )
             record = self._record(raw, user, container)
             if record.body["id"] != item_id:
                 raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4(), outcome_unknown=True)
             return record
 
-        return await self._run(action, deadline=deadline, read_only=False)
+        return await self._run(
+            action, deadline=deadline, read_only=False, operation_name="patch", container=container
+        )
 
     async def delete(
         self,
@@ -708,9 +750,12 @@ class CosmosRepository:
                 etag=etag,
                 match_condition=MatchConditions.IfNotModified,
                 retry_write=0,
+                response_hook=cosmos_response,
             )
 
-        await self._run(action, deadline=deadline, read_only=False)
+        await self._run(
+            action, deadline=deadline, read_only=False, operation_name="delete", container=container
+        )
 
     async def query(
         self,
@@ -766,6 +811,7 @@ class CosmosRepository:
                 partition_key=scope,
                 max_item_count=limit,
                 continuation_token_limit=8,
+                response_hook=cosmos_response,
             )
             pages = items.by_page(continuation_token=page.continuation_token)
             try:
@@ -812,7 +858,9 @@ class CosmosRepository:
                 raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4()) from None
             return RecordPage(tuple(records), token)
 
-        return await self._run(action, deadline=deadline)
+        return await self._run(
+            action, deadline=deadline, operation_name="query", container=container
+        )
 
 
 @asynccontextmanager
@@ -873,7 +921,7 @@ async def open_cosmos(
             async def initialize() -> None:
                 await client.__aenter__()
                 for container in proxies.values():
-                    properties = await container.read()
+                    properties = await container.read(response_hook=cosmos_response)
                     partition = properties.get("partitionKey")
                     if not isinstance(partition, dict) or (
                         partition.get("paths") != ["/userId"]
@@ -885,7 +933,9 @@ async def open_cosmos(
                             "Cosmos product containers require /userId, Hash v2 and no TTL."
                         )
 
-            await repository._run(initialize, deadline=repository._deadline(deadline))
+            await repository._run(
+                initialize, deadline=repository._deadline(deadline), operation_name="initialize"
+            )
             yield repository
         finally:
             await client.close()

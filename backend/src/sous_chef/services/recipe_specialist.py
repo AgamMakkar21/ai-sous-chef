@@ -8,6 +8,7 @@ from time import monotonic
 from typing import Literal
 from uuid import UUID
 
+from opentelemetry import trace
 from pydantic import ValidationError
 
 from sous_chef.domain.agent_identity import AgentRole, AgentTool, authorize_tool
@@ -51,6 +52,7 @@ from sous_chef.services.recipe_grounding import recipe_knowledge_arguments, retr
 from sous_chef.services.web_grounding import public_web_query
 from sous_chef.settings import ConfigurationError, Settings
 from sous_chef.telemetry import ErrorCategory, Event, operational_event, trace_id
+from sous_chef.tracing import Operation, fail, observed, operation
 
 
 def _ingredient_id(name: str) -> str | None:
@@ -153,6 +155,7 @@ class RecipeSpecialistService:
         self._nutrition = nutrition
         self._combined = combined
 
+    @observed(Operation.SPECIALIST)
     async def generate(
         self,
         context: RequestContext,
@@ -177,7 +180,7 @@ class RecipeSpecialistService:
         )
         started = monotonic()
         deadline = min(deadline, started + POLICY.deadline_seconds)
-        token = trace_id.set(operation_id.hex)
+        token = trace_id.set(trace_id.get() or operation_id.hex)
         try:
             try:
                 async with asyncio.timeout_at(deadline):
@@ -185,6 +188,14 @@ class RecipeSpecialistService:
                         raise TimeoutError
                     web = None
                     query = public_web_query(context, arguments)
+                    span = trace.get_current_span()
+                    span.set_attribute("asc.web.requested", arguments.use_web)
+                    span.set_attribute("asc.web.enabled", query is not None)
+                    span.set_attribute(
+                        "asc.foundry.mode", "combined" if self._combined else "phased"
+                    )
+                    if query is None:
+                        span.add_event("web_iq.skipped")
                     web_query = query
                     if query is not None:
                         authorize_tool(AgentRole.RECIPE_NUTRITION, AgentTool.WEB_IQ)
@@ -259,7 +270,8 @@ class RecipeSpecialistService:
                                 usage,
                             ) = await self._generator.generate_grounded_recipe(request)
                     else:
-                        grounding = await self._recipes.retrieve(query, deadline=deadline)
+                        with operation(Operation.RETRIEVAL):
+                            grounding = await self._recipes.retrieve(query, deadline=deadline)
                         if grounding.status != "available":
                             code = (
                                 FoundryFailure.NO_RESULTS
@@ -280,15 +292,22 @@ class RecipeSpecialistService:
                     sources = {item.source.source_id: item.source for item in grounding.recipes}
                     snippets = {item.source.source_id: item.snippet for item in grounding.recipes}
                     skill = ("beginner", "intermediate", "advanced")
-                    safety = validate_ingredients(
-                        SafetyProfile(
-                            allergies=context.explicit_preferences.allergies,
-                        ),
-                        tuple(
-                            IngredientLine(line_id=line.line_id, name=line.name)
-                            for line in draft.ingredients
-                        ),
-                    )
+                    span.add_event("foundry_iq.completed")
+                    span.set_attribute("asc.web.completed", web is not None)
+                    if web is not None:
+                        span.add_event("web_iq.completed")
+                    with operation(Operation.SAFETY):
+                        safety = validate_ingredients(
+                            SafetyProfile(
+                                allergies=context.explicit_preferences.allergies,
+                            ),
+                            tuple(
+                                IngredientLine(line_id=line.line_id, name=line.name)
+                                for line in draft.ingredients
+                            ),
+                        )
+                        if safety.verdict != Verdict.PASS:
+                            fail(ErrorCategory.RECIPE_INGREDIENT)
                     if draft.total_minutes > arguments.time_budget_minutes or skill.index(
                         draft.skill
                     ) > skill.index(context.explicit_preferences.cooking_skill):

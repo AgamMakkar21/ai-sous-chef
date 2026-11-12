@@ -19,6 +19,7 @@ from sous_chef.domain.nutrition import UsdaFood, UsdaFoodProfile, UsdaFoodSearch
 from sous_chef.domain.nutrition_inputs import food_words, recipe_food_match
 from sous_chef.domain.recipes import RecipeToolError
 from sous_chef.settings import ConfigurationError, Settings
+from sous_chef.tracing import Operation, observed
 
 PROTOCOL_VERSION = "2024-11-05"
 MAX_MESSAGE_BYTES = 131_072
@@ -203,6 +204,7 @@ class UsdaMcpSession:
             )
         return value
 
+    @observed(Operation.USDA_SEARCH)
     async def search(self, name: str) -> UsdaFoodSearch:
         if not name.strip() or len(name) > 100 or any(c in name for c in "%_\x00\r\n"):
             raise RecipeToolError(FoundryFailure.REJECTED)
@@ -250,6 +252,7 @@ class UsdaMcpSession:
         food = matches[0]
         return await self.profile(food)
 
+    @observed(Operation.USDA_PROFILE)
     async def profile(self, food: UsdaFood) -> UsdaFoodProfile:
         """Fetch only an identified search candidate, validating source descriptions."""
         raw = await self._call("get_nutrition_profile", {"fdc_id": food.fdc_id})

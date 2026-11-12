@@ -261,6 +261,37 @@ class FoundationTests(unittest.TestCase):
             self.assertIn(name, self.dev["parameters"])
             self.assertIn(name, self.prod["parameters"])
 
+    def test_synchronous_telemetry_is_opt_in_and_ingests_only_at_the_insights_scope(self) -> None:
+        self.assertFalse(self.template["parameters"]["telemetryEnabled"]["defaultValue"])
+        self.assertFalse(self.app["parameters"]["telemetryEnabled"]["defaultValue"])
+        roles = [
+            resource
+            for resource in self.app["resources"]
+            if resource["type"] == "Microsoft.Authorization/roleAssignments"
+        ]
+        self.assertEqual(len(roles), 1)
+        role = roles[0]
+        self.assertEqual(role["condition"], "[parameters('telemetryEnabled')]")
+        self.assertIn("Microsoft.Insights/components", role["scope"])
+        self.assertIn("identity", role["properties"]["principalId"])
+        self.assertIn(
+            "3913510d-42f4-4e42-8a64-420c390055eb", role["properties"]["roleDefinitionId"]
+        )
+        self.assertEqual(role["properties"]["principalType"], "ServicePrincipal")
+        settings = next(r for r in self.app["resources"] if "-settings" in r["name"])
+        authored = settings["properties"]["parameters"]["settings"]["value"]
+        self.assertIn(
+            "createObject('name', 'ASC_TELEMETRY_ENABLED', "
+            "'value', string(parameters('telemetryEnabled')))",
+            authored,
+        )
+        for flag in (
+            "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL",
+            "APPLICATIONINSIGHTS_SDKSTATS_DISABLED",
+            "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED",
+        ):
+            self.assertIn(f"createObject('name', '{flag}', 'value', 'true')", authored)
+
     def test_consumer_auth_is_required_and_uses_no_external_redirects(self) -> None:
         module = next(r for r in self.app["resources"] if "-authentication" in r["name"])
         policy = module["properties"]["template"]

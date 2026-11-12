@@ -1,5 +1,6 @@
 from time import monotonic
 
+from opentelemetry import trace
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from sous_chef.api.problems import problem_response
@@ -11,18 +12,32 @@ from sous_chef.telemetry import (
     operational_event,
     trace_id,
 )
+from sous_chef.tracing import Operation, Telemetry, fail, operation
 
 
 class RequestLoggingMiddleware:
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, telemetry: Telemetry) -> None:
         self.app = app
+        self.telemetry = telemetry
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        with self.telemetry.activate(), operation(Operation.HTTP, root=True):
+            await self._request(scope, receive, send)
 
+    async def _request(self, scope: Scope, receive: Receive, send: Send) -> None:
         request_id = new_trace_id()
+        span = trace.get_current_span()
+        span.set_attribute("asc.correlation_id", request_id)
+        method = scope.get("method", "")
+        span.set_attribute(
+            "http.request.method",
+            method
+            if method in {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
+            else "OTHER",
+        )
         trace_token = trace_id.set(request_id)
         category_token = error_category.set(None)
         started_at = monotonic()
@@ -58,11 +73,17 @@ class RequestLoggingMiddleware:
                 )
                 await response(scope, receive, safe_send)
         finally:
+            span.set_attribute("http.response.status_code", status)
+            route = getattr(scope.get("route"), "path", None)
+            if isinstance(route, str):
+                span.set_attribute("http.route", route)
             category = error_category.get()
             if status >= 400 and category is None:
                 category = (
                     ErrorCategory.INTERNAL_ERROR if status >= 500 else ErrorCategory.HTTP_ERROR
                 )
+            if category is not None:
+                fail(category)
             operational_event(
                 Event.REQUEST_FAILED if status >= 400 else Event.REQUEST_COMPLETED,
                 category=category,

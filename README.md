@@ -199,8 +199,12 @@ startup enforces these process variables and disables Azure SDK tracing:
 | --- | --- |
 | `AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED` | `false` |
 | `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` | `false` |
-| `OTEL_SDK_DISABLED` | `true` |
+| `OTEL_SDK_DISABLED` | `true`; only the explicit app-owned exporter opt-in below changes it at runtime |
 | `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER`, `OTEL_LOGS_EXPORTER` | `none` |
+| `AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING`, `AZURE_TRACING_GEN_AI_INSTRUMENT_RESPONSES_API` | `false` |
+| `AZURE_TRACING_GEN_AI_INCLUDE_BINARY_DATA`, `AZURE_TRACING_GEN_AI_TRACE_CONTEXT_PROPAGATION_INCLUDE_BAGGAGE` | `false` |
+| `APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL`, `APPLICATIONINSIGHTS_SDKSTATS_DISABLED` | `true` |
+| `APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED`, `APPLICATIONINSIGHTS_OPENTELEMETRY_RESOURCE_METRIC_DISABLED` | `true` |
 
 Set these variables in the shell/App Service configuration **before launch** as
 well; do not put non-`ASC_` keys in the application `.env` files. Launch plain
@@ -214,9 +218,75 @@ Python process, not logs produced by an upstream hosting service.
 No browser analytics SDK or telemetry script is installed by this scaffold.
 Future frontend analytics must use fixed event names, never form/chat/notes
 content, user identifiers or current URLs. Nothing here enables browser tracking
-or a distributed-tracing platform. Monitoring retention/access remain governed
+or browser distributed tracing. Monitoring retention/access remain governed
 by [the infrastructure policy](infra/README.md); protected capture and dashboards
 are deferred beyond the MVP.
+
+### Synchronous OpenTelemetry (ASC-52)
+
+`ASC_TELEMETRY_ENABLED=false` is the default in every environment. An explicit
+opt-in adds app-owned spans and metrics to the existing privacy policy; it does
+not enable SDK auto-instrumentation, log export, async-learning instrumentation,
+or protected-content capture. Run plain Uvicorn as above.
+
+The trace follows the HTTP request through context reads, the Orchestrator,
+Recipe/Nutrition, Foundry Responses, USDA search/profile calls, safety checks,
+and completion persistence. Cosmos spans identify only the fixed operation and
+container, attempt count, request charge summed across pages/retries, and
+throttling. Agent spans include configured agent/version/model identifiers and
+numeric token usage. Fixed result/error categories identify rejected output,
+timeouts and exhausted retries, including recipe refusals returned as HTTP 200.
+An absent optional Web IQ call has an explicit `web_iq.skipped` event.
+
+No span or metric contains prompts, responses, tool arguments, user/partition/item
+IDs, emails, allergies, preferences, notes, resource paths, raw URLs, or exception
+text. Resource metadata uses a random process instance and fixed device alias,
+not the machine hostname. Incoming trace IDs, trace state and baggage are not
+accepted. The random response `X-Trace-ID` appears as `asc.correlation_id` on the
+request and its child spans; existing logs keep the same support ID.
+
+To opt in locally, sign in with `az login`, use an approved Insights destination,
+and set `APPLICATIONINSIGHTS_CONNECTION_STRING` in the **process environment**,
+not an `ASC_` application `.env` file. Set `ASC_TELEMETRY_ENABLED=true` and,
+optionally, `ASC_TELEMETRY_SAMPLE_RATIO` (finite `0` through `1`, default `1`).
+The app uses Azure CLI credentials locally and its explicitly selected managed
+identity in Azure, never an instrumentation key as authentication. The identity
+needs **Monitoring Metrics Publisher** on that Insights component. Trace sampling
+applies to the whole request trace; operation/token/RU counters remain collected.
+Export uses bounded background queues/timeouts and no offline disk persistence.
+Shutdown flushes and closes the owned providers and credential.
+
+For hosted opt-in and ingestion permissions, follow
+[the reviewed infrastructure setup](infra/README.md#synchronous-application-telemetry-asc-52).
+Before enabling, independently verify that native Foundry tracing uses the
+approved Insights destination with protected-content capture disabled. The app
+passes only W3C trace context to Foundry; the client flags above do not configure
+Foundry's server-side capture policy. A managed Responses call can contain both
+model and native Foundry IQ/Web IQ execution. Its client span measures the total
+call, not invented per-tool timings; detailed model/retrieval/web timings require
+the correlated native server spans. Phased app-owned retrieval and USDA calls
+have their own client boundaries.
+
+Offline acceptance uses real app/services/SDKs with synthetic transports and
+in-memory telemetry in `tests/integration/test_synchronous_telemetry.py`. This
+proves correlation, privacy, failure attribution, concurrency, RU/throttle
+accounting and exporter wiring, **not** live ingestion or native Foundry timing.
+After a reviewed dev deployment, use a synthetic account and ingredients to
+generate a recipe, retain its `X-Trace-ID`, and find the request in the workspace:
+
+```kusto
+union AppRequests, AppDependencies
+| where TimeGenerated > ago(1h)
+| where tostring(Properties["asc.correlation_id"]) == "<X-Trace-ID>"
+| project TimeGenerated, OperationId, Id, ParentId, Name, DurationMs, Success, Properties
+| order by TimeGenerated asc
+```
+
+Use the resulting `OperationId` to inspect native Foundry spans in the same trace.
+Confirm a successful request, disabled Web IQ, a controlled timeout, and a safety
+refusal without inspecting or storing private payloads. Treat missing native
+children, export authentication failures or an unverified capture policy as
+blocked live acceptance; do not infer success from deployment or offline tests.
 
 ## Extension boundaries
 
