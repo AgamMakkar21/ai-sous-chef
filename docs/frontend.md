@@ -43,6 +43,10 @@ for synthetic desktop/phone acceptance coverage, and `npm run lint` /
 `npm run typecheck` for source checks. Fixtures are not real user history;
 live acceptance still requires hosted sign-in and the configured Cosmos backend.
 
+ASC-64 / [#59](https://github.com/AgamMakkar21/ai-sous-chef/issues/59) adds
+[keyboard, responsive and accessibility acceptance checks](accessibility-acceptance.md),
+including the recorded walkthrough, browser evidence and testing limitations.
+
 ## Build and run
 
 Use Node.js **24 LTS** and npm in the same operating system as `node_modules`.

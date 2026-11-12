@@ -52,6 +52,9 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const leaving = useRef(false);
+  const profileButton = useRef<HTMLButtonElement>(null);
+  const main = useRef<HTMLElement>(null);
+  const returnFocus = useRef<"profile" | "main" | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -136,6 +139,7 @@ export default function App() {
 
   function closeEditor() {
     if (!busy && discard()) {
+      returnFocus.current = "profile";
       setEditing(false);
       setDirty(false);
     }
@@ -153,6 +157,14 @@ export default function App() {
   const ready = state.kind === "ready" ? state : null;
   const completed = Boolean(ready?.snapshot.profile.onboardingCompleted);
   const showProfile = ready && (!completed || editing);
+
+  useEffect(() => {
+    if (!completed || editing || busy || !returnFocus.current) return;
+    const target =
+      returnFocus.current === "profile" ? profileButton.current : main.current;
+    target?.focus();
+    returnFocus.current = null;
+  }, [completed, editing, busy]);
 
   return (
     <div className="app-shell">
@@ -190,6 +202,7 @@ export default function App() {
           <div className="header-actions">
             {completed && (
               <button
+                ref={profileButton}
                 className="button secondary"
                 disabled={busy}
                 onClick={openProfile}
@@ -212,7 +225,7 @@ export default function App() {
         )}
       </header>
       <Tabs.Root
-        value={selected}
+        value={ready && completed && !editing ? selected : ""}
         onValueChange={selectTab}
         activationMode="automatic"
       >
@@ -228,7 +241,7 @@ export default function App() {
             </Tabs.Trigger>
           ))}
         </Tabs.List>
-        <main id="main-content" tabIndex={-1}>
+        <main id="main-content" ref={main} tabIndex={-1}>
           {state.kind === "loading" && (
             <section className="state-card card" role="status">
               <span className="eyebrow">GETTING YOUR KITCHEN READY</span>
@@ -286,6 +299,7 @@ export default function App() {
                 )
               }
               onSaved={(snapshot) => {
+                returnFocus.current = completed ? "profile" : "main";
                 setState((current) =>
                   current.kind === "ready" &&
                   current.session.userId === snapshot.profile.userId

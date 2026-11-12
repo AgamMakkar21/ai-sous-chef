@@ -146,8 +146,10 @@ p {
   font-weight: 600;
 }
 .tab[data-state="active"] {
-  color: var(--cp-accent);
+  color: var(--cp-text);
   background: var(--cp-accent-soft);
+  text-decoration: underline;
+  text-underline-offset: 0.35em;
 }
 .tab:not(:disabled):hover {
   background: var(--cp-surface-soft);
@@ -155,7 +157,7 @@ p {
 }
 .tab[data-state="active"]:hover {
   background: var(--cp-accent-soft);
-  color: var(--cp-accent);
+  color: var(--cp-text);
 }
 main {
   min-height: 60vh;
@@ -610,7 +612,11 @@ input[type="checkbox"] {
 .conversation-pager span,
 .turn-status {
   font-size: 0.75rem;
-  color: var(--cp-text-muted);
+  color: var(--cp-text-soft);
+}
+.conversation-choice[aria-current="true"] time,
+.conversation-choice[aria-current="true"] small {
+  color: var(--cp-text);
 }
 .conversation-pager {
   flex-wrap: wrap;
@@ -805,7 +811,7 @@ input[type="checkbox"] {
   display: inline-block;
   padding: 0.25rem 0.75rem;
   background: var(--cp-accent-soft);
-  color: var(--cp-accent);
+  color: var(--cp-text);
   border-radius: 0.5rem;
   font-weight: 600;
   font-size: 0.875rem;
@@ -833,6 +839,9 @@ input[type="checkbox"] {
   padding-block: 1.5rem;
   border-top: 1px solid var(--cp-border);
 }
+.history-detail .recipe-card a {
+  color: var(--cp-accent);
+}
 .rating-form fieldset {
   margin: 0;
   padding: 0;
@@ -855,7 +864,7 @@ input[type="checkbox"] {
   cursor: pointer;
 }
 .rating-options label:has(:checked) {
-  color: var(--cp-accent);
+  color: var(--cp-text);
   background: var(--cp-accent-soft);
   border-color: var(--cp-accent);
 }
