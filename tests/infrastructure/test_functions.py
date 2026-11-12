@@ -684,7 +684,7 @@ class FunctionsDeliveryTests(unittest.TestCase):
                 ),
                 patch.object(delivery, "worker_target", return_value=worker),
                 patch("urllib.request.build_opener", return_value=opener),
-                patch("scripts.deploy_dev.time.monotonic", side_effect=[0, 0, 301]),
+                patch("scripts.deploy_dev.time.monotonic", side_effect=[0, 0, 601]),
                 patch("scripts.deploy_dev.time.sleep"),
             ):
                 if mode == "valid":
@@ -696,6 +696,29 @@ class FunctionsDeliveryTests(unittest.TestCase):
                 else:
                     with self.assertRaises(delivery.DeliveryError):
                         delivery.worker_smoke()
+
+    def test_worker_smoke_allows_a_platform_cold_start_retry_beyond_five_minutes(self) -> None:
+        class Response(io.BytesIO):
+            def __init__(self) -> None:
+                super().__init__(b'{"status":"ok","scope":"host-only"}')
+                self.status = 200
+                self.headers = {"X-ASC-Commit": SHA}
+
+        worker, _, _ = self.fixtures()
+        opener = MagicMock()
+        opener.open.side_effect = [TimeoutError, Response()]
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.dict(os.environ, ENV | {"GITHUB_STEP_SUMMARY": str(Path(directory) / "summary")}),
+            patch.object(delivery, "worker_target", return_value=worker),
+            patch("urllib.request.build_opener", return_value=opener),
+            patch("scripts.deploy_dev.time.monotonic", side_effect=[0, 0, 350]),
+            patch("scripts.deploy_dev.time.sleep") as sleep,
+        ):
+            delivery.worker_smoke()
+            self.assertIn(SHA, (Path(directory) / "summary").read_text())
+        self.assertEqual(opener.open.call_count, 2)
+        sleep.assert_called_once_with(10)
 
     def test_workflow_requires_worker_delivery_in_existing_reviewed_job(self) -> None:
         workflow = (ROOT / ".github/workflows/deploy-dev.yml").read_text()

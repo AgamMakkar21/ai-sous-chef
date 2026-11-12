@@ -10,6 +10,11 @@ checks (at most 25 seconds of waiting). Every check still requires the exact
 merged commit and a current human peer approval of the final PR head; missing,
 stale, self, bot or dismissed approvals never authorize deployment. GitHub API
 errors remain explicit failures rather than being treated as missing evidence.
+Worker health polling allows up to ten minutes so the platform's initial
+230-second container warm-up and a subsequent startup retry can finish. It still
+requires the exact deployed commit and host-only response; a timeout, stale
+commit, redirect or malformed response never counts as success. Host health does
+not verify learning or Cosmos permissions.
 It does not provision the application foundation,
 promote production, implement agent prompts/tools, or claim the full MVP is ready.
 ASC-09 extends the same reviewed job to deploy the

@@ -942,7 +942,7 @@ def worker_smoke(
     expected_commit = commit() if expected_commit is None else expected_commit
     worker = worker_target(environment, allow_dispatch=allow_dispatch)
     opener = build_opener(NoRedirect())
-    deadline = time.monotonic() + 300
+    deadline = time.monotonic() + 600
     while time.monotonic() < deadline:
         try:
             with opener.open(
@@ -963,7 +963,7 @@ def worker_smoke(
             return
         except (HTTPError, URLError, TimeoutError, ValueError, DeliveryError):
             time.sleep(10)
-    raise DeliveryError("Worker host health failed after five minutes; inspect dev host logs.")
+    raise DeliveryError("Worker host health failed after ten minutes; inspect dev host logs.")
 
 
 def main() -> int:
