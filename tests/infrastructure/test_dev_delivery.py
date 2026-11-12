@@ -243,13 +243,15 @@ class DeliveryTests(unittest.TestCase):
             review = approval | change
             with (
                 patch.dict(os.environ, ENV),
+                patch("scripts.deploy_dev.time.sleep"),
                 patch.object(
                     delivery,
                     "command",
                     side_effect=[
                         json.dumps([pr]),
                         json.dumps([[review]]),
-                    ],
+                    ]
+                    * 6,
                 ),
             ):
                 if not change:
@@ -260,22 +262,77 @@ class DeliveryTests(unittest.TestCase):
         dismissed = approval | {"state": "DISMISSED"}
         with (
             patch.dict(os.environ, ENV),
+            patch("scripts.deploy_dev.time.sleep"),
             patch.object(
                 delivery,
                 "command",
                 side_effect=[
                     json.dumps([pr]),
                     json.dumps([[approval], [dismissed]]),
-                ],
+                ]
+                * 6,
             ),
         ):
             with self.assertRaises(delivery.DeliveryError):
                 delivery.reviewed()
 
     def test_direct_push_does_not_deploy(self) -> None:
-        with patch.dict(os.environ, ENV), patch.object(delivery, "command", return_value="[]"):
+        with (
+            patch.dict(os.environ, ENV),
+            patch.object(delivery, "command", return_value="[]") as command,
+            patch("scripts.deploy_dev.time.sleep") as sleep,
+        ):
             with self.assertRaises(delivery.DeliveryError):
                 delivery.reviewed()
+        self.assertEqual(command.call_count, 6)
+        self.assertEqual(sleep.call_count, 5)
+
+    def test_merge_and_review_evidence_can_become_visible_after_the_push(self) -> None:
+        pr = {
+            "number": 99,
+            "base": {"ref": "dev", "repo": {"full_name": ENV["GITHUB_REPOSITORY"]}},
+            "merged_at": "2026-10-15T12:00:00Z",
+            "merge_commit_sha": SHA,
+            "head": {"sha": HEAD},
+            "user": {"login": "author"},
+        }
+        approval = {
+            "user": {"login": "peer", "type": "User"},
+            "state": "APPROVED",
+            "commit_id": HEAD,
+            "author_association": "COLLABORATOR",
+        }
+        with (
+            patch.dict(os.environ, ENV),
+            patch("scripts.deploy_dev.time.sleep") as sleep,
+            patch.object(
+                delivery,
+                "command",
+                side_effect=[
+                    "[]",
+                    json.dumps([pr]),
+                    "[[]]",
+                    json.dumps([pr]),
+                    json.dumps([[approval]]),
+                ],
+            ) as command,
+        ):
+            delivery.reviewed()
+        self.assertEqual(command.call_count, 5)
+        self.assertEqual(sleep.call_args_list, [unittest.mock.call(5), unittest.mock.call(5)])
+
+    def test_review_api_failures_remain_explicit_without_retrying(self) -> None:
+        with (
+            patch.dict(os.environ, ENV),
+            patch("scripts.deploy_dev.time.sleep") as sleep,
+            patch.object(
+                delivery, "command", side_effect=delivery.DeliveryError("gh api failed")
+            ) as command,
+        ):
+            with self.assertRaisesRegex(delivery.DeliveryError, "gh api failed"):
+                delivery.reviewed()
+        command.assert_called_once()
+        sleep.assert_not_called()
 
     def test_manifest_rejects_latest_shared_names_missing_roles_and_bad_shapes(self) -> None:
         original = ENABLED_MANIFEST

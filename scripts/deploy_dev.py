@@ -131,17 +131,22 @@ def reviewed() -> None:
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
         raise DeliveryError("GITHUB_REPOSITORY is required.")
-    pulls = json.loads(command("gh", "api", f"repos/{repo}/commits/{commit()}/pulls"))
-    for pr in pulls:
-        if (
-            pr["base"]["ref"] == "dev"
-            and pr["base"]["repo"]["full_name"] == repo
-            and pr["merged_at"]
-            and pr["merge_commit_sha"] == commit()
-            and peer_approved(pr)
-        ):
-            print("Reviewed dev merge verified.")
-            return
+    attempts = 6
+    for attempt in range(attempts):
+        pulls = json.loads(command("gh", "api", f"repos/{repo}/commits/{commit()}/pulls"))
+        for pr in pulls:
+            if (
+                pr["base"]["ref"] == "dev"
+                and pr["base"]["repo"]["full_name"] == repo
+                and pr["merged_at"]
+                and pr["merge_commit_sha"] == commit()
+                and peer_approved(pr)
+            ):
+                print("Reviewed dev merge verified.")
+                return
+        if attempt + 1 < attempts:
+            print("Reviewed merge evidence is not yet visible; checking again in 5 seconds.")
+            time.sleep(5)
     raise DeliveryError("No merged dev PR with a current peer approval matches this commit.")
 
 
