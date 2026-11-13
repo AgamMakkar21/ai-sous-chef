@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 from pydantic import UUID4, AwareDatetime, Field
 
 from sous_chef.adapters.cosmos import CosmosRepository
-from sous_chef.domain.authorization import AuthenticatedUser
+from sous_chef.domain.authorization import AuthenticatedUser, UserDataDeleted
 from sous_chef.domain.cosmos import (
     CosmosError,
     CosmosFailure,
@@ -241,6 +241,8 @@ class LearningRecovery:
             # Leave time in the worker's 60-second storage scope for durable bookkeeping.
             async with asyncio.timeout(45):
                 await action()
+        except UserDataDeleted:
+            raise
         except Exception as error:
             transient, category = classify_failure(error)
             retry = transient and attempt.attempts < attempt.max_attempts

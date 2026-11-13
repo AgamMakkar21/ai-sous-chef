@@ -180,8 +180,16 @@ def test_replay_and_restart_count_each_feedback_once_and_preserve_explicit_inven
             )
             eligible = _eligible(OWNER, resolved, candidates, profile().explicit_preferences, NOW)
             assert len(eligible) == 1 and eligible[0].confidence == 0.75
-        batch_calls = [call for call in harness[0].calls if isinstance(call.body, list)]
-        assert len(batch_calls) == 2 and all(len(call.body) == 3 for call in batch_calls)
+        batch_calls = [
+            call
+            for call in harness[0].calls
+            if isinstance(call.body, list)
+            and any(
+                item.get("resourceBody", {}).get("role") == "feedbackApplication"
+                for item in call.body
+            )
+        ]
+        assert len(batch_calls) == 2 and all(len(call.body) == 4 for call in batch_calls)
         assert all("/RecipeHistory/" in call.path for call in batch_calls)
 
     asyncio.run(scenario())

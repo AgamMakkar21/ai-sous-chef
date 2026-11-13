@@ -39,7 +39,9 @@ async def _run(args: argparse.Namespace) -> dict[str, object]:
     )
     user = AuthenticatedUser(args.owner)
     async with open_cosmos(
-        settings, containers=(ProductContainer.RECIPE_HISTORY,), lifetime_seconds=30
+        settings,
+        containers=(ProductContainer.USERS, ProductContainer.RECIPE_HISTORY),
+        lifetime_seconds=30,
     ) as repository:
         recovery = LearningRecovery(repository)
         if args.replay:

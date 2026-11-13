@@ -1,3 +1,4 @@
+import asyncio
 import json
 from collections.abc import Iterator, Mapping
 from copy import deepcopy
@@ -11,6 +12,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 from httpx2 import Response
+from sous_chef.adapters.cosmos import open_cosmos
 from sous_chef.app import create_app
 from sous_chef.domain.authorization import AuthenticatedUser
 from sous_chef.settings import Settings
@@ -376,6 +378,49 @@ def test_verified_user_can_read_and_mutate_only_their_partition_despite_forged_h
         if key[1] == other.user.user_id
     } == before
     two_user_api.assert_partition(actor, since)
+
+
+@pytest.mark.parametrize("case", CASES, ids=lambda case: case.name)
+def test_deleted_owner_cannot_read_or_recreate_state_with_a_still_valid_token(
+    two_user_api: TwoUserApi, conversation_settings: Settings, case: EndpointCase
+) -> None:
+    api = two_user_api
+    actor, other = api.users
+    revision = (
+        api.transport.documents[("RecipeHistory", actor.user.user_id, actor.history_id)]["_etag"]
+        if case in (COOK_CASE, FEEDBACK_CASE)
+        else api.profile(actor)["_etag"]
+    )
+    untouched = {
+        key: deepcopy(value)
+        for key, value in api.transport.documents.items()
+        if key[1] == other.user.user_id
+    }
+
+    async def purge() -> None:
+        async with open_cosmos(conversation_settings, lifetime_seconds=60) as repository:
+            assert (await repository.purge_user(actor.user, uuid4())).complete
+
+    asyncio.run(purge())
+    remaining = deepcopy(api.transport.documents)
+    executions = len(api.executor.calls)
+    payload = deepcopy(case.body)
+    if payload is not None and payload.get("generatedRecipeId") == "{generated_recipe_id}":
+        payload["generatedRecipeId"] = actor.generated_recipe_id
+    response = api.client.request(
+        case.method,
+        actor.path(case),
+        headers={**actor.headers, "If-Match": revision, "Idempotency-Key": "after-deletion"},
+        json=payload,
+    )
+    assert_problem(response, 404, "not_found")
+    actor.assert_private(response)
+    other.assert_private(response)
+    assert api.transport.documents == remaining
+    assert len(api.executor.calls) == executions
+    assert {
+        key: value for key, value in api.transport.documents.items() if key[1] == other.user.user_id
+    } == untouched
 
 
 @pytest.mark.parametrize("case", FOREIGN_ID_CASES, ids=lambda case: case.name)

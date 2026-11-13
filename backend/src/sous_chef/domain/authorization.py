@@ -7,6 +7,10 @@ class OwnedResourceNotFound(Exception):
     """An absent resource and a resource owned by someone else are indistinguishable."""
 
 
+class UserDataDeleted(OwnedResourceNotFound):
+    """A permanent privacy tombstone prevents reads and reconstruction of this owner."""
+
+
 @dataclass(frozen=True)
 class AuthenticatedUser:
     user_id: str

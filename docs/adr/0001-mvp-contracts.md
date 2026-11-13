@@ -593,6 +593,12 @@ performance and reliability evidence before release.
 | Sensitive AI trace content | Disabled by default; explicit diagnostic opt-in only with protected RBAC, at most 7 days |
 | Product-data backups | Target maximum 7-day recovery retention; verify supported configuration and recovery behavior before release |
 
+ASC-50 preserves these defaults and adds a separately approved, default-off
+chat-retention setting plus a resumable single-user operator purge. Its
+[retention/deletion procedure](../data-retention.md) defines permanent
+pseudonymous anti-resurrection markers, processing-receipt retention,
+writer-upgrade prerequisites, and provider/backup/manual recovery steps.
+
 An authenticated deletion request is handled through a documented operator
 procedure, completed in primary stores within seven calendar
 days. Revoke access to selected data as soon as the request is validated.

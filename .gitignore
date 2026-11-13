@@ -24,3 +24,4 @@ worker/.python_packages/
 backend/src/sous_chef/_usda/
 artifacts/safety-evaluation/
 artifacts/quality-evaluation/
+artifacts/learning-evaluation/

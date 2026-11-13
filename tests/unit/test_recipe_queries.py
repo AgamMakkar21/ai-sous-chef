@@ -140,7 +140,14 @@ def test_owned_lists_are_concise_filtered_bounded_and_stable_across_tied_pages(
         pytest.fail("Recipe pagination did not terminate within the seeded record count.")
     assert actual == expected and len(actual) == len(set(actual))
     assert transport.documents == before and len(executor.calls) == calls
-    queries = transport.item_calls()[since:]
+    reads = transport.item_calls()[since:]
+    assert all(
+        call.method == "POST"
+        or call.method == "GET"
+        and call.path.endswith(f"/Users/docs/{OWNER.user_id}")
+        for call in reads
+    )
+    queries = [call for call in reads if call.method == "POST"]
     assert queries and all(call.method == "POST" and call.body.get("query") for call in queries)
     for call in queries:
         assert "/RecipeHistory/docs" in call.path
@@ -187,7 +194,9 @@ def test_detail_returns_only_the_stored_snapshot_even_after_source_and_profile_c
         assert private not in data
     assert transport.documents == before and len(executor.calls) == calls
     reads = transport.item_calls()[since:]
-    assert len(reads) == 1 and reads[0].method == "GET"
+    assert len(reads) == 2 and all(call.method == "GET" for call in reads)
+    assert reads[0].path.endswith(f"/Users/docs/{OWNER.user_id}")
+    assert reads[1].path.endswith(f"/RecipeHistory/docs/{record['id']}")
     assert NOTE not in caplog.text and expected_recipe["title"] not in caplog.text
 
 

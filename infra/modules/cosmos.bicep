@@ -24,6 +24,7 @@ var productContainers = [
       '/createdAt/?'
       '/turnIndex/?'
       '/status/?'
+      '/retentionExpiresAt/?'
     ]
     composites: [
       [
@@ -124,6 +125,7 @@ resource containers 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containe
   properties: {
     resource: {
       id: container.name
+      defaultTtl: container.name == 'ChatHistory' ? -1 : null
       partitionKey: {
         paths: ['/userId']
         kind: 'Hash'

@@ -15,6 +15,8 @@ from sous_chef.domain.context import (
     MAX_CONTEXT_EXCHANGES,
     MAX_CONTEXT_LEARNED,
     MAX_CONTEXT_TOKENS,
+    MIN_LEARNED_CONFIDENCE,
+    MIN_LEARNED_COOKED_SUPPORT,
     ContextExchange,
     ContextLimitExceeded,
     ContextPreference,
@@ -110,8 +112,8 @@ def _eligible(
         cooked = sum(evidence.cooked and evidence.direction == "support" for evidence in current)
         confidence = (3 + support) / (6 + support + opposition)
         if (
-            cooked < 2
-            or confidence < 0.65
+            cooked < MIN_LEARNED_COOKED_SUPPORT
+            or confidence < MIN_LEARNED_CONFIDENCE
             or conflicts_with_explicit(item.field, item.value, explicit)
         ):
             continue

@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import azure.functions as func
 import pytest
-from sous_chef.domain.authorization import AuthenticatedUser
+from sous_chef.domain.authorization import AuthenticatedUser, UserDataDeleted
 from sous_chef.domain.feedback import FeedbackRevision
 from sous_chef.services.recipe_lifecycle import _identity
 
@@ -184,6 +184,33 @@ def test_one_poison_or_processor_failure_does_not_skip_the_rest_of_a_batch(
     }
     assert "learning_batch_pending" in caplog.text
     assert "Private" not in caplog.text and OWNER not in caplog.text
+
+
+def test_deleted_user_delivery_is_ignored_without_quarantine_or_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handler = Mock(side_effect=[UserDataDeleted(), None])
+    quarantine = Mock()
+    batch = Mock()
+    event = Mock()
+    monkeypatch.setattr(worker, "learning_batch", batch)
+    monkeypatch.setattr(worker, "learning_event", event)
+    worker.process_batch([record(), record(owner="b" * 64)], handler, quarantine=quarantine)
+    assert handler.call_count == 2
+    quarantine.assert_not_called()
+    assert batch.call_args.args[0] == {
+        "received": 2,
+        "ignored": 1,
+        "dispatched": 1,
+        "invalid": 0,
+        "failed": 0,
+        "quarantined": 0,
+    }
+    event.assert_any_call(worker.Event.LEARNING_IGNORED)
+    assert all(
+        call.args[0] not in {worker.Event.LEARNING_FAILED, worker.Event.LEARNING_BATCH_PENDING}
+        for call in event.call_args_list
+    )
 
 
 def test_delivery_metadata_does_not_change_event_keys_but_owner_and_revision_do() -> None:

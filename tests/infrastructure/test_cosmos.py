@@ -53,7 +53,7 @@ class CosmosTests(unittest.TestCase):
         self.assertIn("'Disabled'", properties["publicNetworkAccess"])
         self.assertIn("parameters('approvedIpRanges')", str(properties["copy"]))
 
-    def test_product_partition_and_lease_separation_with_no_ttl(self) -> None:
+    def test_product_partition_separation_and_default_off_chat_item_ttl(self) -> None:
         resources = self.module["resources"]
         product = next(
             resource
@@ -75,7 +75,14 @@ class CosmosTests(unittest.TestCase):
                     "version": 2,
                 },
             )
-            self.assertNotIn("defaultTtl", stored)
+            if resource is product:
+                self.assertEqual(
+                    stored["defaultTtl"],
+                    "[if(equals(variables('productContainers')[copyIndex()].name, "
+                    "'ChatHistory'), -1, null())]",
+                )
+            else:
+                self.assertNotIn("defaultTtl", stored)
         self.assertEqual(
             [container["name"] for container in self.module["variables"]["productContainers"]],
             ["Users", "ChatHistory", "RecipeHistory"],
@@ -86,6 +93,7 @@ class CosmosTests(unittest.TestCase):
         for row in containers.values():
             self.assertNotIn("/id/?", row["paths"])
         chat = containers["ChatHistory"]
+        self.assertIn("/retentionExpiresAt/?", chat["paths"])
         recipe = containers["RecipeHistory"]
         for row in (chat, recipe):
             self.assertIn("/recordKind/?", row["paths"])

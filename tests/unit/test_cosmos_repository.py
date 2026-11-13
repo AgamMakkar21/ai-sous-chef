@@ -118,6 +118,7 @@ class Transport(AsyncHttpTransport[HttpRequest, AsyncHttpResponse]):
         self.retry_after = "1"
         self.revision = 0
         self.block_reads = 0
+        self.block_read_container: str | None = None
         self.read_count = 0
         self.barrier = asyncio.Event()
         self.bad_partition = False
@@ -219,6 +220,7 @@ class Transport(AsyncHttpTransport[HttpRequest, AsyncHttpResponse]):
                         "kind": "Hash",
                         "version": 2,
                     },
+                    **({"defaultTtl": -1} if container == "ChatHistory" else {}),
                     **self.container_overrides,
                 },
             )
@@ -236,21 +238,34 @@ class Transport(AsyncHttpTransport[HttpRequest, AsyncHttpResponse]):
                     key = (container, partition, document["id"])
                     status = 409 if key in self.documents else 201
                 else:
-                    assert kind == "Patch", operation
+                    assert kind in {"Patch", "Replace", "Delete"}, operation
                     key = (container, partition, operation["id"])
                     document = deepcopy(self.documents.get(key))
                     status = (
                         404
                         if document is None
                         else 200
-                        if operation["ifMatch"] == document["_etag"]
+                        if operation.get("ifMatch", document["_etag"]) == document["_etag"]
                         else 412
                     )
-                    if status == 200:
+                    condition = operation.get("resourceBody", {}).get("condition")
+                    if condition is not None:
+                        assert condition == "FROM c WHERE c.state = 'active'"
+                        if document is not None and document.get("state") != "active":
+                            status = 412
+                    if kind == "Patch" and len(operation["resourceBody"]["operations"]) > 10:
+                        status = 400
+                    if status == 200 and kind == "Patch":
                         assert document is not None
                         for patch in operation["resourceBody"]["operations"]:
                             assert patch["op"] == "set"
                             document[patch["path"][1:]] = patch["value"]
+                    elif status == 200 and kind == "Replace":
+                        document = deepcopy(operation["resourceBody"])
+                        assert document["userId"] == partition
+                    elif status == 200:
+                        status = 204
+                        document = None
                 if status >= 400:
                     return reply(
                         200,
@@ -260,8 +275,12 @@ class Transport(AsyncHttpTransport[HttpRequest, AsyncHttpResponse]):
                         ],
                     )
                 staged.append((key, document, status))
-            saved = []
+            saved: list[dict[str, Any]] = []
             for key, document, status in staged:
+                if status == 204:
+                    del self.documents[key]
+                    saved.append({"statusCode": 204})
+                    continue
                 self.revision += 1
                 stored = {**deepcopy(document), "_etag": f'"{self.revision}"'}
                 self.documents[key] = stored
@@ -275,6 +294,18 @@ class Transport(AsyncHttpTransport[HttpRequest, AsyncHttpResponse]):
                 self.empty_query_pages -= 1
                 return reply(200, {"Documents": []}, **{"x-ms-continuation": "0"})
             parameters = {item["name"]: item["value"] for item in body["parameters"]}
+            if "@protected" in parameters:
+                assert body["query"] == (
+                    "SELECT TOP 50 c.id, c.userId, c._etag FROM c WHERE c.id != @protected"
+                )
+                page = [
+                    {field: document[field] for field in ("id", "userId", "_etag")}
+                    for (name, owner, identifier), document in self.documents.items()
+                    if name == container
+                    and owner == partition
+                    and identifier != parameters["@protected"]
+                ][:50]
+                return reply(200, {"Documents": page, "_count": len(page)})
             items = [
                 deepcopy(document)
                 for (name, owner, _), document in self.documents.items()
@@ -282,6 +313,15 @@ class Transport(AsyncHttpTransport[HttpRequest, AsyncHttpResponse]):
                 and owner == partition
                 and document["recordKind"] == parameters["@kind"]
                 and document["createdAt"] <= parameters.get("@upper", "9999")
+                and (
+                    "@retainedAfter" not in parameters
+                    or document["createdAt"] > parameters["@retainedAfter"]
+                )
+                and (
+                    "@unexpiredAt" not in parameters
+                    or "retentionExpiresAt" not in document
+                    or document["retentionExpiresAt"] > parameters["@unexpiredAt"]
+                )
                 and (
                     "@conversation" not in parameters
                     or document.get("conversationId") == parameters["@conversation"]
@@ -343,7 +383,7 @@ class Transport(AsyncHttpTransport[HttpRequest, AsyncHttpResponse]):
         current = self.documents.get(key)
         if request.method == "GET":
             snapshot = deepcopy(current)
-            if self.block_reads:
+            if self.block_reads and self.block_read_container in {None, container}:
                 self.read_count += 1
                 if self.read_count == self.block_reads:
                     self.barrier.set()
@@ -365,6 +405,13 @@ class Transport(AsyncHttpTransport[HttpRequest, AsyncHttpResponse]):
         if request.method == "DELETE":
             del self.documents[key]
             return reply(204, {})
+        if request.method == "PUT":
+            self.revision += 1
+            current = {**deepcopy(body), "_etag": f'"{self.revision}"'}
+            self.documents[key] = current
+            if self.write_then_disconnect:
+                raise ServiceResponseError("secret-private-lost-replace-response")
+            return reply(200, current, etag=current["_etag"])
         assert request.method == "PATCH", call
         for operation in body["operations"]:
             assert operation["op"] == "set"
@@ -575,7 +622,11 @@ def test_real_sdk_pagination_is_bounded_partitioned_and_has_stable_ties(
             assert all(item.body["userId"] == ALICE.user_id for item in all_items)
             empty = await repository.query(BOB, HistoryQuery(kind="conversation"), PageRequest())
             assert not empty.items and empty.continuation_token is None
-            queries = [call for call in transport.item_calls("POST") if call.body.get("query")]
+            queries = [
+                call
+                for call in transport.item_calls("POST")
+                if isinstance(call.body, dict) and call.body.get("query")
+            ]
             assert len(queries) == 4
             assert all(call.headers["x-ms-max-item-count"] == "2" for call in queries)
             assert "c.id DESC" in queries[0].body["query"]
@@ -645,7 +696,7 @@ def test_throttle_guidance_wait_and_remaining_deadline_are_respected(
 
     asyncio.run(scenario())
     calls = transport.item_calls("GET")
-    assert len(calls) == 3
+    assert len(calls) == 4
     assert calls[1].at - calls[0].at >= 0.03
 
 
@@ -673,11 +724,13 @@ def test_committed_write_with_lost_response_is_not_replayed(
     harness: tuple[Transport, SyntheticCredential],
 ) -> None:
     transport, _ = harness
-    transport.write_then_disconnect = True
     item_id = uuid4()
 
     async def scenario() -> None:
         async with cosmos.open_cosmos(settings()) as repository:
+            await repository.create(ALICE, recipe())
+            transport.calls.clear()
+            transport.write_then_disconnect = True
             await repository.create(ALICE, recipe(item_id))
 
     with pytest.raises(CosmosError) as caught:
@@ -1009,7 +1062,14 @@ def test_exact_serialized_size_boundary_and_oversized_patch(
                     RecordPatch(etag=maximum.etag, fields={"text": "x" * (room + 1)}),
                 )
             assert caught.value.code == CosmosFailure.TOO_LARGE
-            assert len(transport.item_calls("PATCH")) == 1
+            patches = [
+                operation
+                for call in transport.item_calls("POST")
+                if isinstance(call.body, list)
+                for operation in call.body
+                if operation["operationType"] == "Patch" and operation["id"] == original.body["id"]
+            ]
+            assert len(patches) == 1
 
     asyncio.run(scenario())
 
@@ -1126,13 +1186,13 @@ def test_live_smoke_and_recoverable_cleanup_through_real_sdk_double(
     assert not transport.calls
     monkeypatch.setenv("ASC_APPROVE_COSMOS_SMOKE", "1")
     run_id = asyncio.run(run_smoke(configured))
-    assert not transport.documents
+    assert all(row["recordKind"] == "deletionGuard" for row in transport.documents.values())
     asyncio.run(cleanup_smoke(configured, run_id))
-    assert not transport.documents
+    assert all(row["recordKind"] == "deletionGuard" for row in transport.documents.values())
     transport.faults["DELETE"].append(403)
     with pytest.raises(CosmosSmokeError, match="Cleanup incomplete"):
         asyncio.run(run_smoke(configured))
-    assert len(transport.documents) == 1
+    assert sum(row["recordKind"] != "deletionGuard" for row in transport.documents.values()) == 1
 
 
 @pytest.mark.parametrize("status", [429, 500, 503])
@@ -1186,11 +1246,11 @@ def test_invalid_http_json_is_a_safe_distinct_failure(
         async with cosmos.open_cosmos(settings()) as repository:
             if write:
                 transport.malformed_json = True
-                await repository.create(ALICE, recipe())
+                await repository.create(ALICE, profile())
             else:
-                original = await repository.create(ALICE, recipe())
+                await repository.create(ALICE, profile())
                 transport.malformed_json = True
-                await repository.read(ALICE, RECIPES, str(original.body["id"]))
+                await repository.read(ALICE, USERS, ALICE.user_id)
 
     with pytest.raises(CosmosError) as caught:
         asyncio.run(scenario())
@@ -1244,7 +1304,7 @@ def test_malformed_returned_tokens_fail_safely(
         asyncio.run(scenario())
     assert caught.value.code == CosmosFailure.INVALID_RESULT
     assert token not in str(caught.value)
-    assert len(transport.item_calls("POST")) == 2
+    assert len(transport.item_calls("POST")) == 3
 
 
 @pytest.mark.parametrize(
@@ -1266,7 +1326,7 @@ def test_incompatible_container_metadata_fails_before_item_access(
         async with cosmos.open_cosmos(settings()):
             pytest.fail("An incompatible container cannot be used.")
 
-    with pytest.raises(ConfigurationError, match="Hash v2 and no TTL"):
+    with pytest.raises(ConfigurationError, match="Hash v2"):
         asyncio.run(scenario())
     assert not transport.item_calls()
     assert transport.closed and credential.closed
