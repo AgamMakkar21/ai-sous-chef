@@ -31,6 +31,7 @@ jobs:
             command: |
               python -m scripts.evaluate_safety
               python -m pytest
+              python -m scripts.evaluate_learning
           - check: build
             command: |
               python -m build --no-isolation
@@ -89,6 +90,14 @@ jobs:
         with:
           name: hard-safety-evaluation
           path: artifacts/safety-evaluation/report.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Retain synthetic preference experiment evidence
+        if: always() && matrix.check == 'tests'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: preference-learning-evaluation
+          path: artifacts/learning-evaluation/report.json
           if-no-files-found: error
           retention-days: 30
 

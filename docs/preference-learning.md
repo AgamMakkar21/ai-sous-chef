@@ -80,6 +80,13 @@ explicit precedence still apply. `LearningService.reconcile(user)` rebuilds the
 projection after deletion/recovery without invoking extraction; deletion
 orchestration itself remains ASC-50.
 
+The [ASC-57 bounded baseline](preference-learning-evaluation.md) exercises the
+real ledger and context gate with matched explicit-only/learned-enabled inputs.
+It records evidence precision, count correctness, confidence diagnostics,
+explicit precedence and unchanged fixed-response recommendation alignment.
+The existing two-support / 0.65 inclusion policy is pending independent review;
+offline replay does not establish live model improvement.
+
 ## Setup and verification
 
 Apply the reviewed Function Cosmos access template to grant its distinct managed
