@@ -127,6 +127,12 @@ class FunctionsInfrastructureTests(unittest.TestCase):
             self.assertNotIn(forbidden, json.dumps(self.access))
 
     def test_monitoring_is_connected_and_does_not_collect_payloads(self) -> None:
+        self.assertFalse(self.template["parameters"]["telemetryEnabled"]["defaultValue"])
+        site = resources(self.template, "Microsoft.Web/sites")[0]
+        settings = {s["name"]: s["value"] for s in site["properties"]["siteConfig"]["appSettings"]}
+        self.assertEqual(
+            settings["ASC_TELEMETRY_ENABLED"], "[string(parameters('telemetryEnabled'))]"
+        )
         diagnostic = resources(self.template, "Microsoft.Insights/diagnosticSettings")[0]
         self.assertIn("logAnalyticsResourceId", diagnostic["properties"]["workspaceId"])
         self.assertEqual(

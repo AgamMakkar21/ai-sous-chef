@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-from collections.abc import Awaitable, Callable, Coroutine, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import StrEnum
 from functools import wraps
 from math import isfinite
@@ -21,7 +22,7 @@ from opentelemetry.context import Context
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from sous_chef.settings import ConfigurationError, Settings
-from sous_chef.telemetry import ErrorCategory, trace_id
+from sous_chef.telemetry import ErrorCategory, Event, operational_event, trace_id
 
 if TYPE_CHECKING:
     from opentelemetry.sdk.metrics import MeterProvider
@@ -64,6 +65,10 @@ class Operation(StrEnum):
     SAFETY = "recipe.safety"
     PERSISTENCE = "chat.persistence"
     COSMOS = "cosmos.operation"
+    FEEDBACK = "feedback.persist"
+    LEARNING = "learning.process"
+    EXTRACTION = "learning.extract"
+    PROJECTION = "learning.project"
 
 
 class Telemetry:
@@ -89,9 +94,16 @@ class Telemetry:
         self.tokens = meter.create_counter("asc.model.tokens") if meter else None
         self.ru = meter.create_counter("asc.cosmos.request_charge", unit="{RU}") if meter else None
         self.throttles = meter.create_counter("asc.cosmos.throttle.count") if meter else None
+        self.learning_events = meter.create_counter("asc.learning.events") if meter else None
+        self.learning_lag = (
+            meter.create_histogram("asc.learning.processing_lag", unit="ms") if meter else None
+        )
+        self.learning_batches = (
+            meter.create_counter("asc.learning.batch.documents") if meter else None
+        )
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> Telemetry:
+    def from_settings(cls, settings: Settings, *, service_name: str = "ai-sous-chef") -> Telemetry:
         if not settings.telemetry_enabled:
             return cls()
         connection = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
@@ -116,7 +128,7 @@ class Telemetry:
         os.environ["OTEL_SDK_DISABLED"] = "false"
         resource = Resource(
             {
-                "service.name": "ai-sous-chef",
+                "service.name": service_name,
                 "service.instance.id": uuid4().hex,
                 "device.id": "ai-sous-chef",
                 "deployment.environment.name": settings.environment,
@@ -193,7 +205,9 @@ def fail(category: ErrorCategory) -> None:
 
 
 @contextmanager
-def operation(name: Operation, *, root: bool = False) -> Iterator[trace.Span]:
+def operation(
+    name: Operation, *, root: bool = False, links: Sequence[trace.Link] = ()
+) -> Iterator[trace.Span]:
     telemetry = _active.get()
     tracer = telemetry.tracer if telemetry is not None else trace.NoOpTracer()
     started = monotonic()
@@ -203,12 +217,21 @@ def operation(name: Operation, *, root: bool = False) -> Iterator[trace.Span]:
     with tracer.start_as_current_span(
         name.value,
         context=Context() if root else None,
+        links=links,
         kind=(
-            trace.SpanKind.SERVER
+            trace.SpanKind.CONSUMER
+            if name == Operation.LEARNING
+            else trace.SpanKind.SERVER
             if root
             else trace.SpanKind.CLIENT
             if name
-            in {Operation.FOUNDRY, Operation.COSMOS, Operation.USDA_SEARCH, Operation.USDA_PROFILE}
+            in {
+                Operation.FOUNDRY,
+                Operation.EXTRACTION,
+                Operation.COSMOS,
+                Operation.USDA_SEARCH,
+                Operation.USDA_PROFILE,
+            }
             else trace.SpanKind.INTERNAL
         ),
         record_exception=False,
@@ -267,6 +290,67 @@ def foundry_trace_headers() -> dict[str, str]:
     if _active.get() is not None:
         TraceContextTextMapPropagator().inject(headers)
     return headers
+
+
+def current_traceparent() -> str | None:
+    return foundry_trace_headers().get("traceparent")
+
+
+def trace_links(parent: object) -> tuple[trace.Link, ...]:
+    if not isinstance(parent, str) or not re.fullmatch(
+        r"00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}", parent
+    ):
+        return ()
+    context = TraceContextTextMapPropagator().extract({"traceparent": parent}, context=Context())
+    span_context = trace.get_current_span(context).get_span_context()
+    return (
+        (trace.Link(span_context, {"asc.link.type": "feedback_write"}),)
+        if span_context.is_valid
+        else ()
+    )
+
+
+def learning_event(
+    event: Event,
+    *,
+    category: ErrorCategory | None = None,
+    attempt: int | None = None,
+    generation: int | None = None,
+    contributions: int | None = None,
+    insights: int | None = None,
+) -> None:
+    operational_event(event, category=category, attempt=attempt, generation=generation)
+    span = trace.get_current_span()
+    span.set_attribute("asc.learning.result", event.value)
+    for name, value in (
+        ("attempt", attempt),
+        ("generation", generation),
+        ("contribution_count", contributions),
+        ("insight_count", insights),
+    ):
+        if type(value) is int and 0 <= value <= 2**63 - 1:
+            span.set_attribute(f"asc.learning.{name}", value)
+    telemetry = _active.get()
+    if telemetry is not None and telemetry.learning_events is not None:
+        attributes = {"asc.learning.event": event.value}
+        if category is not None:
+            attributes["error.type"] = category.value
+        telemetry.learning_events.add(1, attributes)
+
+
+def learning_batch(counts: Mapping[str, int]) -> None:
+    telemetry = _active.get()
+    if telemetry is not None and telemetry.learning_batches is not None:
+        for state in ("received", "ignored", "dispatched", "invalid", "failed", "quarantined"):
+            telemetry.learning_batches.add(counts[state], {"asc.learning.delivery_state": state})
+
+
+def processing_lag(observed_at: datetime) -> None:
+    lag = max(0, (datetime.now(UTC) - observed_at).total_seconds() * 1000)
+    trace.get_current_span().set_attribute("asc.learning.processing_lag_ms", lag)
+    telemetry = _active.get()
+    if telemetry is not None and telemetry.learning_lag is not None:
+        telemetry.learning_lag.record(lag)
 
 
 def model_usage(input_tokens: int, output_tokens: int) -> None:

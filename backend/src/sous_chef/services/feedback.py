@@ -3,6 +3,8 @@
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+from opentelemetry import trace
+
 from sous_chef.adapters.cosmos import open_cosmos
 from sous_chef.domain.authorization import AuthenticatedUser, OwnedResourceNotFound
 from sous_chef.domain.cosmos import (
@@ -28,12 +30,14 @@ from sous_chef.services.recipe_lifecycle import (
 )
 from sous_chef.settings import Settings
 from sous_chef.telemetry import new_trace_id, trace_id
+from sous_chef.tracing import Operation, current_traceparent, observed
 
 
 class FeedbackService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
+    @observed(Operation.FEEDBACK)
     async def submit(
         self,
         user: AuthenticatedUser,
@@ -83,6 +87,7 @@ class FeedbackService:
                         rating=request.rating,
                         note=request.note,
                         trace_id=trace_id.get() or new_trace_id(),
+                        trace_parent=current_traceparent(),
                         observed_at=datetime.now(UTC),
                     )
                     creates += (
@@ -117,4 +122,12 @@ class FeedbackService:
                             raise CosmosError(CosmosFailure.CONFLICT, error.operation_id) from None
                         raise
             result = await _result(repository, user, history_id)
-            return _history(result), result.etag
+            view = _history(result)
+            revision = view.feedback_revision
+            span = trace.get_current_span()
+            span.set_attribute(
+                "asc.feedback.id",
+                str(_identity(user, "recipe-feedback", f"{history_id}:{revision}")),
+            )
+            span.set_attribute("asc.feedback.revision", revision)
+            return view, result.etag

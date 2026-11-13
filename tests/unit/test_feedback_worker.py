@@ -1,5 +1,3 @@
-import json
-import logging
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
@@ -7,9 +5,10 @@ from unittest.mock import Mock
 
 import azure.functions as func
 import pytest
-from sous_chef.domain.authorization import AuthenticatedUser
+from sous_chef.domain.authorization import AuthenticatedUser, UserDataDeleted
 from sous_chef.domain.feedback import FeedbackRevision
 from sous_chef.services.recipe_lifecycle import _identity
+from sous_chef.telemetry import Event
 
 from worker import function_app as worker
 
@@ -137,20 +136,20 @@ def test_unrelated_records_and_processing_status_writes_never_invoke_processor()
     ],
 )
 def test_invalid_feedback_is_not_acknowledged_or_sent_to_extraction(
-    changes: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    changes: dict[str, Any], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     handler = Mock()
-    warning = Mock()
-    monkeypatch.setattr(logging, "warning", warning)
+    batch = Mock()
+    monkeypatch.setattr(worker, "learning_batch", batch)
     with pytest.raises(worker.FeedbackBatchFailed) as failure:
         worker.process_batch([record() | changes], handler)
     handler.assert_not_called()
     assert failure.value.__cause__ is None and failure.value.__suppress_context__
     assert "private" not in str(failure.value).lower()
-    message = warning.call_args.args[0]
-    assert OWNER not in message and "Private" not in message
-    logged = json.loads(message)
-    assert logged["invalid"] == 1 and logged["failed"] == 0
+    counts = batch.call_args.args[0]
+    assert counts["invalid"] == 1 and counts["failed"] == 0
+    assert "learning_batch_pending" in caplog.text
+    assert OWNER not in caplog.text and "Private" not in caplog.text
 
 
 @pytest.mark.parametrize("field", ["note", "supersedesFeedbackId", "historyId", "observedAt"])
@@ -164,21 +163,19 @@ def test_missing_required_feedback_fields_remain_pending(field: str) -> None:
 
 
 def test_one_poison_or_processor_failure_does_not_skip_the_rest_of_a_batch(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     handler = Mock(side_effect=[RuntimeError("Private exception and prompt"), None])
-    warning = Mock()
-    monkeypatch.setattr(logging, "warning", warning)
+    batch = Mock()
+    monkeypatch.setattr(worker, "learning_batch", batch)
     with pytest.raises(worker.FeedbackBatchFailed):
         worker.process_batch(
             [record() | {"note": 17}, record(), record(2)],
             handler,
         )
     assert [call.args[0].feedback_revision for call in handler.call_args_list] == [1, 2]
-    message = warning.call_args.args[0]
-    counts = json.loads(message)
+    counts = batch.call_args.args[0]
     assert counts == {
-        "event": "feedback_batch_pending",
         "received": 3,
         "ignored": 0,
         "dispatched": 1,
@@ -186,7 +183,35 @@ def test_one_poison_or_processor_failure_does_not_skip_the_rest_of_a_batch(
         "failed": 1,
         "quarantined": 0,
     }
-    assert "Private" not in message and OWNER not in message
+    assert "learning_batch_pending" in caplog.text
+    assert "Private" not in caplog.text and OWNER not in caplog.text
+
+
+def test_deleted_user_delivery_is_ignored_without_quarantine_or_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handler = Mock(side_effect=[UserDataDeleted(), None])
+    quarantine = Mock()
+    batch = Mock()
+    event = Mock()
+    monkeypatch.setattr(worker, "learning_batch", batch)
+    monkeypatch.setattr(worker, "learning_event", event)
+    worker.process_batch([record(), record(owner="b" * 64)], handler, quarantine=quarantine)
+    assert handler.call_count == 2
+    quarantine.assert_not_called()
+    assert batch.call_args.args[0] == {
+        "received": 2,
+        "ignored": 1,
+        "dispatched": 1,
+        "invalid": 0,
+        "failed": 0,
+        "quarantined": 0,
+    }
+    event.assert_any_call(Event.LEARNING_IGNORED)
+    assert all(
+        call.args[0] not in {Event.LEARNING_FAILED, Event.LEARNING_BATCH_PENDING}
+        for call in event.call_args_list
+    )
 
 
 def test_delivery_metadata_does_not_change_event_keys_but_owner_and_revision_do() -> None:

@@ -1,4 +1,4 @@
-# Durable preference learning (ASC-48 / #42, ASC-49 / #46)
+# Durable preference learning (ASC-48 / #42, ASC-49 / #46, ASC-53 / #56)
 
 `LearningService` connects admitted feedback to the existing GPT-5.1 nano
 extractor. All point reads and writes use the change-feed record's validated
@@ -111,8 +111,8 @@ each storage operation retains its existing at-most-five-second budget and
 extraction retains its own 30-second limit. A learning attempt has a 45-second
 deadline inside the storage scope, leaving time for recovery bookkeeping.
 The existing private SDK diagnostic guard covers storage as well as model I/O;
-Cosmos HTTP logging/tracing are disabled. Notes, owner IDs and ledger contents
-are not operational telemetry.
+Cosmos HTTP logging/tracing are disabled. Notes, owner IDs, preferences and model
+content are not operational telemetry.
 
 Run in the existing WSL Python 3.12 environment:
 
@@ -236,8 +236,79 @@ or change the lease prefix to recover one item. The
 and single-user deletion. Tombstoned owners cannot be replayed; workers acknowledge
 their late feedback/replay/quarantine without recreating data.
 
-`learning_recovery` warnings contain only state, fixed category and claimed count.
-`feedback_batch_pending` contains only aggregate received/ignored/dispatched/
-invalid/failed/quarantined counts. Investigate repeated pending batches as storage,
-configuration, active-claim or due-time issues; a terminal model failure alone
-does not keep a batch pending. Inspect storage records for event-level diagnosis.
+Typed `learning_*` operational events contain only the fixed event/category,
+correlation ID and applicable attempt/generation counts. `learning_batch_pending`
+means storage, configuration, an active claim or a due time still prevents batch
+progress; a durable terminal model failure alone does not keep a batch pending.
+Inspect storage records for authoritative recovery state.
+
+## Follow feedback through asynchronous telemetry
+
+Application-owned worker export defaults to **off**. After review, set
+`telemetryEnabled=true` in the Function infrastructure deployment
+(`ASC_TELEMETRY_ENABLED=true` at runtime). Use the existing Application Insights
+connection, Entra ingestion authentication and scoped Monitoring Metrics Publisher
+grant; no new role assignment is needed. The provider is reused for the worker
+process and exports with service name `ai-sous-chef-learning`. The existing
+`ASC_TELEMETRY_SAMPLE_RATIO` controls trace sampling; metrics are not sampled.
+This change does not enable export or change any live deployment.
+
+Enable the API's existing telemetry opt-in too for a producer span. New immutable
+feedback revisions store its W3C `traceParent` alongside the existing application
+`traceId`. Every admitted delivery starts a **new consumer trace** linked to that
+producer span, never a continuously open request parent. Replay deliveries reload
+the original feedback context when tracing is enabled. Historical revisions with
+no valid context still process normally and retain opaque feedback/version
+correlation without a link.
+
+Use the trace attributes `asc.feedback.id`, `asc.feedback.revision`,
+`asc.event.schema_version`, `asc.learning.policy_version` and, when available,
+`asc.learning.event_key`, `asc.learning.attempt` and `asc.learning.generation`.
+Feedback UUIDs are **pseudonymous**, not anonymous; keep access and retention
+subject to the existing telemetry policy. Owner keys, notes, preference values,
+quotes, prompts, model output and exception text are never trace attributes or
+metric labels. Only W3C trace context, not baggage or tracestate, reaches Foundry.
+
+`learning.extract` measures the actual model call and records validated token
+counts. `learning.project` measures reduction/projection; `learning_user_updated`
+appears only after a real conditional user patch. `learning_ledger_committed`
+appears only after the evidence transaction commits, with its contribution count.
+Duplicate completed deliveries emit `learning_deduplicated`, not another commit.
+`learning_schema_rejected`, `learning_retry`, `learning_deferred`,
+`learning_failed`, `learning_quarantined`, `learning_replay` and
+`learning_stale_replay` distinguish failure and recovery outcomes.
+`asc.learning.result`, not a successful handler return, describes the business
+outcome; recovery can durably acknowledge a failed event without applying it.
+
+Metrics use bounded event/category/operation labels, never feedback or owner IDs:
+
+| Metric | Meaning |
+| --- | --- |
+| `asc.learning.events` | Eligibility, deduplication, commit, update and recovery events |
+| `asc.learning.processing_lag` | Delivery time minus persisted feedback `observedAt`, in milliseconds; retries include their wait |
+| `asc.learning.batch.documents` | Aggregate received/ignored/dispatched/invalid/failed/quarantined counts; dispatch is not proof of application |
+| `asc.operation.duration` | Existing latency histogram, including extraction and projection operations |
+| `asc.model.tokens` | Existing input/output token counters, including extraction |
+
+For example, in the existing Application Insights workspace:
+
+```kusto
+union AppRequests, AppDependencies
+| where Name in ("feedback.persist", "learning.process")
+| where tostring(Properties["asc.feedback.id"]) == "<opaque-feedback-uuid>"
+| project TimeGenerated, OperationId, ParentId, Name, Properties
+| order by TimeGenerated asc
+```
+
+The UUID identifies producer/consumer spans; use the consumer `OperationId` to
+find its extraction, Cosmos and projection children. The consumer's span link
+identifies the producer trace/span when both were sampled. An absent span or link
+is not proof of missing processing: sampling, historical metadata and exporter
+availability affect telemetry. Durable receipts and recovery state remain the
+source of truth.
+
+Run `python -m pytest tests\integration\test_learning_telemetry.py` for the
+synthetic API-to-worker acceptance: one applied insight, duplicate delivery,
+schema failure, authorized replay, a new semantic revision, quarantine and
+concurrency retry. These tests use real pinned SDKs over synthetic transports;
+they do not verify live Azure ingestion.
