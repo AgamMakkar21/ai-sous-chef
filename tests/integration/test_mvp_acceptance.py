@@ -34,7 +34,7 @@ from test_profile_api import ME, document, onboard, preferences, signed_token
 from test_recipe_chat import combined_settings as combined_settings
 from test_recipe_chat import recipe_settings as recipe_settings
 from test_recipe_lifecycle import RECIPES, accept, cook
-from test_web_grounding import CombinedHarness
+from test_web_grounding import CombinedHarness, prompt_context
 
 from worker import extraction
 from worker import function_app as worker
@@ -51,7 +51,7 @@ class JourneyAgents(CombinedHarness):
         payload = json.loads(request.content)
         kind = self.request_kind(payload)
         if kind == "function" and isinstance(payload["input"], str):
-            self.data = RequestContext.model_validate_json(payload["input"])
+            self.data = prompt_context(payload["input"])
             self.contexts.append(self.data)
         elif kind == "combined":
             self.combined["output"][0]["arguments"] = json.dumps(
