@@ -28,6 +28,7 @@ class FeedbackRevision(LifecycleModel):
     provenance: Literal["explicit_user_action"] = "explicit_user_action"
     processing_status: Literal["pending"] = "pending"
     trace_id: str = Field(pattern=r"^[0-9a-f]{32}$", repr=False)
+    trace_parent: str | None = Field(default=None, repr=False)
     observed_at: AwareDatetime
 
 

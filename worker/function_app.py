@@ -1,22 +1,29 @@
 """Feedback-only admission and durable preference application."""
 
 import asyncio
+import atexit
 import hashlib
 import json
-import logging
 import os
 import re
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from uuid import UUID
 
 import azure.functions as func
+from opentelemetry import trace
 from sous_chef.adapters.cosmos import open_cosmos
 from sous_chef.domain.authorization import AuthenticatedUser
 from sous_chef.domain.cosmos import ProductContainer
-from sous_chef.domain.extraction import ExtractionRequest, ExtractionResult
+from sous_chef.domain.extraction import (
+    EXTRACTION_POLICY_VERSION,
+    ExtractionRequest,
+    ExtractionResult,
+)
 from sous_chef.services.learning import LearningService
 from sous_chef.services.learning_recovery import (
     LearningPending,
@@ -27,6 +34,22 @@ from sous_chef.services.learning_recovery import (
     replay_id,
 )
 from sous_chef.settings import Settings
+from sous_chef.telemetry import (
+    ErrorCategory,
+    Event,
+    configure_safe_telemetry,
+    new_trace_id,
+    trace_id,
+)
+from sous_chef.tracing import (
+    Operation,
+    Telemetry,
+    learning_batch,
+    learning_event,
+    operation,
+    processing_lag,
+    trace_links,
+)
 
 from worker.extraction import ExtractionConfig, PreferenceExtractor, private_sdk_diagnostics
 
@@ -187,6 +210,55 @@ def _settings() -> Settings:
     )
 
 
+@lru_cache(maxsize=1)
+def _telemetry() -> Telemetry:
+    configure_safe_telemetry()
+    telemetry = Telemetry.from_settings(_settings(), service_name="ai-sous-chef-learning")
+    atexit.register(telemetry.shutdown)
+    return telemetry
+
+
+def _annotate_feedback(document: Mapping[str, object]) -> None:
+    span = trace.get_current_span()
+    try:
+        identifier = _uuid(document.get("feedbackId"))
+    except InvalidFeedback:
+        pass
+    else:
+        span.set_attribute("asc.feedback.id", identifier)
+    revision = document.get("feedbackRevision")
+    if type(revision) is int and 1 <= revision <= 2**63 - 1:
+        span.set_attribute("asc.feedback.revision", revision)
+    version = document.get("schemaVersion")
+    if type(version) is int and 0 <= version <= 2**63 - 1:
+        span.set_attribute("asc.event.schema_version", version)
+    span.set_attribute("asc.learning.policy_version", EXTRACTION_POLICY_VERSION)
+    try:
+        observed_at = _timestamp(document.get("observedAt"))
+    except InvalidFeedback:
+        pass
+    else:
+        processing_lag(observed_at)
+
+
+@contextmanager
+def _delivery(document: Mapping[str, object]) -> Iterator[None]:
+    token = trace_id.set(new_trace_id())
+    try:
+        with operation(
+            Operation.LEARNING, root=True, links=trace_links(document.get("traceParent"))
+        ) as span:
+            context = span.get_span_context()
+            if context.is_valid:
+                correlation = f"{context.trace_id:032x}"
+                trace_id.set(correlation)
+                span.set_attribute("asc.correlation_id", correlation)
+            _annotate_feedback(document)
+            yield
+    finally:
+        trace_id.reset(token)
+
+
 class _EnvironmentExtractor:
     async def extract(self, request: ExtractionRequest) -> ExtractionResult:
         return await PreferenceExtractor(ExtractionConfig.from_environment()).extract(request)
@@ -208,6 +280,12 @@ async def _process_learning(
         lifetime_seconds=60,
     ) as repository:
         user = AuthenticatedUser(owner)
+        if generation is not None and trace.get_current_span().get_span_context().is_valid:
+            source = await repository.read(user, ProductContainer.RECIPE_HISTORY, str(feedback_id))
+            if source is not None:
+                _annotate_feedback(source.body)
+                for link in trace_links(source.body.get("traceParent")):
+                    trace.get_current_span().add_link(link.context, link.attributes)
 
         async def apply() -> None:
             await LearningService(repository, _EnvironmentExtractor()).process(user, feedback_id)
@@ -298,35 +376,57 @@ def process_batch(
 
     for document in documents:
         counts["received"] += 1
-        try:
-            replay = eligible_replay(document)
-            event = eligible_feedback(document)
-        except Exception:
-            counts["invalid"] += 1
-            pending = not persist_quarantine(document) or pending
-            continue
-        if event is None and replay is None:
+        if (
+            document.get("recordKind") != "feedbackRevision"
+            and document.get("role") != "learningReplay"
+        ):
             counts["ignored"] += 1
+            learning_event(Event.LEARNING_IGNORED)
             continue
-        try:
-            if replay is not None:
-                if replay_processor is None:
-                    raise LearningPending
-                replay_processor(replay)
-            elif event is not None:
-                processor(event)
-            counts["dispatched"] += 1
-        except Exception as error:
-            if (
-                not isinstance(error, LearningPending)
-                and not classify_failure(error)[0]
-                and persist_quarantine(document)
-            ):
+        with _delivery(document):
+            try:
+                replay = eligible_replay(document)
+                event = eligible_feedback(document)
+            except Exception:
+                counts["invalid"] += 1
+                learning_event(Event.LEARNING_INVALID, category=ErrorCategory.INVALID_EVENT)
+                pending = not persist_quarantine(document) or pending
                 continue
-            counts["failed"] += 1
-            pending = True
+            if event is None and replay is None:
+                counts["ignored"] += 1
+                learning_event(Event.LEARNING_IGNORED)
+                continue
+            try:
+                if replay is not None:
+                    learning_event(Event.LEARNING_REPLAY, generation=replay.replay.generation)
+                    if replay_processor is None:
+                        raise LearningPending
+                    replay_processor(replay)
+                elif event is not None:
+                    trace.get_current_span().set_attribute(
+                        "asc.learning.event_key", event.event_key
+                    )
+                    learning_event(Event.LEARNING_ELIGIBLE)
+                    processor(event)
+                counts["dispatched"] += 1
+            except Exception as error:
+                transient, category = classify_failure(error)
+                if not isinstance(error, LearningPending):
+                    learning_event(
+                        Event.LEARNING_RETRY if transient else Event.LEARNING_FAILED,
+                        category=ErrorCategory(category),
+                    )
+                if (
+                    not isinstance(error, LearningPending)
+                    and not transient
+                    and persist_quarantine(document)
+                ):
+                    continue
+                counts["failed"] += 1
+                pending = True
+    learning_batch(counts)
     if pending:
-        logging.warning(json.dumps({"event": "feedback_batch_pending", **counts}))
+        learning_event(Event.LEARNING_BATCH_PENDING, category=ErrorCategory.LEARNING_PENDING)
         raise FeedbackBatchFailed from None
 
 
@@ -348,12 +448,13 @@ def process_batch(
 )
 def feedback_change_feed(documents: func.DocumentList) -> None:
     validate_configuration()
-    process_batch(
-        documents,
-        process_feedback,
-        quarantine=quarantine_feedback,
-        replay_processor=process_replay,
-    )
+    with _telemetry().activate():
+        process_batch(
+            documents,
+            process_feedback,
+            quarantine=quarantine_feedback,
+            replay_processor=process_replay,
+        )
 
 
 def validate_configuration() -> None:

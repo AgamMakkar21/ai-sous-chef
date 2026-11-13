@@ -46,6 +46,8 @@ from sous_chef.domain.learning import (
 from sous_chef.domain.profiles import require_onboarding
 from sous_chef.services.profiles import _view as profile_view
 from sous_chef.services.recipe_lifecycle import _history, _identity
+from sous_chef.telemetry import Event
+from sous_chef.tracing import Operation, learning_event, observed
 
 HISTORY = ProductContainer.RECIPE_HISTORY
 USERS = ProductContainer.USERS
@@ -320,12 +322,15 @@ class LearningService:
                     window=transition,
                     source=record,
                 )
+                learning_event(Event.LEARNING_LEDGER_COMMITTED, contributions=len(contributions))
         elif (
             existing.body["recordKind"] != "processing"
             or existing.body.get("role") != "feedbackApplication"
             or _parse(LearningReceipt, existing).source.feedback_id != feedback_id
         ):
             raise _invalid()
+        else:
+            learning_event(Event.LEARNING_DEDUPLICATED, contributions=0)
         await self.reconcile(user, now=now)
         source = await self._source(user, feedback_id)
         if source is not None and source[0].body.get("processingStatus") != "completed":
@@ -336,6 +341,7 @@ class LearningService:
                 RecordPatch(etag=source[0].etag, fields={"processingStatus": "completed"}),
             )
 
+    @observed(Operation.PROJECTION)
     async def reconcile(
         self, user: AuthenticatedUser, *, now: datetime | None = None
     ) -> tuple[ResolvedPreference, ...]:
@@ -375,6 +381,7 @@ class LearningService:
             await self.repository.patch(
                 user, USERS, user.user_id, RecordPatch(etag=profile.etag, fields=fields)
             )
+            learning_event(Event.LEARNING_USER_UPDATED, insights=len(resolved))
         return resolved
 
 

@@ -54,6 +54,14 @@ from sous_chef.domain.extraction import (
     ExtractionResult,
     ExtractionSource,
 )
+from sous_chef.telemetry import ErrorCategory, Event
+from sous_chef.tracing import (
+    Operation,
+    foundry_trace_headers,
+    learning_event,
+    model_usage,
+    observed,
+)
 
 INSTRUCTIONS = """Preference extraction policy v1.
 You propose learned preferences only. Never change explicit facts, allergies, dietary
@@ -394,6 +402,7 @@ class PreferenceExtractor:
         self.config = config
         self._factory = client_factory or _project_client
 
+    @observed(Operation.EXTRACTION)
     async def extract(self, request: ExtractionRequest) -> ExtractionResult:
         _guard_sdk_diagnostics()
         token = _extracting.set(True)
@@ -404,7 +413,6 @@ class PreferenceExtractor:
             ):
                 if os.environ.get(name, "false").casefold() not in ("false", "0"):
                     raise ExtractionError(ExtractionFailure.CONFIGURATION)
-            os.environ["OTEL_SDK_DISABLED"] = "true"
             async with asyncio.timeout(ATTEMPT_TIMEOUT_SECONDS):
                 payload, sources, schema = await asyncio.to_thread(_bounded_payload, request)
                 async with self._factory(self.config) as client:
@@ -427,8 +435,13 @@ class PreferenceExtractor:
                         truncation="disabled",
                         reasoning={"effort": "low"},
                         max_output_tokens=MAX_EXTRACTION_OUTPUT_TOKENS,
-                        extra_headers={"X-Client-Request-Id": str(request.operation_id)},
+                        extra_headers={
+                            "X-Client-Request-Id": str(request.operation_id),
+                            **foundry_trace_headers(),
+                        },
                     )
+                    if response.usage is not None:
+                        model_usage(response.usage.input_tokens, response.usage.output_tokens)
                     return _result(response, request, sources, self.config)
         except (TimeoutError, APITimeoutError):
             raise ExtractionError(ExtractionFailure.TIMEOUT) from None
@@ -451,6 +464,9 @@ class PreferenceExtractor:
         except (APIConnectionError, ServiceRequestError, ServiceResponseError, OSError):
             raise ExtractionError(ExtractionFailure.UNAVAILABLE) from None
         except (APIResponseValidationError, ValueError, RecursionError):
+            learning_event(
+                Event.LEARNING_SCHEMA_REJECTED, category=ErrorCategory.EXTRACTION_INVALID_RESULT
+            )
             raise ExtractionError(ExtractionFailure.INVALID_RESULT) from None
         finally:
             _extracting.reset(token)

@@ -19,6 +19,9 @@ param logAnalyticsName string
 @description('Existing owner-approved delegated subnet; required for a private-only Cosmos account.')
 param integrationSubnetResourceId string = ''
 
+@description('Reviewed opt-in to app-owned asynchronous learning telemetry.')
+param telemetryEnabled bool = false
+
 var namePrefix = 'ai-sous-chef-${environment}'
 var tags = {
   project: 'ai-sous-chef'
@@ -50,6 +53,7 @@ module worker 'modules/functions.bicep' = {
     applicationInsightsName: insights.name
     logAnalyticsResourceId: workspace.id
     integrationSubnetResourceId: integrationSubnetResourceId
+    telemetryEnabled: telemetryEnabled
   }
 }
 

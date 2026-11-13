@@ -85,6 +85,17 @@ class ErrorCategory(StrEnum):
     RECIPE_PROSE = "recipe_prose_unsupported"
     RECIPE_COOKING = "recipe_cooking_rejected"
     RECIPE_PROFILE = "recipe_profile_unavailable"
+    EXTRACTION_CONFIGURATION = "extraction_configuration"
+    EXTRACTION_CONTEXT_LIMIT = "extraction_context_limit"
+    EXTRACTION_AUTHENTICATION = "extraction_authentication"
+    EXTRACTION_THROTTLED = "extraction_throttled"
+    EXTRACTION_TIMEOUT = "extraction_timeout"
+    EXTRACTION_INVALID_RESULT = "extraction_invalid_result"
+    EXTRACTION_UNAVAILABLE = "extraction_unavailable"
+    EXTRACTION_REJECTED = "extraction_rejected"
+    LEARNING_PENDING = "learning_pending"
+    ATTEMPT_ABANDONED = "attempt_abandoned"
+    INVALID_EVENT = "invalid_event"
 
 
 class Event(StrEnum):
@@ -109,6 +120,22 @@ class Event(StrEnum):
     USDA_COMPLETED = "usda_completed"
     USDA_UNAVAILABLE = "usda_unavailable"
     USDA_FAILED = "usda_failed"
+    LEARNING_ELIGIBLE = "learning_eligible"
+    LEARNING_IGNORED = "learning_ignored"
+    LEARNING_INVALID = "learning_invalid"
+    LEARNING_ATTEMPT = "learning_attempt"
+    LEARNING_DEFERRED = "learning_deferred"
+    LEARNING_LEDGER_COMMITTED = "learning_ledger_committed"
+    LEARNING_DEDUPLICATED = "learning_deduplicated"
+    LEARNING_USER_UPDATED = "learning_user_updated"
+    LEARNING_RETRY = "learning_retry"
+    LEARNING_FAILED = "learning_failed"
+    LEARNING_COMPLETED = "learning_completed"
+    LEARNING_REPLAY = "learning_replay"
+    LEARNING_STALE_REPLAY = "learning_stale_replay"
+    LEARNING_QUARANTINED = "learning_quarantined"
+    LEARNING_SCHEMA_REJECTED = "learning_schema_rejected"
+    LEARNING_BATCH_PENDING = "learning_batch_pending"
 
 
 @dataclass(frozen=True)
@@ -121,6 +148,8 @@ class _OperationalEvent:
     agent_name: str | None = None
     agent_version: str | None = None
     agent_principal_id: str | None = None
+    attempt: int | None = None
+    generation: int | None = None
 
     def serialize(self) -> str:
         fields: dict[str, str | int | float] = {"event": self.event.value}
@@ -132,6 +161,10 @@ class _OperationalEvent:
             fields["status"] = self.status
         if self.duration_ms is not None:
             fields["duration_ms"] = round(self.duration_ms, 2)
+        if self.attempt is not None:
+            fields["attempt"] = self.attempt
+        if self.generation is not None:
+            fields["generation"] = self.generation
         if self.event in {Event.ORCHESTRATOR_INVOKED, Event.RECIPE_INVOKED}:
             fields["agent_role"] = (
                 "orchestrator" if self.event == Event.ORCHESTRATOR_INVOKED else "recipe_nutrition"
@@ -155,11 +188,18 @@ def operational_event(
     agent_name: str | None = None,
     agent_version: str | None = None,
     agent_principal_id: str | None = None,
+    attempt: int | None = None,
+    generation: int | None = None,
 ) -> None:
     if status is not None and not 100 <= status <= 599:
         raise ValueError("Operational status must be an HTTP status code.")
     if duration_ms is not None and (not isfinite(duration_ms) or duration_ms < 0):
         raise ValueError("Operational duration must be finite and nonnegative.")
+    if any(
+        value is not None and (type(value) is not int or not 0 <= value <= 2**63 - 1)
+        for value in (attempt, generation)
+    ):
+        raise ValueError("Operational learning counts must be bounded nonnegative integers.")
     if event in {Event.ORCHESTRATOR_INVOKED, Event.RECIPE_INVOKED}:
         if (
             agent_name is None
@@ -187,7 +227,14 @@ def operational_event(
         }
         else logging.INFO
     )
-    if event in {Event.READINESS_UNAVAILABLE, Event.READINESS_TIMEOUT}:
+    if event in {
+        Event.READINESS_UNAVAILABLE,
+        Event.READINESS_TIMEOUT,
+        Event.LEARNING_BATCH_PENDING,
+        Event.LEARNING_RETRY,
+        Event.LEARNING_FAILED,
+        Event.LEARNING_QUARANTINED,
+    }:
         level = logging.WARNING
     logging.getLogger("sous_chef.operational").log(
         level,
@@ -200,6 +247,8 @@ def operational_event(
             agent_name,
             agent_version,
             agent_principal_id,
+            attempt,
+            generation,
         ),
     )
     span = trace.get_current_span()

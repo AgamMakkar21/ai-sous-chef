@@ -3,7 +3,6 @@
 import asyncio
 import hashlib
 import json
-import logging
 import os
 import re
 from collections.abc import Awaitable, Callable, Mapping
@@ -27,6 +26,8 @@ from sous_chef.domain.extraction import ExtractionError, ExtractionFailure, Extr
 from sous_chef.services.learning import HISTORY, _invalid, _parse
 from sous_chef.services.recipe_lifecycle import _identity
 from sous_chef.settings import ConfigurationError
+from sous_chef.telemetry import ErrorCategory, Event
+from sous_chef.tracing import learning_event
 
 type Failure = (
     ExtractionFailure
@@ -75,6 +76,8 @@ class LearningReplay(ExtractionModel):
 
 
 class LearningPending(RuntimeError):
+    code = ErrorCategory.LEARNING_PENDING
+
     def __init__(self) -> None:
         super().__init__("Learning delivery remains pending.")
 
@@ -107,16 +110,19 @@ def classify_failure(error: Exception) -> tuple[bool, Failure]:
     return False, "internal_error"
 
 
-def _report(state: str, category: Failure | None, attempts: int = 0) -> None:
-    logging.warning(
-        json.dumps(
-            {
-                "event": "learning_recovery",
-                "state": state,
-                "error_category": category,
-                "attempts": attempts,
-            }
-        )
+def _report(
+    state: str, category: Failure | None, attempts: int = 0, generation: int | None = None
+) -> None:
+    learning_event(
+        {
+            "retry": Event.LEARNING_RETRY,
+            "failed": Event.LEARNING_FAILED,
+            "quarantined": Event.LEARNING_QUARANTINED,
+            "completed": Event.LEARNING_COMPLETED,
+        }[state],
+        category=ErrorCategory(category) if category is not None else None,
+        attempt=attempts,
+        generation=generation,
     )
 
 
@@ -189,10 +195,25 @@ class LearningRecovery:
         else:
             record, attempt = found
             if generation is not None and generation != attempt.generation:
+                learning_event(
+                    Event.LEARNING_STALE_REPLAY, generation=generation, attempt=attempt.attempts
+                )
                 return
             if attempt.state in {"completed", "failed"}:
+                if attempt.state == "completed":
+                    learning_event(
+                        Event.LEARNING_DEDUPLICATED,
+                        attempt=attempt.attempts,
+                        generation=attempt.generation,
+                        contributions=0,
+                    )
+                else:
+                    _report("failed", attempt.error_category, attempt.attempts, attempt.generation)
                 return
             if started_at < attempt.available_at:
+                learning_event(
+                    Event.LEARNING_DEFERRED, attempt=attempt.attempts, generation=attempt.generation
+                )
                 raise LearningPending
             if attempt.attempts >= attempt.max_attempts:
                 await self._change(
@@ -202,7 +223,7 @@ class LearningRecovery:
                     lease_id=None,
                     error_category="attempt_abandoned",
                 )
-                _report("failed", "attempt_abandoned", attempt.attempts)
+                _report("failed", "attempt_abandoned", attempt.attempts, attempt.generation)
                 return
             record = await self._change(
                 user,
@@ -213,6 +234,9 @@ class LearningRecovery:
                 lease_id=uuid4(),
             )
             attempt = _parse(LearningAttempt, record)
+        learning_event(
+            Event.LEARNING_ATTEMPT, attempt=attempt.attempts, generation=attempt.generation
+        )
         try:
             # Leave time in the worker's 60-second storage scope for durable bookkeeping.
             async with asyncio.timeout(45):
@@ -231,11 +255,12 @@ class LearningRecovery:
                     seconds=min(300, self.policy.backoff_seconds * 2 ** (attempt.attempts - 1))
                 ),
             )
-            _report("retry" if retry else "failed", category, attempt.attempts)
+            _report("retry" if retry else "failed", category, attempt.attempts, attempt.generation)
             if retry:
                 raise LearningPending from None
             return
         await self._change(user, record, state="completed", lease_id=None, error_category=None)
+        _report("completed", None, attempt.attempts, attempt.generation)
 
     async def replay(
         self,
@@ -319,6 +344,7 @@ class LearningRecovery:
                 or existing.body.get("sourceFingerprint") != fingerprint
             ):
                 raise _invalid()
+            learning_event(Event.LEARNING_QUARANTINED)
             return
         source_id = document.get("id")
         try:
