@@ -19,11 +19,19 @@ so signed-in browser, authentication and workload-specific acceptance remain
 separate requirements. Do not treat this dependency check as an authenticated
 end-to-end UI test.
 
-The version-4 combined manifest can also pin `recipe_nutrition.web_version` for
-the reviewed isolated Web IQ/calorie phase. Delivery verifies and publishes that
-phase alongside the combined source, and records its separate runtime version.
+The version-4 combined manifest pins one Recipe + Nutrition source with both
+recipe MCP and native web search. That same version handles calorie fallback;
+an extra `recipe_nutrition.web_version` is rejected in combined mode.
 Missing recipe calories can use explicitly labeled Web IQ/AI estimates, but these
 cannot satisfy release smoke: every ingredient must have USDA MCP calorie evidence.
+
+The first fallback release's deployment check incorrectly selected `environment=local`
+to obtain delivery credentials, rejecting a valid 4,949-token recipe MCP response
+against the local token limit. The check now preserves deployed `ASC_ENVIRONMENT`
+and explicitly uses Azure CLI credentials. MCP-response token-count rejection has
+been removed; character, schema, provenance, deadlines and USDA retries remain.
+The app deployment had succeeded before that failed check; the worker/release
+sealing stages had not run.
 
 The November 13 chat failure reached both agents, then failed in USDA lookup
 with `foundry_unavailable`; the old smoke check still passed because it only
@@ -192,10 +200,10 @@ exactly verifying the reviewed `--phase combined` source, use this manifest shap
   "schema_version": 4,
   "agents_enabled": true,
   "agents": {
-    "orchestrator": {"name": "sous-chef-orchestrator-dev", "version": "12"},
+    "orchestrator": {"name": "sous-chef-orchestrator-dev", "version": "32"},
     "recipe_nutrition": {
       "name": "sous-chef-recipe-nutrition-dev",
-      "version": "21"
+      "version": "44"
     }
   }
 }
@@ -206,9 +214,9 @@ not assumed next-version numbers. Future releases must read back their selected
 versions again. Deployment sets `ASC_FOUNDRY_RECIPE_NUTRITION_MODE=combined`,
 verifies and clones both exact sources under their existing identities, then pins
 the resulting release versions. It does not publish separate retrieval/web phases.
-Readiness requires the combined strict schema and policy-9 fingerprint. Manually
+Readiness requires the combined strict schema and policy-10 fingerprint. Manually
 adding a web tool/reasoning settings to old version 4 does not automatically meet
-that contract. Source 21 was published from the grams-first combined definition and
+that contract. Source 44 was published with both tasks and their shared strict output envelope and
 read back successfully before enabling the candidate manifest. App Service must
 receive the compatible backend and complete runtime pins together through delivery;
 do not enable its flag manually against the older backend. USDA secrets/enabling

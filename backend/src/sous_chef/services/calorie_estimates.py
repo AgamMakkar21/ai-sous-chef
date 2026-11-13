@@ -84,7 +84,7 @@ def calorie_request(
         ),
         query=query,
         ingredient_line_ids=tuple(str(item["ingredientLineId"]) for item in ingredients),
-        max_input_tokens=min(6000, max_input_tokens),
+        max_input_tokens=max_input_tokens,
         max_output_tokens=max_output_tokens,
     )
 

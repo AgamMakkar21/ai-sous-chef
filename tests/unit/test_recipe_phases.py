@@ -6,7 +6,7 @@ from azure.ai.projects.models import MCPTool, PromptAgentDefinition
 from sous_chef import publish_orchestrator
 from sous_chef.adapters.foundry_gateway import FoundryGateway
 from sous_chef.domain.agent_identity import AgentRole
-from sous_chef.domain.recipes import CombinedRecipeDraft, RecipeDraft, WebDraft
+from sous_chef.domain.recipes import CombinedRecipeOutput, RecipeDraft, WebDraft
 from sous_chef.publish_orchestrator import prepare_agent_source
 from sous_chef.recipe_definition import RecipePhase, verify_recipe_source
 from sous_chef.settings import ConfigurationError
@@ -20,17 +20,26 @@ def test_persisted_phase_has_only_its_capabilities_and_strict_output(phase: Reci
     assert source.name == "recipe-agent"
     assert source.metadata["asc_recipe_phase"] == phase.value
     assert source.metadata["asc_policy_version"] == (
-        "9" if phase in {RecipePhase.COMBINED, RecipePhase.WEB} else "8"
+        "10" if phase == RecipePhase.COMBINED else "9" if phase == RecipePhase.WEB else "8"
     )
     assert definition["text"]["format"]["strict"] is True
     expected_schema = (
-        CombinedRecipeDraft
+        CombinedRecipeOutput
         if phase == RecipePhase.COMBINED
         else WebDraft
         if phase == RecipePhase.WEB
         else RecipeDraft
     )
-    assert definition["text"]["format"]["schema"] == expected_schema.model_json_schema()
+    schema = definition["text"]["format"]["schema"]
+    assert schema == expected_schema.model_json_schema(
+        mode="serialization" if phase == RecipePhase.COMBINED else "validation"
+    )
+    if phase == RecipePhase.COMBINED:
+        objects = [schema, *schema["$defs"].values()]
+        for item in objects:
+            if item.get("type") == "object":
+                assert set(item["required"]) == set(item["properties"])
+                assert item["additionalProperties"] is False
     assert definition["tool_choice"] == ("none" if phase == RecipePhase.GENERATION else "required")
     expected_type = {
         RecipePhase.GENERATION: [],

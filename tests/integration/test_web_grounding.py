@@ -13,6 +13,7 @@ import pytest
 from pydantic import ValidationError
 from sous_chef.adapters.foundry_gateway import FoundryGateway
 from sous_chef.domain.agent_identity import AgentRole
+from sous_chef.domain.context import RequestContext
 from sous_chef.domain.foundry import FoundryFailure, FoundryGatewayError
 from sous_chef.domain.orchestrator import (
     POLICY,
@@ -70,13 +71,13 @@ def web_response() -> dict[str, Any]:
     )
 
 
-def calorie_response(payload: dict[str, Any]) -> dict[str, Any]:
+def calorie_response(payload: dict[str, Any], *, combined: bool = False) -> dict[str, Any]:
     request = json.loads(payload["input"])
     response = web_response()
     response["output"][0]["action"]["query"] = request["query"]
     response["output"][1]["content"][0]["text"] = json.dumps(
         {
-            "claims": [],
+            **({"recipe": None} if combined else {"claims": []}),
             "calorieEstimates": [
                 {
                     "ingredientLineId": item["ingredientLineId"],
@@ -89,14 +90,38 @@ def calorie_response(payload: dict[str, Any]) -> dict[str, Any]:
             ],
         }
     )
+    if combined:
+        response["output"].insert(
+            0,
+            {
+                "id": "mcp_discovery",
+                "type": "mcp_list_tools",
+                "server_label": "curated_recipes",
+                "tools": [],
+            },
+        )
+        response["usage"]["input_tokens"] = 11304
     return response
 
 
 @pytest.mark.parametrize(
-    "fault", ["none", "missing_citation", "invented_source", "invented_id", "ai_citation", "failed"]
+    "fault",
+    [
+        "none",
+        "missing_citation",
+        "invented_source",
+        "invented_id",
+        "ai_citation",
+        "failed",
+        "foreign_discovery",
+        "repeated_discovery",
+        "recipe_call",
+    ],
 )
+@pytest.mark.parametrize("combined", [False, True])
 def test_calorie_fallback_validates_native_web_sources_and_distinguishes_ai_knowledge(
     fault: str,
+    combined: bool,
 ) -> None:
     prompt = json.dumps(
         {
@@ -112,9 +137,10 @@ def test_calorie_fallback_validates_native_web_sources_and_distinguishes_ai_know
         prompt=prompt,
         query="rice calories kcal per 100 g",
         ingredient_line_ids=("rice",),
+        max_input_tokens=16000 if combined else 4000,
     )
-    response = calorie_response({"input": prompt})
-    call, message = response["output"]
+    response = calorie_response({"input": prompt}, combined=combined)
+    call, message = response["output"][-2:]
     content = message["content"][0]
     draft = json.loads(content["text"])
     if fault == "missing_citation":
@@ -130,9 +156,45 @@ def test_calorie_fallback_validates_native_web_sources_and_distinguishes_ai_know
         call["action"]["sources"] = []
         content["annotations"] = []
         draft["calorieEstimates"][0].update(source="ai_knowledge", reference=None)
+    elif fault in {"foreign_discovery", "repeated_discovery"}:
+        listing: dict[str, Any] = {
+            "id": "foreign_listing",
+            "type": "mcp_list_tools",
+            "server_label": "foreign" if fault == "foreign_discovery" else "curated_recipes",
+            "tools": [],
+        }
+        response["output"].insert(0, listing)
+        if fault == "repeated_discovery":
+            response["output"].insert(0, copy.deepcopy(listing))
+    elif fault == "recipe_call":
+        response["output"].insert(
+            0,
+            {
+                "id": "unexpected_recipe_call",
+                "type": "mcp_call",
+                "server_label": "curated_recipes",
+                "name": "knowledge_base_retrieve",
+                "arguments": "{}",
+                "output": "{}",
+            },
+        )
     content["text"] = json.dumps(draft)
     transport = Harness(body=response)
-    gateway = FoundryGateway(configuration(), client_factory=transport.factory)
+    gateway = FoundryGateway(
+        configuration(
+            foundry_recipe_nutrition_mode="combined" if combined else "phased",
+            foundry_recipe_nutrition_agent_version="4" if combined else "3",
+            **(
+                {
+                    "foundry_recipe_nutrition_retrieval_agent_version": None,
+                    "foundry_recipe_nutrition_web_agent_version": None,
+                }
+                if combined
+                else {}
+            ),
+        ),
+        client_factory=transport.factory,
+    )
     if fault in {"none", "failed"}:
         estimates, _ = asyncio.run(gateway.estimate_calories(request))
         assert estimates[0].source == ("web_iq" if fault == "none" else "ai_knowledge")
@@ -142,7 +204,7 @@ def test_calorie_fallback_validates_native_web_sources_and_distinguishes_ai_know
         assert caught.value.code == FoundryFailure.INVALID_RESULT
     assert len(transport.requests) == 1
     payload = json.loads(transport.requests[0].content)
-    assert payload["agent_reference"]["version"] == "5"
+    assert payload["agent_reference"]["version"] == ("4" if combined else "5")
     assert payload["store"] is False and payload["max_tool_calls"] == 1
     assert not {"model", "tools", "text", "instructions"} & payload.keys()
 
@@ -243,7 +305,7 @@ class CombinedHarness(WebHarness):
                 foundry_recipe_nutrition_mode="combined",
                 foundry_recipe_nutrition_agent_version="4",
                 foundry_recipe_nutrition_retrieval_agent_version=None,
-                foundry_recipe_nutrition_web_agent_version="5",
+                foundry_recipe_nutrition_web_agent_version=None,
             ),
             client_factory=self.factory,
         )
@@ -268,7 +330,9 @@ class CombinedHarness(WebHarness):
 
     @staticmethod
     def request_kind(payload: dict[str, Any]) -> str:
-        if payload["agent_reference"]["version"] == "5":
+        if isinstance(payload["input"], str) and payload["input"].startswith(
+            '{"purpose":"calorie_fallback"'
+        ):
             return "web_search"
         return (
             "function"
@@ -278,10 +342,26 @@ class CombinedHarness(WebHarness):
 
     async def handle(self, request: httpx2.Request) -> httpx2.Response:
         payload = json.loads(request.content)
+        if self.request_kind(payload) == "function" and isinstance(payload["input"], str):
+            self.data = RequestContext.model_validate_json(payload["input"])
+            self.combined["output"][0]["arguments"] = json.dumps(
+                {"query_variants": [retrieval_query(self.data, self.arguments)]}
+            )
         if self.request_kind(payload) == "web_search":
-            self.body = calorie_response(payload)
+            self.body = calorie_response(payload, combined=True)
         elif self.request_kind(payload) == "combined":
-            self.body = self.combined
+            self.body = copy.deepcopy(self.combined)
+            for item in self.body["output"]:
+                if item["type"] != "message":
+                    continue
+                content = item["content"][0]
+                content["text"] = json.dumps(
+                    {"recipe": json.loads(content["text"]), "calorieEstimates": []}
+                )
+                offset = content["text"].index("{", 1)
+                for annotation in content.get("annotations", []):
+                    annotation["start_index"] += offset
+                    annotation["end_index"] += offset
         elif isinstance(payload["input"], str):
             self.body = body(function_output(arguments=self.arguments.model_dump_json()))
         else:

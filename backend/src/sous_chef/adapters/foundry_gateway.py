@@ -11,6 +11,7 @@ from time import monotonic
 from typing import TypeVar
 
 from azure.ai.projects.aio import AIProjectClient
+from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import (
     ClientAuthenticationError,
     HttpResponseError,
@@ -52,6 +53,7 @@ from sous_chef.domain.recipes import (
     CalorieGroundingRequest,
     CombinedRecipeDraft,
     CombinedRecipeGenerationRequest,
+    CombinedRecipeOutput,
     GroundedRecipeGenerationRequest,
     RecipeDraft,
     RecipeGenerationRequest,
@@ -79,17 +81,7 @@ def validate_recipe_mcp_envelopes(
     *,
     max_tool_result_tokens: int,
 ) -> None:
-    from sous_chef.services.context import _encoding
-
     if sum(map(len, (*listings, *calls))) > MAX_MCP_ENVELOPE_CHARACTERS:
-        raise ValueError("Recipe MCP response exceeds the runtime envelope budget.")
-    encoding = _encoding()
-    listing_tokens = sum(len(encoding.encode(item, disallowed_special=())) for item in listings)
-    call_tokens = sum(len(encoding.encode(item, disallowed_special=())) for item in calls)
-    if (
-        listing_tokens > POLICY.max_tool_result_tokens
-        or listing_tokens + call_tokens > max_tool_result_tokens
-    ):
         raise ValueError("Recipe MCP response exceeds the runtime envelope budget.")
 
 
@@ -120,11 +112,13 @@ class AgentTarget:
 
 
 @asynccontextmanager
-async def _project_client(settings: Settings) -> AsyncIterator[AsyncOpenAI]:
-    async with build_async_credential(settings) as credential:
+async def _project_client(
+    settings: Settings, *, credential: AsyncTokenCredential | None = None
+) -> AsyncIterator[AsyncOpenAI]:
+    async with credential if credential is not None else build_async_credential(settings) as active:
         async with AIProjectClient(
             endpoint=str(settings.foundry_project_endpoint),
-            credential=credential,
+            credential=active,
             api_version=FOUNDRY_API_VERSION,
             retry_total=0,
         ) as project:
@@ -192,11 +186,6 @@ class FoundryGateway:
             RecipePhase.GENERATION: self._targets[AgentRole.RECIPE_NUTRITION],
             RecipePhase.COMBINED: self._targets[AgentRole.RECIPE_NUTRITION],
         }
-        if settings.foundry_recipe_nutrition_web_agent_version is not None:
-            self._recipe_targets[RecipePhase.WEB] = AgentTarget(
-                settings.foundry_recipe_nutrition_agent_name,
-                settings.foundry_recipe_nutrition_web_agent_version,
-            )
         if settings.foundry_recipe_nutrition_mode == "phased":
             assert settings.foundry_recipe_nutrition_retrieval_agent_version is not None
             assert settings.foundry_recipe_nutrition_web_agent_version is not None
@@ -276,11 +265,6 @@ class FoundryGateway:
         self, request: CalorieGroundingRequest
     ) -> tuple[tuple[CalorieEstimate, ...], TokenUsage]:
         self._require_agent_pins()
-        if RecipePhase.WEB not in self._recipe_targets:
-            raise ConfigurationError(
-                "Calorie fallback requires a reviewed WEB phase pin in "
-                "ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION."
-            )
         return await self._execute(request, self._calorie_result)
 
     @observed(Operation.FOUNDRY)
@@ -293,6 +277,10 @@ class FoundryGateway:
         target = (
             self._recipe_targets[RecipePhase.COMBINED]
             if isinstance(request, CombinedRecipeGenerationRequest)
+            or (
+                isinstance(request, CalorieGroundingRequest)
+                and self._settings.foundry_recipe_nutrition_mode == "combined"
+            )
             else self._recipe_targets[RecipePhase.WEB]
             if isinstance(request, WebGroundingRequest)
             else self._recipe_targets[RecipePhase.RETRIEVAL]
@@ -435,11 +423,22 @@ class FoundryGateway:
             "include": ["web_search_call.action.sources"],
         }
 
-    @staticmethod
-    def _check_web_input(request: WebGroundingRequest) -> None:
+    def _check_web_input(self, request: WebGroundingRequest) -> None:
         from sous_chef.services.context import _encoding
 
-        definition = build_recipe_definition("budget-model", "budget-policy", phase=RecipePhase.WEB)
+        combined = (
+            isinstance(request, CalorieGroundingRequest)
+            and self._settings.foundry_recipe_nutrition_mode == "combined"
+        )
+        knowledge = RecipeKnowledgeConfig.from_settings(self._settings) if combined else None
+        definition = build_recipe_definition(
+            "budget-model",
+            "budget-policy",
+            phase=RecipePhase.COMBINED if combined else RecipePhase.WEB,
+            knowledge_tool=recipe_knowledge_tool(knowledge.mcp_endpoint, knowledge.connection_name)
+            if knowledge is not None
+            else None,
+        )
         serialized = (
             request.prompt
             + json.dumps(definition.as_dict())
@@ -471,12 +470,15 @@ class FoundryGateway:
             usage,
         )
 
-    @staticmethod
     def _calorie_result(
-        request: FoundryRequest, response: Response
+        self, request: FoundryRequest, response: Response
     ) -> tuple[tuple[CalorieEstimate, ...], TokenUsage]:
         assert isinstance(request, CalorieGroundingRequest)
-        draft, _, usage = FoundryGateway._web_evidence(request, response)
+        draft, _, usage = self._web_evidence(
+            request,
+            response,
+            combined=self._settings.foundry_recipe_nutrition_mode == "combined",
+        )
         ids = [item.ingredient_line_id for item in draft.calorie_estimates]
         if (
             draft.claims
@@ -488,26 +490,41 @@ class FoundryGateway:
 
     @staticmethod
     def _web_evidence(
-        request: FoundryRequest, response: Response
+        request: FoundryRequest, response: Response, *, combined: bool = False
     ) -> tuple[WebDraft, dict[str, str], TokenUsage]:
         from sous_chef.services.context import _encoding
 
         assert isinstance(request, WebGroundingRequest)
         calls = [item for item in response.output if item.type == "web_search_call"]
         messages = [item for item in response.output if item.type == "message"]
+        listings = [item for item in response.output if item.type == "mcp_list_tools"]
+        allowed = {"reasoning", "message", "web_search_call"}
+        if combined:
+            allowed.add("mcp_list_tools")
         if (
             len(calls) != 1
             or len(messages) != 1
-            or any(
-                item.type not in {"reasoning", "message", "web_search_call"}
-                for item in response.output
-            )
+            or len(listings) > 1
+            or any(item.type not in allowed for item in response.output)
         ):
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
         call = calls[0]
         if call.status == "failed" and not isinstance(request, CalorieGroundingRequest):
             raise FoundryGatewayError(FoundryFailure.UNAVAILABLE, request)
         try:
+            if listings:
+                from sous_chef.recipe_definition import RECIPE_KNOWLEDGE_LABEL
+
+                if any(
+                    item.server_label != RECIPE_KNOWLEDGE_LABEL or item.error is not None
+                    for item in listings
+                ):
+                    raise ValueError
+                validate_recipe_mcp_envelopes(
+                    [item.model_dump_json() for item in listings],
+                    [],
+                    max_tool_result_tokens=POLICY.max_tool_result_tokens,
+                )
             usage = response.usage
             action = call.action
             message = messages[0]
@@ -549,7 +566,13 @@ class FoundryGateway:
                 > POLICY.max_tool_result_tokens
             ):
                 raise ValueError
-            draft = WebDraft.model_validate_json(response.output_text)
+            if combined:
+                output = CombinedRecipeOutput.model_validate_json(response.output_text)
+                if output.recipe is not None:
+                    raise ValueError
+                draft = WebDraft(claims=(), calorie_estimates=output.calorie_estimates)
+            else:
+                draft = WebDraft.model_validate_json(response.output_text)
             searched = {source.url for source in action.sources or []}
             native: dict[str, str] = {}
             for annotation in message.content[0].annotations:
@@ -659,6 +682,14 @@ class FoundryGateway:
             payload = json.loads(response.output_text)
             if not isinstance(payload, dict):
                 raise ValueError
+            if isinstance(request, CombinedRecipeGenerationRequest):
+                if (
+                    set(payload) != {"recipe", "calorieEstimates"}
+                    or payload["calorieEstimates"] != []
+                    or not isinstance(payload["recipe"], dict)
+                ):
+                    raise ValueError
+                payload = payload["recipe"]
             if grounding is not None:
                 # Attribution is tool-owned; optional generated quotations cannot veto a recipe.
                 sources = {item.source.source_id: item.snippet for item in grounding.recipes}

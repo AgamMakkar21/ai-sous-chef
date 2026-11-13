@@ -48,7 +48,7 @@ ENABLED_MANIFEST = {
 
 
 class DeliveryTests(unittest.TestCase):
-    def test_combined_release_keeps_both_tools_and_isolated_calorie_phase(self) -> None:
+    def test_combined_release_keeps_both_tools_under_one_specialist_pin(self) -> None:
         from azure.ai.projects.models import AgentVersionDetails
         from sous_chef.recipe_definition import (
             RecipePhase,
@@ -76,8 +76,8 @@ class DeliveryTests(unittest.TestCase):
                 self.assertEqual(agents["recipe_nutrition"]["mode"], "combined")
                 data["agents"]["recipe_nutrition"]["web_version"] = "5"
                 (root / "deploy" / "agents.dev.json").write_text(json.dumps(data))
-                agents = delivery.manifest()
-                self.assertEqual(agents["recipe_nutrition"]["web_version"], "5")
+                with self.assertRaises(delivery.DeliveryError):
+                    delivery.manifest()
         combined = build_recipe_definition(
             "recipe-model",
             "approved-policy",
@@ -87,7 +87,6 @@ class DeliveryTests(unittest.TestCase):
                 "fixture-mcp",
             ),
         )
-        web = build_recipe_definition("recipe-model", "approved-policy", phase=RecipePhase.WEB)
         project = MagicMock()
         project.agents.get.side_effect = [
             SimpleNamespace(
@@ -126,21 +125,10 @@ class DeliveryTests(unittest.TestCase):
                     "metadata": recipe_source_metadata(combined, RecipePhase.COMBINED),
                 }
             ),
-            AgentVersionDetails(
-                {
-                    "name": "recipe-nutrition",
-                    "version": "5",
-                    "status": "active",
-                    "draft": False,
-                    "definition": web.as_dict(),
-                    "metadata": recipe_source_metadata(web, RecipePhase.WEB),
-                }
-            ),
         ]
         project.agents.create_version.side_effect = [
             SimpleNamespace(version="8"),
             SimpleNamespace(version="9"),
-            SimpleNamespace(version="10"),
         ]
         with patch.dict(os.environ, ENV):
             pins = delivery.release_agents(
@@ -148,15 +136,13 @@ class DeliveryTests(unittest.TestCase):
                 agents,
                 "11111111-1111-1111-1111-111111111111",
             )
-        self.assertEqual(project.agents.get_version.call_count, 3)
-        self.assertEqual(project.agents.create_version.call_count, 3)
+        self.assertEqual(project.agents.get_version.call_count, 2)
+        self.assertEqual(project.agents.create_version.call_count, 2)
         self.assertEqual(pins["ASC_FOUNDRY_RECIPE_NUTRITION_MODE"], "combined")
         self.assertEqual(pins["ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION"], "9")
-        self.assertEqual(pins["ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION"], "10")
+        self.assertNotIn("ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION", pins)
         published = project.agents.create_version.call_args_list
         self.assertEqual(published[1].kwargs["definition"], combined)
-        self.assertEqual(published[2].kwargs["definition"], web)
-        self.assertEqual(published[2].kwargs["metadata"]["asc_recipe_phase"], "web")
         validate_runtime(
             pins
             | {

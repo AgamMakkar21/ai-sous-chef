@@ -105,7 +105,7 @@ def combined_settings(recipe_settings: Settings) -> Settings:
             "foundry_recipe_nutrition_mode": "combined",
             "foundry_recipe_nutrition_agent_version": "4",
             "foundry_recipe_nutrition_retrieval_agent_version": None,
-            "foundry_recipe_nutrition_web_agent_version": "5",
+            "foundry_recipe_nutrition_web_agent_version": None,
         }
     )
 
@@ -164,27 +164,48 @@ def test_release_chat_check_requires_live_recipe_and_usda_evidence(
         f"ASC_{name.upper()}": str(value)
         for name, value in recipe_settings.model_dump().items()
         if value is not None
-    } | {"ASC_USDA_API_KEY": "synthetic-key"}
+    } | {"ASC_USDA_API_KEY": "synthetic-key", "ASC_ENVIRONMENT": "dev"}
     nutrition = UsdaNutritionTool.from_settings(recipe_settings)
     if fails:
         recipe_transport.fail_at = "mcp"
         recipe_transport.response_status = 503
-    with patch.object(UsdaNutritionTool, "from_settings", return_value=nutrition):
+    result = json.loads(recipe_transport.recipe["output"][0]["output"])
+    result[0]["untrusted_metadata"] = "a " * 5000
+    recipe_transport.recipe["output"][0]["output"] = json.dumps(result)
+    with (
+        patch.object(UsdaNutritionTool, "from_settings", return_value=nutrition),
+        patch.object(delivery, "_release_project_client", wraps=recipe_transport.factory) as client,
+    ):
         if fails:
             with pytest.raises(delivery.DeliveryError, match="Live chat dependency"):
                 asyncio.run(delivery.chat_smoke(deployed))
         else:
             asyncio.run(delivery.chat_smoke(deployed))
+        assert client.call_args.args[0].environment == "dev"
 
 
 @pytest.mark.parametrize("mode", ["error", "throttled", "hang_rice", "fail_carrot"])
+@pytest.mark.parametrize("combined", [False, True])
 def test_chat_persists_attributed_calories_during_usda_outage(
     mode: str,
+    combined: bool,
     recipe_settings: Settings,
-    recipe_transport: RecipeChatHarness,
+    recipe_transport: WebHarness,
     auth_headers: dict[str, str],
     harness: tuple[Transport, SyntheticCredential],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    if combined:
+        recipe_transport = CombinedHarness(use_web=False)
+        monkeypatch.setattr(foundry_gateway, "_project_client", recipe_transport.factory)
+        recipe_settings = recipe_settings.model_copy(
+            update={
+                "foundry_recipe_nutrition_mode": "combined",
+                "foundry_recipe_nutrition_agent_version": "4",
+                "foundry_recipe_nutrition_retrieval_agent_version": None,
+                "foundry_recipe_nutrition_web_agent_version": None,
+            }
+        )
     settings = recipe_settings.model_copy(
         update={
             "usda_mcp_env": {"TEST_USDA_MODE": SecretStr(mode)},
@@ -219,6 +240,12 @@ def test_chat_persists_attributed_calories_during_usda_outage(
         )
         assert "not USDA-verified" in turn["messages"][-1]["content"]
         assert len(recipe_transport.requests) == 4
+        if combined:
+            assert {
+                json.loads(request.content)["agent_reference"]["version"]
+                for request in recipe_transport.requests
+                if json.loads(request.content)["agent_reference"]["name"] == "recipe-agent"
+            } == {"4"}
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
         assert send(client, conversation).json() == response.json()
         assert len(recipe_transport.requests) == 4
