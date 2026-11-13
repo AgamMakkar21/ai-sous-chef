@@ -14,8 +14,10 @@ alternative provider is required.
 The current dev design keeps recipe MCP retrieval and **native web search on the
 same Recipe + Nutrition agent version**. Set
 `ASC_FOUNDRY_RECIPE_NUTRITION_MODE=combined` and pin its reviewed
-`ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION`. Separate retrieval/web pins are not
-required or used in this mode. The default `phased` mode remains available for
+`ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION`. A separate retrieval pin is not
+used in this mode. Calorie fallback also requires a reviewed policy-9 **web**
+phase pin in `ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION`; it is invoked only
+when USDA ingredient calories are missing. The default `phased` mode remains available for
 existing releases; the phase-specific sections below describe that legacy route.
 
 The Orchestrator delegates once to this combined specialist. That one Responses
@@ -239,7 +241,11 @@ after the startup check. Cold process creation, imports, MCP initialization and
 tool-schema verification have a separate, bounded 30-second startup allowance.
 Only after initialization succeeds does the real search/profile check begin,
 under the normal `ASC_USDA_MCP_TIMEOUT_SECONDS` budget (ten seconds by default).
-Both checks must pass before the app serves requests; neither is retried.
+Initialization and schema verification must pass before the app serves requests.
+If the subsequent API probe times out or is temporarily unavailable/throttled,
+startup logs the failure and continues so recipe calorie fallback remains usable.
+Malformed API responses and initialization/schema/authentication failures still
+block startup; initialization is not retried.
 An initialization timeout or cancellation closes and reaps the child.
 The startup allowance does not extend normal operations, lock waiting,
 standalone sessions or later process recovery.
@@ -256,10 +262,14 @@ default child environment. The key is sent to the fixed USDA HTTPS origin in an
 `X-Api-Key` header, never a URL, browser response or model prompt. Redirects and
 environment-proxy inheritance are disabled. HTTP responses are capped at 2 MiB;
 requests have a five-second HTTP timeout inside the composite ten-second deadline.
-No automatic HTTP retries occur. A 429 blocks subsequent API calls in that worker
+Read-only HTTP calls retry timeout/unavailable failures at most twice, with
+0.1/0.2-second backoffs, inside the existing operation deadline; HTTP
+500/502/503/504 are retryable, but authentication, quota, no-results and invalid
+responses are not. A 429 blocks subsequent API calls in that worker
 for the numeric `Retry-After` duration (clamped to 1-3,600 seconds), or one hour
 when the header is absent or invalid. It becomes a typed quota error and HTTP 429
-in the app, not empty foods or a fabricated successful estimate. USDA currently
+for standalone ingredient lookups, not empty foods or fabricated USDA evidence.
+Recipe requests can instead use the explicitly attributed calorie fallback. USDA currently
 documents a default 1,000 requests/hour/IP; monitor the account's actual quota.
 
 The MCP allowlist contains only the two nutrition tools; arbitrary SQL, URLs,
@@ -470,7 +480,50 @@ the canonical `https://fdc.nal.usda.gov/food-details/<fdc_id>/nutrients` referen
 and the source data type/publication date (explicitly unspecified when absent).
 Older stored `usda:sr:` citations remain historical evidence and are not rewritten
 or reinterpreted as FDC IDs. A fresh profile must match the selected candidate.
-No nutrition output from model memory is accepted.
+USDA amounts and mappings never come from model memory. Missing recipe calories
+can instead use the explicitly attributed fallback below; other nutrients and the
+standalone ingredient lookup retain the USDA-only contract.
+
+### Recipe calorie fallback
+
+USDA is attempted first. Successful ingredient mappings, calories and other
+nutrients are preserved, including when a later ingredient fails. Missing
+calories trigger at most one isolated web-phase invocation under the existing
+Recipe + Nutrition identity. Only matched public catalog food aliases, explicit
+food-form qualifiers and recipe quantities enter that invocation; only the
+backend-built public food/calorie query may enter native web search. Safety
+catalog groups are not nutritionally interchangeable: the matched alias is
+preserved (for example, carrot must not become the group's first alias, garlic).
+Private profile/history/allergy context is not included.
+
+The web phase searches once. It returns kcal for each missing ingredient's
+entire recipe quantity, not per 100 g or per serving. A `web_iq` entry requires
+an actual searched HTTPS URL with a native citation. If source evidence is
+insufficient or the search tool fails, the model may return `ai_knowledge`
+with no citation and explicit assumptions. It cannot claim `usda_mcp`.
+Web pages about USDA are still Web IQ evidence, not a successful MCP lookup.
+The backend sums ingredient calories and scales by servings; the card labels
+each ingredient **USDA MCP**, **Web IQ** or **AI knowledge**, links available
+references, and warns that fallback values are approximate and not USDA-verified.
+Missing protein/fat/etc. remain unknown. Unknown quantities remain unchanged in
+the recipe; any calorie-portion assumption appears only in the estimate's basis.
+
+The backend reserves ten seconds for this fallback plus two seconds for final
+completion, within the original request deadline. Policy 5 permits one dedicated
+extra model/web call and up to 1,500 extra output tokens, not another revision.
+If the entire fallback invocation is itself unavailable, the recipe still
+reports missing nutrition honestly; no hardcoded success or fabricated citation
+is substituted. Malformed results and attribution failures remain errors.
+Transient USDA API failure after successful MCP initialization is logged but
+does not prevent startup; initialization/schema/authentication failures remain
+fail-closed. Live release smoke still requires actual known USDA-backed nutrition.
+
+Activation requires publishing and reading back the reviewed `--phase web`
+source, then adding its returned `web_version` alongside the combined `version`
+in the version-4 dev manifest. Delivery verifies and copies both definitions
+without changing identities; runtime readiness also verifies the extra web pin.
+Older release records without the optional pin remain readable for rollback,
+but cannot perform the new fallback. No runtime tool/schema override is used.
 
 `ASC_USDA_MCP_TIMEOUT_SECONDS` defaults to 10 (maximum 10) for ingredient lookups.
 Recipe sessions scale that budget per nine ingredient lines, capped at 30 seconds
@@ -479,7 +532,8 @@ removing the old nine-food cap from merely replacing omissions with a ten-second
 timeout. Each response is limited to 128 KiB, a session to 2 MiB,
 and a profile to 256 unique nutrient rows. Timeout, malformed protocol/data,
 oversized output, child exit and source errors produce safe `RecipeToolError`
-categories and abort enrichment, not successful fallback data. Cancellation
+categories; recipe-only transient failures retain completed evidence and allow
+the attributed calorie fallback. Exact ingredient lookup still raises errors. Cancellation
 propagates and the child is terminated/reaped, with at most one second for
 cleanup. Raw child stderr is not forwarded into app logs; operational events
 contain only the safe outcome/category and duration.
@@ -799,7 +853,7 @@ before any USDA enrichment of that rejected draft. Nutrition is calculated from
 the replacement draft's actual ingredients, amounts and servings. Only a
 replacement that passes the current allergies can be delivered or saved.
 The request still has at
-most four model calls and two specialist invocations (one regeneration), shared
+most four regular model calls and two specialist invocations (one regeneration), shared
 with nested tool/model work. Exhausting the final-gate attempt/call budget returns
 a fixed honest `unable` result with no recipe or projection. A model cannot accept
 a rejected candidate. Transport/provider failures remain explicit; they are not
@@ -818,7 +872,8 @@ thermometer template to pass the backend.
 
 The specialist and Orchestrator source instructions describe natural recipe
 output and the remaining profile/integrity checks. Source policy versions are
-Orchestrator **4**, Recipe + Nutrition **8**, and combined Recipe + Nutrition **9**. These are
+Orchestrator **5**, Recipe + Nutrition **8**, combined Recipe + Nutrition **9**,
+and isolated web/calorie **9**. These are
 policy versions, **not** Foundry agent-version pins. Existing immutable agents
 do not acquire the new instructions when only backend code changes.
 

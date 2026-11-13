@@ -14,6 +14,7 @@ from sous_chef.domain.foundry import FoundryFailure
 from sous_chef.domain.nutrition import UsdaFoodProfile, UsdaFoodSearch
 from sous_chef.domain.nutrition_inputs import MASS, VOLUME, ingredient_weight, recipe_food_query
 from sous_chef.domain.recipes import (
+    IngredientCalories,
     Nutrient,
     NutrientCoverage,
     NutrientName,
@@ -37,6 +38,11 @@ _NUTRIENTS: tuple[tuple[str, NutrientName, Literal["kcal", "g", "mg"]], ...] = (
     ("Sodium, Na", "sodium", "mg"),
 )
 MAX_FOODS = 30
+TRANSIENT_USDA_FAILURES = {
+    FoundryFailure.TIMEOUT,
+    FoundryFailure.UNAVAILABLE,
+    FoundryFailure.THROTTLED,
+}
 
 
 def _rounded(value: Decimal) -> float:
@@ -87,10 +93,12 @@ class UsdaNutritionTool:
     async def check(self, *, startup: bool = False) -> None:
         """Check public food data, not just MCP initialization."""
         started = monotonic()
+        initialized = False
         try:
             if startup:
                 assert self._client is not None
                 await self._client.start()
+                initialized = True
             async with self._session(monotonic() + self.config.timeout_seconds) as session:
                 candidates = await session.search("Carrots, raw")
                 if not candidates.foods:
@@ -102,6 +110,8 @@ class UsdaNutritionTool:
                 category=ErrorCategory(error.code.value),
                 duration_ms=(monotonic() - started) * 1000,
             )
+            if startup and initialized and error.code in TRANSIENT_USDA_FAILURES:
+                return
             raise ConfigurationError(
                 f"USDA startup check failed ({error.code.value}); check ASC_USDA_API_KEY, "
                 "FoodData Central availability and API quota."
@@ -140,9 +150,11 @@ class UsdaNutritionTool:
         sources: dict[str, RecipeSource] = {}
         mappings: list[NutritionMapping] = []
         unknown: list[NutritionUnknownComponent] = []
+        calories: list[IngredientCalories] = []
         totals = {name: Decimal(0) for _, name, _ in _NUTRIENTS}
         covered: dict[NutrientName, list[str]] = {name: [] for _, name, _ in _NUTRIENTS}
-        async with self._session(deadline, ingredient_count=len(request.ingredients)) as session:
+
+        async def collect(session: UsdaMcpSession) -> None:
             for line in request.ingredients:
                 estimate = request.quantity_estimates.get(line.line_id)
                 if line.quantity is None and estimate is None:
@@ -274,6 +286,36 @@ class UsdaNutritionTool:
                         quantity_estimate=applied_estimate,
                     )
                 )
+                if "Energy" in values:
+                    calories.append(
+                        IngredientCalories(
+                            ingredient_line_id=line.line_id,
+                            amount=float(values["Energy"] * grams / Decimal(100)),
+                            source="usda_mcp",
+                            reference=sources[source_id].reference,
+                            basis=conversion_basis,
+                        )
+                    )
+
+        try:
+            async with self._session(
+                deadline, ingredient_count=len(request.ingredients)
+            ) as session:
+                await collect(session)
+        except RecipeToolError as error:
+            if not request.allow_estimates or error.code not in TRANSIENT_USDA_FAILURES:
+                raise
+            operational_event(Event.USDA_FAILED, category=ErrorCategory(error.code.value))
+            processed = {item.ingredient_line_id for item in mappings} | {
+                item.ingredient_line_id for item in unknown
+            }
+            unknown.extend(
+                NutritionUnknownComponent(
+                    ingredient_line_id=line.line_id, reason="service_unavailable"
+                )
+                for line in request.ingredients
+                if line.line_id not in processed
+            )
         nutrients = tuple(
             Nutrient(name=name, amount=_rounded(totals[name] / request.servings), unit=unit)
             for _, name, unit in _NUTRIENTS
@@ -310,4 +352,5 @@ class UsdaNutritionTool:
             sources=tuple(sources.values()),
             coverage=coverage,
             unknown_components=tuple(unknown),
+            ingredient_calories=tuple(calories),
         )

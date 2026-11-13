@@ -132,6 +132,81 @@ async function open(page: Page) {
 const card = (page: Page) =>
   page.getByRole("region", { name: "Simple carrot rice", exact: true });
 
+test("mixed calorie sources are labeled per ingredient and survive history reload", async ({
+  page,
+}) => {
+  const turn = recipeTurn();
+  const recipe = turn.recipe!;
+  const n = recipe.nutrition;
+  const ids = recipe.ingredients.map((item) => item.lineId);
+  n.status = "partial";
+  n.mappings = n.mappings.slice(0, 1);
+  n.nutrients.find((item) => item.name === "energy")!.amount = 90;
+  n.ingredientCalories = [
+    {
+      ingredientLineId: ids[0],
+      amount: 100,
+      source: "usda_mcp",
+      reference: n.sources[0].reference,
+      basis: "Synthetic USDA portion.",
+    },
+    {
+      ingredientLineId: ids[1],
+      amount: 50,
+      source: "web_iq",
+      reference: "https://nutrition.example.invalid/carrot",
+      basis: "Synthetic web calorie density scaled to this portion.",
+    },
+    {
+      ingredientLineId: ids[2],
+      amount: 30,
+      source: "ai_knowledge",
+      reference: null,
+      basis: "Approximate portion from AI knowledge.",
+    },
+  ];
+  n.coverage = Object.entries(nutrientLabels).map(([name]) => ({
+    name: name as keyof typeof nutrientLabels,
+    status: name === "energy" ? "known" : "partial",
+    wholeRecipeAmount: name === "energy" ? 180 : 10,
+    coveredIngredientLineIds: name === "energy" ? ids : [ids[0]],
+    unknownIngredientLineIds: name === "energy" ? [] : ids.slice(1),
+  }));
+  n.unknownComponents = ids.slice(1).map((id) => ({
+    ingredientLineId: id,
+    reason: "service_unavailable",
+    unknownNutrients: ["protein", "carbohydrate", "fat", "fiber", "sodium"],
+  }));
+  expect(isStructuredRecipe(recipe)).toBe(true);
+  const corrupted = structuredClone(recipe);
+  corrupted.nutrition.ingredientCalories![2].reference =
+    "https://invented.example.invalid";
+  expect(isStructuredRecipe(corrupted)).toBe(false);
+  await recipeBackend(page, [turn]);
+  await open(page);
+  await expect(card(page).getByText("90 kcal", { exact: true })).toBeVisible();
+  await expect(
+    card(page).getByRole("link", {
+      name: "USDA MCP (opens in a new tab)",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    card(page).getByRole("link", {
+      name: "Web IQ (opens in a new tab)",
+      exact: true,
+    }),
+  ).toHaveAttribute("href", "https://nutrition.example.invalid/carrot");
+  await expect(
+    card(page).getByText(/AI knowledge \(approximate\)/),
+  ).toBeVisible();
+  await expect(card(page).getByText(/not USDA-verified/)).toBeVisible();
+  await page.reload();
+  await expect(
+    card(page).getByText(/AI knowledge \(approximate\)/),
+  ).toBeVisible();
+});
+
 test("assumed quantity is disclosed with its source without changing the original ingredient", async ({
   page,
 }) => {

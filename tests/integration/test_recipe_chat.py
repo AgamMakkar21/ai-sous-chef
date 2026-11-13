@@ -1,9 +1,11 @@
 """Authenticated chat through real services/SDKs and synthetic Foundry/Cosmos/MCP transports."""
 
+import asyncio
 import json
 import sys
 from collections.abc import Iterator
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -15,6 +17,7 @@ from sous_chef.adapters import foundry_gateway
 from sous_chef.app import create_app
 from sous_chef.domain.context import RequestContext, ResolvedPreference
 from sous_chef.domain.recipe_safety import UNABLE
+from sous_chef.services.nutrition import UsdaNutritionTool
 from sous_chef.services.recipe_chat import RecipeChatExecutor
 from sous_chef.services.recipe_grounding import retrieval_query
 from sous_chef.settings import ConfigurationError, Settings
@@ -31,6 +34,8 @@ from test_orchestrator_gateway import body, function_output
 from test_profile_api import document, onboard, preferences
 from test_usda_nutrition import SERVER
 from test_web_grounding import CombinedHarness, WebHarness
+
+from scripts import deploy_dev as delivery
 
 
 class RecipeChatHarness(WebHarness):
@@ -100,7 +105,7 @@ def combined_settings(recipe_settings: Settings) -> Settings:
             "foundry_recipe_nutrition_mode": "combined",
             "foundry_recipe_nutrition_agent_version": "4",
             "foundry_recipe_nutrition_retrieval_agent_version": None,
-            "foundry_recipe_nutrition_web_agent_version": None,
+            "foundry_recipe_nutrition_web_agent_version": "5",
         }
     )
 
@@ -116,6 +121,107 @@ def recipe_api(
         onboard(client)
         add(client, name="rice", quantity=100, unit="g")
         yield client
+
+
+@pytest.mark.parametrize("mode", ["transient_search", "transient_profile"])
+def test_chat_recovers_from_transient_usda_failure_without_replaying_agents(
+    mode: str,
+    recipe_settings: Settings,
+    recipe_transport: RecipeChatHarness,
+    auth_headers: dict[str, str],
+    harness: tuple[Transport, SyntheticCredential],
+) -> None:
+    settings = recipe_settings.model_copy(
+        update={
+            "usda_mcp_server": Path(__file__).parents[1] / "fixtures" / "usda_api_server.py",
+            "usda_mcp_env": {"TEST_USDA_MODE": SecretStr(mode)},
+        }
+    )
+    with TestClient(create_app(settings), headers=auth_headers) as client:
+        onboard(client)
+        conversation = create(client)
+        response = send(client, conversation)
+        assert response.status_code == 200, response.text
+        turn = response.json()["data"]
+        assert turn["status"] == "completed"
+        assert {
+            mapping["ingredientLineId"] for mapping in turn["recipe"]["nutrition"]["mappings"]
+        } >= {"rice", "carrot"}
+        calls = len(recipe_transport.requests)
+        assert calls == 4  # The fixture has no olive oil food, so only its calories fall back.
+        assert send(client, conversation).json() == response.json()
+        assert len(recipe_transport.requests) == calls
+        assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_release_chat_check_requires_live_recipe_and_usda_evidence(
+    fails: bool,
+    recipe_settings: Settings,
+    recipe_transport: RecipeChatHarness,
+) -> None:
+    deployed = {
+        f"ASC_{name.upper()}": str(value)
+        for name, value in recipe_settings.model_dump().items()
+        if value is not None
+    } | {"ASC_USDA_API_KEY": "synthetic-key"}
+    nutrition = UsdaNutritionTool.from_settings(recipe_settings)
+    if fails:
+        recipe_transport.fail_at = "mcp"
+        recipe_transport.response_status = 503
+    with patch.object(UsdaNutritionTool, "from_settings", return_value=nutrition):
+        if fails:
+            with pytest.raises(delivery.DeliveryError, match="Live chat dependency"):
+                asyncio.run(delivery.chat_smoke(deployed))
+        else:
+            asyncio.run(delivery.chat_smoke(deployed))
+
+
+@pytest.mark.parametrize("mode", ["error", "throttled", "hang_rice", "fail_carrot"])
+def test_chat_persists_attributed_calories_during_usda_outage(
+    mode: str,
+    recipe_settings: Settings,
+    recipe_transport: RecipeChatHarness,
+    auth_headers: dict[str, str],
+    harness: tuple[Transport, SyntheticCredential],
+) -> None:
+    settings = recipe_settings.model_copy(
+        update={
+            "usda_mcp_env": {"TEST_USDA_MODE": SecretStr(mode)},
+            "usda_mcp_timeout_seconds": 0.3,
+        }
+    )
+    with TestClient(create_app(settings), headers=auth_headers) as client:
+        onboard(client)
+        conversation = create(client)
+        response = send(client, conversation)
+        assert response.status_code == 200, response.text
+        turn = response.json()["data"]
+        nutrition = turn["recipe"]["nutrition"]
+        calories = nutrition["ingredientCalories"]
+        assert {item["ingredientLineId"] for item in calories} == {"rice", "carrot", "oil"}
+        assert {item["source"] for item in calories} == (
+            {"usda_mcp", "web_iq", "ai_knowledge"}
+            if mode == "fail_carrot"
+            else {"web_iq", "ai_knowledge"}
+        )
+        assert all(
+            (item["reference"] is None) == (item["source"] == "ai_knowledge") for item in calories
+        )
+        assert {item["ingredientLineId"] for item in nutrition["mappings"]} == (
+            {"rice"} if mode == "fail_carrot" else set()
+        )
+        energy = next(item for item in nutrition["nutrients"] if item["name"] == "energy")
+        assert energy["amount"] == (200 if mode == "fail_carrot" else 150)
+        assert nutrition["status"] == "partial"
+        assert all(
+            "energy" not in item["unknownNutrients"] for item in nutrition["unknownComponents"]
+        )
+        assert "not USDA-verified" in turn["messages"][-1]["content"]
+        assert len(recipe_transport.requests) == 4
+        assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
+        assert send(client, conversation).json() == response.json()
+        assert len(recipe_transport.requests) == 4
 
 
 @pytest.mark.parametrize("use_web", [False, True])
@@ -287,7 +393,7 @@ def test_combined_chat_keeps_known_components_when_broad_search_details_are_miss
             "curated_recipe",
             "usda",
         }
-        assert len(transport.requests) == 3
+        assert len(transport.requests) == 4
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
 
 

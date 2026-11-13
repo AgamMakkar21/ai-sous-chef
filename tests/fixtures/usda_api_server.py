@@ -78,6 +78,7 @@ FOODS = [
         for index in range(30)
     ],
 ]
+ATTEMPTS: dict[str, int] = {}
 
 
 def respond(request: httpx.Request) -> httpx.Response:
@@ -97,6 +98,11 @@ def respond(request: httpx.Request) -> httpx.Response:
         assert body["dataType"] == ["Foundation", "SR Legacy"]
         assert body["pageSize"] == 20 and body["pageNumber"] == 1
         words = body["query"].replace("+", "").split()
+        if mode == "transient_search" and words != ["carrots", "raw"]:
+            key = body["query"]
+            ATTEMPTS[key] = ATTEMPTS.get(key, 0) + 1
+            if ATTEMPTS[key] < 3:
+                return httpx.Response(503, text="private provider details")
         if mode == "throttle_chicken" and "chicken" in words:
             return httpx.Response(429, headers={"Retry-After": "60"})
         foods = [
@@ -139,6 +145,11 @@ def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404)
     fdc_id = food["fdcId"]
     assert isinstance(fdc_id, int)
+    if mode == "transient_profile" and fdc_id != 1234567:
+        key = str(fdc_id)
+        ATTEMPTS[key] = ATTEMPTS.get(key, 0) + 1
+        if ATTEMPTS[key] < 3:
+            return httpx.Response(502, text="private provider details")
     amounts = {
         2345678: (120, 22.5, 2.6, 0, 0, 45),
         2345681: (143, 17.4, 8.1, 0, 0, 60),

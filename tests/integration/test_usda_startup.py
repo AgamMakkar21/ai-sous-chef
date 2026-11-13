@@ -181,7 +181,7 @@ def test_startup_allowance_does_not_extend_runtime_or_replay_timed_out_calls(
     asyncio.run(check())
 
 
-@pytest.mark.parametrize("mode", ["schema", "no_food", "error", "malformed", "timeout"])
+@pytest.mark.parametrize("mode", ["schema", "no_food", "malformed"])
 def test_enabled_app_does_not_start_with_broken_api_or_mcp(mode: str) -> None:
     tool = UsdaNutritionTool(config(mode, timeout=1))
     settings = Settings(
@@ -193,6 +193,23 @@ def test_enabled_app_does_not_start_with_broken_api_or_mcp(mode: str) -> None:
                 pytest.fail("Broken live startup must not succeed.")
     assert "private" not in str(caught.value)
     assert tool._client is None
+
+
+@pytest.mark.parametrize("mode", ["error", "timeout", "throttled"])
+def test_transient_usda_outage_after_initialization_does_not_prevent_chat_startup(
+    mode: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    tool = UsdaNutritionTool(config(mode, timeout=0.2))
+    settings = Settings(
+        environment="local", adapter_mode="local", usda_enabled=True, _env_file=None
+    )
+    with patch.object(UsdaNutritionTool, "from_settings", return_value=tool):
+        with TestClient(create_app(settings)) as client:
+            assert client.get("/health").status_code == 200
+            assert tool._client is not None
+    assert tool._client is None
+    assert "usda_failed" in caplog.text
+    assert "private database credential" not in caplog.text
 
 
 def test_real_api_backed_mcp_preserves_raw_search_and_original_fdc_ids(

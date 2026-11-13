@@ -86,6 +86,12 @@ def tool_output(request: dict[str, object]) -> str:
         time.sleep(60)
     if MODE == "error":
         return "Error: private database credential"
+    if (
+        MODE == "fail_carrot"
+        and params["name"] == "search_foods"
+        and arguments["keyword"] == "carrot"
+    ):
+        return json.dumps({"error": "unavailable"})
     if MODE == "malformed":
         return "private invalid JSON"
     if MODE == "oversized":

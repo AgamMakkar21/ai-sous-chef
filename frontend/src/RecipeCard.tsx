@@ -35,6 +35,12 @@ const unknownReasons: Record<string, string> = {
   food_unavailable: "source food unavailable",
   lookup_limit: "source lookup limit reached",
   missing_nutrients: "source nutrients missing",
+  service_unavailable: "USDA temporarily unavailable",
+};
+const calorieSources = {
+  usda_mcp: "USDA MCP",
+  web_iq: "Web IQ",
+  ai_knowledge: "AI knowledge",
 };
 
 export default function RecipeCard({
@@ -165,6 +171,14 @@ export default function RecipeCard({
         {nutrition.status === "unavailable" && (
           <p>Nutrition is unavailable. Missing values are not zero.</p>
         )}
+        {nutrition.ingredientCalories?.some(
+          (item) => item.source !== "usda_mcp",
+        ) && (
+          <p>
+            Some calories use Web IQ or AI knowledge estimates because USDA
+            evidence was unavailable. These are approximate, not USDA-verified.
+          </p>
+        )}
         <dl className="recipe-nutrients">
           {Object.entries(nutrientLabels).map(([name, label]) => {
             const nutrient = nutrition.nutrients.find(
@@ -188,6 +202,34 @@ export default function RecipeCard({
             );
           })}
         </dl>
+        {!!nutrition.ingredientCalories?.length && (
+          <>
+            <h5>Calories by ingredient (whole recipe)</h5>
+            <ul>
+              {nutrition.ingredientCalories.map((item) => (
+                <li key={item.ingredientLineId}>
+                  {ingredientName(item.ingredientLineId)}:{" "}
+                  {item.amount.toLocaleString(undefined, {
+                    maximumFractionDigits: 2,
+                  })}{" "}
+                  kcal
+                  {" / "}
+                  {item.reference ? (
+                    <Reference
+                      reference={item.reference}
+                      label={calorieSources[item.source]}
+                    />
+                  ) : (
+                    calorieSources[item.source]
+                  )}
+                  {item.source !== "usda_mcp" && " (approximate)"}
+                  {" / "}
+                  {item.basis}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
         {!!nutrition.coverage?.some(
           (item) => item.unknownIngredientLineIds.length,
         ) && (
@@ -226,7 +268,7 @@ export default function RecipeCard({
                 <li key={source.sourceId}>
                   <Reference
                     reference={source.reference}
-                    label={`USDA / ${source.sourceId}`}
+                    label={`USDA MCP / ${source.sourceId}`}
                   />{" "}
                   / Version: {source.version}
                   <ul>

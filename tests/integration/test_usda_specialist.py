@@ -343,8 +343,8 @@ def test_recipe_uses_only_readonly_source_nutrition_with_exact_mappings(
     assert "99901" not in caplog.text and "rice" not in caplog.text
 
 
-@pytest.mark.parametrize("mode", ["malformed", "timeout"])
-def test_source_failure_is_not_replaced_by_model_nutrition(mode: str) -> None:
+@pytest.mark.parametrize(("mode", "model_calls"), [("malformed", 1), ("timeout", 2)])
+def test_malformed_usda_or_fallback_evidence_is_not_accepted(mode: str, model_calls: int) -> None:
     _, grounding, model = setup()
     gateway = FoundryGateway(coordination_settings(), client_factory=model.factory)
     service = RecipeSpecialistService(
@@ -354,7 +354,6 @@ def test_source_failure_is_not_replaced_by_model_nutrition(mode: str) -> None:
     )
     with pytest.raises(FoundryGatewayError) as caught:
         run(service)
-    assert caught.value.code == (
-        FoundryFailure.TIMEOUT if mode == "timeout" else FoundryFailure.INVALID_RESULT
-    )
-    assert len(model.requests) == 1
+    # This fixture repeats recipe JSON for fallback, which is not valid calorie evidence.
+    assert caught.value.code == FoundryFailure.INVALID_RESULT
+    assert len(model.requests) == model_calls

@@ -54,6 +54,7 @@ class ExecutionBudget:
         self.specialist_calls = 0
         self.tool_calls = 0
         self.web_calls = 0
+        self.calorie_fallback_calls = 0
         self.input_tokens = 0
         self.output_tokens = 0
         self.web_allowed = False
@@ -63,7 +64,7 @@ class ExecutionBudget:
 
     def model(self, *, specialist: bool = False) -> None:
         self.model_allowance()
-        if self.model_calls >= POLICY.max_model_calls:
+        if self.model_calls >= POLICY.max_model_calls + self.calorie_fallback_calls:
             self.fail()
         if specialist:
             if self.specialist_calls >= POLICY.max_specialist_calls:
@@ -78,7 +79,9 @@ class ExecutionBudget:
     def model_allowance(self) -> tuple[int, int]:
         self._check_deadline()
         if (
-            self.output_tokens + POLICY.output_tokens_per_call > POLICY.total_output_tokens
+            self.output_tokens + POLICY.output_tokens_per_call
+            > POLICY.total_output_tokens
+            + self.calorie_fallback_calls * POLICY.output_tokens_per_call
             or self.input_tokens >= POLICY.total_input_tokens
         ):
             self.fail()
@@ -93,19 +96,28 @@ class ExecutionBudget:
             usage.input_tokens > POLICY.max_input_tokens
             or usage.output_tokens > POLICY.output_tokens_per_call
             or self.input_tokens + usage.input_tokens > POLICY.total_input_tokens
-            or self.output_tokens + usage.output_tokens > POLICY.total_output_tokens
+            or self.output_tokens + usage.output_tokens
+            > POLICY.total_output_tokens
+            + self.calorie_fallback_calls * POLICY.output_tokens_per_call
         ):
             self.fail()
         self.input_tokens += usage.input_tokens
         self.output_tokens += usage.output_tokens
 
-    def tool(self, operation: str) -> None:
+    def tool(self, operation: str, *, calorie_fallback: bool = False) -> None:
         self._check_deadline()
         tool = authorize_tool(AgentRole.RECIPE_NUTRITION, operation)
         if self.tool_calls >= POLICY.max_tool_calls:
             self.fail()
         if tool == AgentTool.WEB_IQ:
-            if not self.web_allowed or self.web_calls >= POLICY.max_web_calls:
+            if calorie_fallback:
+                if self.calorie_fallback_calls >= POLICY.max_calorie_fallback_calls:
+                    self.fail()
+                self.calorie_fallback_calls += 1
+            if (
+                not (self.web_allowed or calorie_fallback)
+                or self.web_calls >= POLICY.max_web_calls + self.calorie_fallback_calls
+            ):
                 self.fail()
             self.web_calls += 1
         self.tool_calls += 1

@@ -125,6 +125,21 @@ def render_recipe(recipe: StructuredRecipe) -> str:
         f"{recipe.title}\n{recipe.servings} servings; {recipe.total_minutes} minutes.\n\n"
         f"Ingredients\n{ingredients}\n\nInstructions\n{steps}\n\n{HANDLING_NOTICE}"
     )
+    if any(item.source != "usda_mcp" for item in recipe.nutrition.ingredient_calories):
+        energy = next(item for item in recipe.nutrition.nutrients if item.name == "energy")
+        labels = {"web_iq": "Web IQ", "ai_knowledge": "AI knowledge"}
+        sources = " / ".join(
+            labels[source]
+            for source in labels
+            if any(item.source == source for item in recipe.nutrition.ingredient_calories)
+        )
+        summary = (
+            f"\n\nCalories: {energy.amount:g} kcal "
+            f"{recipe.nutrition.serving_basis.replace('_', ' ')}."
+            f" Includes approximate {sources} values, not USDA-verified; see ingredient sources."
+        )
+        if len(text) + len(summary) <= 4000:
+            text += summary
     if len(text) > 4000:
         _reject(RecipeSafetyFailure.STRUCTURE)
     return text

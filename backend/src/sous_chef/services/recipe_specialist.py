@@ -1,4 +1,4 @@
-"""One bounded specialist generation; factual enrichment never comes from model memory."""
+"""Bounded recipe generation with USDA-first, explicitly attributed calorie estimates."""
 
 import asyncio
 import json
@@ -48,6 +48,7 @@ from sous_chef.domain.recipes import (
     StructuredRecipe,
     WebGroundingRequest,
 )
+from sous_chef.services.calorie_estimates import calorie_request, with_calorie_estimates
 from sous_chef.services.quantity_estimates import recipe_quantity_estimates
 from sous_chef.services.recipe_grounding import recipe_knowledge_arguments, retrieval_query
 from sous_chef.services.web_grounding import public_web_query
@@ -328,16 +329,55 @@ class RecipeSpecialistService:
                         raise RecipeAllergyError(request, usage)
                     authorize_tool(AgentRole.RECIPE_NUTRITION, AgentTool.USDA_NUTRITION)
                     budget.tool(AgentTool.USDA_NUTRITION)
-                    evidence = await self._nutrition.lookup(
-                        NutritionRequest(
-                            servings=draft.servings,
-                            ingredients=draft.ingredients,
-                            selected_food_ids=selected_food_ids or {},
-                            allow_estimates=True,
-                            quantity_estimates=recipe_quantity_estimates(draft, grounding, web),
-                        ),
-                        deadline=deadline,
+                    nutrition_request = NutritionRequest(
+                        servings=draft.servings,
+                        ingredients=draft.ingredients,
+                        selected_food_ids=selected_food_ids or {},
+                        allow_estimates=True,
+                        quantity_estimates=recipe_quantity_estimates(draft, grounding, web),
                     )
+                    evidence = await self._nutrition.lookup(
+                        nutrition_request, deadline=deadline - POLICY.web_deadline_seconds - 2
+                    )
+                    fallback = calorie_request(
+                        nutrition_request,
+                        evidence,
+                        operation_id=operation_id,
+                        max_input_tokens=request.max_input_tokens,
+                        max_output_tokens=request.max_output_tokens,
+                    )
+                    if fallback is not None:
+                        budget.tool(AgentTool.WEB_IQ, calorie_fallback=True)
+                        budget.model()
+                        input_allowance, output_allowance = budget.model_allowance()
+                        fallback = fallback.model_copy(
+                            update={
+                                "max_input_tokens": min(fallback.max_input_tokens, input_allowance),
+                                "max_output_tokens": output_allowance,
+                            }
+                        )
+                        try:
+                            async with asyncio.timeout(POLICY.web_deadline_seconds):
+                                estimates, fallback_usage = await self._generator.estimate_calories(
+                                    fallback
+                                )
+                            budget.usage(fallback_usage)
+                            evidence = with_calorie_estimates(evidence, estimates)
+                        except (TimeoutError, FoundryGatewayError) as error:
+                            code = (
+                                error.code
+                                if isinstance(error, FoundryGatewayError)
+                                else FoundryFailure.TIMEOUT
+                            )
+                            if code not in {
+                                FoundryFailure.TIMEOUT,
+                                FoundryFailure.UNAVAILABLE,
+                                FoundryFailure.THROTTLED,
+                            }:
+                                raise
+                            operational_event(
+                                Event.USDA_UNAVAILABLE, category=ErrorCategory(code.value)
+                            )
                     ingredients, shopping = _inventory(draft.ingredients, context)
                     recipe = StructuredRecipe(
                         **draft.model_dump(exclude={"ingredients"}),

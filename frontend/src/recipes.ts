@@ -37,6 +37,13 @@ type Coverage = {
   coveredIngredientLineIds: string[];
   unknownIngredientLineIds: string[];
 };
+type IngredientCalories = {
+  ingredientLineId: string;
+  amount: number;
+  source: "usda_mcp" | "web_iq" | "ai_knowledge";
+  reference: string | null;
+  basis: string;
+};
 export type StructuredRecipe = {
   schemaVersion: 2;
   title: string;
@@ -80,6 +87,7 @@ export type StructuredRecipe = {
       quantityEstimate?: QuantityEstimate | null;
     })[];
     coverage?: Coverage[];
+    ingredientCalories?: IngredientCalories[];
     unknownComponents?: {
       ingredientLineId: string;
       reason: string;
@@ -316,8 +324,28 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
     return false;
 
   const n = value.nutrition;
+  if (!isRecord(n)) return false;
+  const calories = n.ingredientCalories ?? [];
   if (
-    !isRecord(n) ||
+    !list(
+      calories,
+      30,
+      (item): item is IngredientCalories =>
+        isRecord(item) &&
+        typeof item.ingredientLineId === "string" &&
+        ids.includes(item.ingredientLineId) &&
+        number(item.amount, 0, 10_000_000) &&
+        ["usda_mcp", "web_iq", "ai_knowledge"].includes(String(item.source)) &&
+        text(item.basis, 500) &&
+        (item.source === "ai_knowledge"
+          ? item.reference === null
+          : text(item.reference, 500) &&
+            safeRecipeUrl(item.reference) !== null),
+    ) ||
+    !unique(calories.map((item) => item.ingredientLineId))
+  )
+    return false;
+  if (
     !["known", "partial", "unavailable"].includes(String(n.status)) ||
     !["per_serving", "whole_recipe"].includes(String(n.servingBasis)) ||
     n.servings !== value.servings ||
@@ -387,8 +415,12 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
       ),
     ) ||
     (n.status === "unavailable"
-      ? n.nutrients.length + n.sources.length + n.mappings.length !== 0
-      : !n.nutrients.length || !n.sources.length || !n.mappings.length) ||
+      ? n.nutrients.length +
+          n.sources.length +
+          n.mappings.length +
+          calories.length !==
+        0
+      : !n.nutrients.length || (!n.mappings.length && !calories.length)) ||
     (n.status === "known" &&
       !same(
         n.mappings.map((item) => item.ingredientLineId),
@@ -449,6 +481,7 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
           "food_unavailable",
           "lookup_limit",
           "missing_nutrients",
+          "service_unavailable",
         ].includes(String(item.reason)) &&
         list(item.unknownNutrients, 6, nutrientName, 1) &&
         unique(item.unknownNutrients),
@@ -458,6 +491,8 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
 
   const details = n.coverage ?? [];
   const unknown = n.unknownComponents ?? [];
+  const mappings = n.mappings;
+  const nutritionSources = n.sources;
   if (
     !unique(unknown.map((item) => item.ingredientLineId)) ||
     (details.length
@@ -467,7 +502,20 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
               details.flatMap((item) => item.coveredIngredientLineIds),
             ),
           ],
-          n.mappings.map((item) => item.ingredientLineId),
+          [
+            ...new Set([
+              ...n.mappings.map((item) => item.ingredientLineId),
+              ...calories.map((item) => item.ingredientLineId),
+            ]),
+          ],
+        ) ||
+        details.some(
+          (item) =>
+            item.name !== "energy" &&
+            item.coveredIngredientLineIds.some(
+              (id) =>
+                !mappings.some((mapping) => mapping.ingredientLineId === id),
+            ),
         ) ||
         !same(
           details.flatMap((item) =>
@@ -479,7 +527,26 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
             ),
           ),
         )
-      : unknown.length > 0)
+      : unknown.length > 0 || calories.length > 0) ||
+    (calories.length > 0 &&
+      (!same(
+        calories.map((item) => item.ingredientLineId),
+        details.find((item) => item.name === "energy")
+          ?.coveredIngredientLineIds ?? [],
+      ) ||
+        calories.some(
+          (item) =>
+            item.source === "usda_mcp" &&
+            !mappings.some(
+              (mapping) =>
+                mapping.ingredientLineId === item.ingredientLineId &&
+                nutritionSources.some(
+                  (source) =>
+                    source.sourceId === mapping.sourceId &&
+                    source.reference === item.reference,
+                ),
+            ),
+        )))
   )
     return false;
 

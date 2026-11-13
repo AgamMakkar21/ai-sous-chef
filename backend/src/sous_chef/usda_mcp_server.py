@@ -164,6 +164,19 @@ class FoodDataCentral:
     async def _request(
         self, method: str, path: str, body: dict[str, object] | None = None
     ) -> bytes:
+        # Both endpoints are read-only, including POST foods/search. Never replay a chat.
+        for attempt in range(3):
+            try:
+                return await self._request_once(method, path, body)
+            except FdcError as error:
+                if error.code not in {"timeout", "unavailable"} or attempt == 2:
+                    raise
+                await asyncio.sleep(0.1 * (attempt + 1))
+        raise AssertionError("The USDA attempt bound must be positive.")
+
+    async def _request_once(
+        self, method: str, path: str, body: dict[str, object] | None = None
+    ) -> bytes:
         if monotonic() < self._retry_at:
             raise FdcError("throttled")
         try:
@@ -187,7 +200,11 @@ class FoodDataCentral:
                 if response.status_code == 404:
                     raise FdcError("no_results")
                 if response.status_code != 200:
-                    raise FdcError("unavailable")
+                    raise FdcError(
+                        "unavailable"
+                        if response.status_code in {500, 502, 503, 504}
+                        else "rejected"
+                    )
                 data = bytearray()
                 async for chunk in response.aiter_bytes():
                     data.extend(chunk)

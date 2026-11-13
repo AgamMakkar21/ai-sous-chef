@@ -14,8 +14,9 @@ from sous_chef.domain.recipes import StructuredRecipe
 
 @dataclass(frozen=True)
 class OrchestratorPolicy:
-    version: int = 4
+    version: int = 5
     max_model_calls: int = 4
+    max_calorie_fallback_calls: int = 1
     max_specialist_calls: int = 2
     max_revisions: int = 1
     max_tool_calls: int = 8
@@ -205,7 +206,7 @@ class SpecialistBudget(Protocol):
         """Account for an additional invocation without double-counting returned usage."""
         ...
 
-    def tool(self, operation: str) -> None:
+    def tool(self, operation: str, *, calorie_fallback: bool = False) -> None:
         """Reserve an allowlisted tool call before executing it, including retries."""
         ...
 
