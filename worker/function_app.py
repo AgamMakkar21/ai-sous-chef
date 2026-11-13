@@ -14,7 +14,7 @@ from uuid import UUID
 
 import azure.functions as func
 from sous_chef.adapters.cosmos import open_cosmos
-from sous_chef.domain.authorization import AuthenticatedUser
+from sous_chef.domain.authorization import AuthenticatedUser, UserDataDeleted
 from sous_chef.domain.cosmos import ProductContainer
 from sous_chef.domain.extraction import ExtractionRequest, ExtractionResult
 from sous_chef.services.learning import LearningService
@@ -212,9 +212,12 @@ async def _process_learning(
         async def apply() -> None:
             await LearningService(repository, _EnvironmentExtractor()).process(user, feedback_id)
 
-        await LearningRecovery(repository, RecoveryPolicy.from_environment()).process(
-            user, feedback_id, revision, apply, generation=generation
-        )
+        try:
+            await LearningRecovery(repository, RecoveryPolicy.from_environment()).process(
+                user, feedback_id, revision, apply, generation=generation
+            )
+        except UserDataDeleted:
+            return
 
 
 def eligible_replay(document: Mapping[str, object]) -> ReplayEvent | None:
@@ -264,7 +267,9 @@ def quarantine_feedback(document: Mapping[str, object]) -> None:
 
 async def _quarantine_feedback(document: Mapping[str, object]) -> None:
     async with open_cosmos(
-        _settings(), containers=(ProductContainer.RECIPE_HISTORY,), lifetime_seconds=15
+        _settings(),
+        containers=(ProductContainer.USERS, ProductContainer.RECIPE_HISTORY),
+        lifetime_seconds=15,
     ) as repository:
         await LearningRecovery(repository).quarantine(document)
 
@@ -290,6 +295,9 @@ def process_batch(
         if quarantine is not None:
             try:
                 quarantine(document)
+            except UserDataDeleted:
+                counts["ignored"] += 1
+                return True
             except Exception:
                 return False
             counts["quarantined"] += 1
@@ -316,6 +324,8 @@ def process_batch(
             elif event is not None:
                 processor(event)
             counts["dispatched"] += 1
+        except UserDataDeleted:
+            counts["ignored"] += 1
         except Exception as error:
             if (
                 not isinstance(error, LearningPending)

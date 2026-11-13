@@ -2,6 +2,7 @@ import asyncio
 import json
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from time import time
 from typing import Any, Literal
@@ -169,8 +170,9 @@ def test_creation_is_owned_idempotent_and_has_no_transcript(
     assert {document["recordKind"] for document in records} == {
         "conversation",
         "conversationCreation",
+        "deletionGuard",
     }
-    assert len(records) == 2
+    assert len(records) == 3
     conversation = transport.documents[(CHAT.value, OWNER.user_id, first)]
     assert conversation["nextTurnIndex"] == 0
     assert conversation["activeOperationId"] is None
@@ -184,7 +186,7 @@ def test_creation_is_owned_idempotent_and_has_no_transcript(
     conflict = api.post(BASE, json={"title": "Different"}, headers={"Idempotency-Key": key})
     assert conflict.status_code == 409
     assert conflict.json()["code"] == "idempotency_conflict"
-    assert len(transport.documents) == 2
+    assert len(transport.documents) == 3
     assert transport.closed and credential.closed
     for private in (key, "Private title", OWNER.user_id):
         assert private not in caplog.text
@@ -195,11 +197,12 @@ def test_concurrent_creation_and_ambiguous_write_replay(
 ) -> None:
     transport, _ = harness
     transport.block_reads = 2
+    transport.block_read_container = CHAT.value
     key = str(uuid4())
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: create(api, key=key), range(2)))
     assert results[0] == results[1]
-    assert len(transport.documents) == 2
+    assert len(transport.documents) == 3
     transport.block_reads = 0
     transport.write_then_disconnect = True
     key = str(uuid4())
@@ -210,7 +213,7 @@ def test_concurrent_creation_and_ambiguous_write_replay(
     assert len(batches) == 3
     replay = api.post(BASE, json={}, headers={"Idempotency-Key": key})
     assert replay.status_code == 201
-    assert len(transport.documents) == 4
+    assert len(transport.documents) == 5
     assert len([call for call in transport.calls if isinstance(call.body, list)]) == len(batches)
 
 
@@ -556,16 +559,19 @@ def test_batch_rejection_is_atomic_and_has_bounded_safe_throttle_retry(
     api: TestClient, harness: tuple[Transport, SyntheticCredential]
 ) -> None:
     transport, credential = harness
+    create(api)
+    before = deepcopy(transport.documents)
+    transport.calls.clear()
     transport.faults["POST"].append(403)
     response = api.post(BASE, json={}, headers={"Idempotency-Key": str(uuid4())})
     assert response.status_code == 503
     assert response.json()["code"] == "cosmos_forbidden"
-    assert not transport.documents
+    assert transport.documents == before
     assert transport.closed and credential.closed
     transport.retry_after = "0"
     transport.faults["POST"].extend([429, 429])
     create(api)
-    assert len(transport.documents) == 2
+    assert len(transport.documents) == len(before) + 2
     batches = [call for call in transport.calls if isinstance(call.body, list)]
     assert len(batches) == 4
 
@@ -696,5 +702,5 @@ def test_damaged_creation_receipt_never_starts_another_creation(
     )
     assert response.status_code == (404 if corruption == "missing-resource" else 502)
     assert "private-malformed-hash" not in response.text
-    assert len(transport.documents) == 2
+    assert len(transport.documents) == 3
     assert len([call for call in transport.calls if isinstance(call.body, list)]) == batches

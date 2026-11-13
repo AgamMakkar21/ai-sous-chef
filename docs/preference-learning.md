@@ -153,7 +153,7 @@ claim becomes `failed`; it does not keep retrying extraction.
 Malformed input is acknowledged only after an explicit `learningQuarantine`
 record commits. Valid owner envelopes stay in that owner's partition. Invalid
 owners use the reserved SHA-256 namespace of
-`ai-sous-chef:learning-quarantine:v1`, without reading or writing any user profile.
+`ai-sous-chef:learning-quarantine:v1`, without reading or writing a customer's profile.
 The record stores an envelope fingerprint and optional canonical source UUID,
 never a note, prompt, raw exception, invalid owner value or model response.
 Quarantine writes are idempotent and all recovery/status roles are ignored by
@@ -181,7 +181,9 @@ The command uses **only your explicit `az login` identity**, not a function key,
 connection string, managed-identity impersonation or public recovery endpoint.
 Your approved principal needs Cosmos data-plane read/write/transaction access
 scoped to `sous-chef/RecipeHistory`, plus account metadata access. Inspection alone
-can use the existing scoped reader role. RBAC and the existing network policy
+can use the existing scoped reader role. Both paths also require `Users` metadata
+and point-read access for the deletion tombstone check, never ChatHistory access.
+RBAC and the existing network policy
 authorize the command; missing access fails closed. No grants are created here.
 
 ```powershell
@@ -222,8 +224,10 @@ Keep these identifiers in authorized data tooling, not operational logs or
 tickets. Malformed envelopes are not valid replay inputs: correct the producer
 and save a new valid feedback revision through the authorized application flow.
 Do not edit an immutable outbox, manually mark learning complete, delete leases
-or change the lease prefix to recover one item. Receipt/quarantine retention and
-user-data deletion remain ASC-50.
+or change the lease prefix to recover one item. The
+[ASC-50 operator procedure](data-retention.md) defines receipt/quarantine retention
+and single-user deletion. Tombstoned owners cannot be replayed; workers acknowledge
+their late feedback/replay/quarantine without recreating data.
 
 `learning_recovery` warnings contain only state, fixed category and claimed count.
 `feedback_batch_pending` contains only aggregate received/ignored/dispatched/

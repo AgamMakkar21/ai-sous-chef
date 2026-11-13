@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sous_chef.adapters.cosmos import CosmosRepository
+from sous_chef.adapters.cosmos import CosmosRepository, open_cosmos
 from sous_chef.app import create_app
 from sous_chef.domain.cosmos import ProductContainer, RecordKind, StoredRecord
 from sous_chef.settings import Settings
@@ -384,10 +384,19 @@ def test_lost_committed_response_reconciles_without_replaying_effects_or_generat
     chat_api: TestClient,
     executor: FakeExecutor,
     harness: tuple[Transport, SyntheticCredential],
+    conversation_settings: Settings,
     operation: str,
 ) -> None:
     source = generate(chat_api, executor)
     saved = accept(chat_api, source["generatedRecipeId"]) if operation == "cook" else None
+
+    async def prime_guard() -> None:
+        async with open_cosmos(conversation_settings) as repository:
+            await repository._privacy_marker(
+                OWNER, ProductContainer.RECIPE_HISTORY, deadline=repository._deadline(None)
+            )
+
+    asyncio.run(prime_guard())
     executor.recipe_id = uuid4()
     harness[0].write_then_disconnect = True
     try:

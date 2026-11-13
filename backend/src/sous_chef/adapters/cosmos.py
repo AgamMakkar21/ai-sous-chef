@@ -6,12 +6,12 @@ import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
-from math import isfinite
+from math import ceil, isfinite
 from time import monotonic
 from typing import Literal, TypeVar
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from azure.core import MatchConditions
 from azure.core.exceptions import (
@@ -31,11 +31,16 @@ from opentelemetry import trace
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from sous_chef.adapters.credentials import build_async_credential
-from sous_chef.domain.authorization import AuthenticatedUser, OwnedResourceNotFound
+from sous_chef.domain.authorization import (
+    AuthenticatedUser,
+    OwnedResourceNotFound,
+    UserDataDeleted,
+)
 from sous_chef.domain.cosmos import (
     MAX_RECORD_BYTES,
     CosmosError,
     CosmosFailure,
+    DeletionResult,
     HistoryQuery,
     NewRecord,
     PageRequest,
@@ -51,6 +56,10 @@ from sous_chef.telemetry import ErrorCategory, Event, operational_event, trace_i
 from sous_chef.tracing import Operation, cosmos_response, cosmos_throttled, observed
 
 T = TypeVar("T")
+type BatchOperation = (
+    tuple[str, tuple[object, ...]] | tuple[str, tuple[object, ...], dict[str, object]]
+)
+PRIVACY_GUARD_ID = "privacy:guard:v1"
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 _SYSTEM_FIELDS = frozenset({"_rid", "_self", "_etag", "_attachments", "_ts"})
 _KINDS = {
@@ -96,6 +105,7 @@ class CosmosRepository:
         self._settings = settings
         self._containers = containers
         self._scope_deadline = deadline
+        self._chat_ttl_enabled = False
 
     def _deadline(self, deadline: float | None) -> float:
         if deadline is not None and not isfinite(deadline):
@@ -131,6 +141,12 @@ class CosmosRepository:
         if not isinstance(raw, dict):
             raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4())
         user.require_owned(raw)
+        if (
+            container == ProductContainer.USERS
+            and raw.get("id") == user.user_id
+            and raw.get("recordKind") == "deletionTombstone"
+        ):
+            raise UserDataDeleted
         try:
             body = _JSON_OBJECT.validate_python(raw, strict=True)
         except ValidationError:
@@ -215,7 +231,7 @@ class CosmosRepository:
         deadline: float,
         read_only: bool = True,
         operation_name: Literal[
-            "read", "create", "batch", "patch", "delete", "query", "initialize"
+            "read", "create", "batch", "patch", "replace", "delete", "query", "initialize"
         ] = "read",
         container: ProductContainer | None = None,
     ) -> T:
@@ -309,6 +325,8 @@ class CosmosRepository:
         self._identifier(item_id)
 
         async def action() -> StoredRecord | None:
+            if container != ProductContainer.USERS:
+                await self._require_active(user, deadline)
             try:
                 raw = await self._containers[container].read_item(
                     item=item_id, partition_key=scope, response_hook=cosmos_response
@@ -321,9 +339,276 @@ class CosmosRepository:
             record = self._record(raw, user, container)
             if record.body["id"] != item_id:
                 raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4())
+            if container == ProductContainer.CHAT_HISTORY and self._expired(record.body):
+                return None
             return record
 
         return await self._run(action, deadline=deadline, container=container)
+
+    async def _require_active(self, user: AuthenticatedUser, deadline: float) -> None:
+        await self.read(user, ProductContainer.USERS, user.user_id, deadline=deadline)
+
+    def _chat_lifetime(self, body: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        expiry = body.get("retentionExpiresAt")
+        try:
+            instant = datetime.fromisoformat(str(expiry)) if expiry is not None else None
+            if instant is not None and instant.tzinfo is None:
+                raise ValueError
+            if self._settings.chat_retention_days is not None:
+                policy_expiry = datetime.fromisoformat(str(body["createdAt"])) + timedelta(
+                    days=self._settings.chat_retention_days
+                )
+                if policy_expiry.tzinfo is None:
+                    raise ValueError
+                instant = min(instant, policy_expiry) if instant else policy_expiry
+            if instant is None:
+                return {}
+            remaining = ceil((instant - datetime.now(UTC)).total_seconds())
+        except (ValueError, OverflowError):
+            raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4()) from None
+        return {"retentionExpiresAt": _timestamp(instant), "ttl": max(1, remaining)}
+
+    def _expired(self, body: dict[str, JsonValue]) -> bool:
+        lifetime = self._chat_lifetime(body)
+        return bool(
+            lifetime
+            and datetime.fromisoformat(str(lifetime["retentionExpiresAt"])) <= datetime.now(UTC)
+        )
+
+    def _chat_filter(self, parameters: list[dict[str, object]]) -> str:
+        if not self._chat_ttl_enabled:
+            return ""
+        parameters.append({"name": "@unexpiredAt", "value": _timestamp()})
+        sql = " AND (NOT IS_DEFINED(c.retentionExpiresAt) OR c.retentionExpiresAt > @unexpiredAt)"
+        if self._settings.chat_retention_days is not None:
+            sql += " AND c.createdAt > @retainedAfter"
+            parameters.append(
+                {
+                    "name": "@retainedAfter",
+                    "value": _timestamp(
+                        datetime.now(UTC) - timedelta(days=self._settings.chat_retention_days)
+                    ),
+                }
+            )
+        return sql
+
+    async def _privacy_marker(
+        self,
+        user: AuthenticatedUser,
+        container: ProductContainer,
+        *,
+        request_id: UUID | None = None,
+        deadline: float,
+    ) -> tuple[dict[str, JsonValue], bool]:
+        """Create an active fence, or irreversibly close it for an operator purge."""
+        self._scope(user)
+        item_id = user.user_id if container == ProductContainer.USERS else PRIVACY_GUARD_ID
+        kind = "deletionTombstone" if container == ProductContainer.USERS else "deletionGuard"
+        proxy = self._containers[container]
+        for _ in range(3):
+
+            async def read_marker() -> object:
+                try:
+                    return await proxy.read_item(
+                        item=item_id, partition_key=user.user_id, response_hook=cosmos_response
+                    )
+                except CosmosHttpResponseError as error:
+                    if error.status_code == 404 and not error.sub_status:
+                        return None
+                    raise
+
+            raw = await self._run(read_marker, deadline=deadline, container=container)
+            current = None
+            if raw is not None:
+                if not isinstance(raw, dict):
+                    raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4())
+                user.require_owned(raw)
+                try:
+                    current = _JSON_OBJECT.validate_python(raw, strict=True)
+                    RecordRevision.model_validate({"etag": current.get("_etag")})
+                except ValidationError:
+                    raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4()) from None
+                if current.get("id") != item_id:
+                    raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4())
+                if current.get("recordKind") == kind:
+                    if (
+                        current.get("state") not in {"active", "deleted"}
+                        or type(current.get("schemaVersion")) is not int
+                        or current.get("schemaVersion") != 1
+                        or current.get("ttl") != -1
+                    ):
+                        raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4())
+                    if current["state"] == "deleted" or request_id is None:
+                        return current, False
+                elif container != ProductContainer.USERS:
+                    raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4())
+            now = _timestamp()
+            body: dict[str, JsonValue] = {
+                "id": item_id,
+                "userId": user.user_id,
+                "recordKind": kind,
+                "schemaVersion": 1,
+                "createdAt": now,
+                "updatedAt": now,
+                "state": "deleted" if request_id else "active",
+                "requestId": str(request_id) if request_id else None,
+                "purgeCompletedAt": None,
+                "ttl": -1,
+            }
+
+            async def save_marker(
+                current: dict[str, JsonValue] | None = current,
+                body: dict[str, JsonValue] = body,
+            ) -> object:
+                if current is None:
+                    return await proxy.create_item(
+                        body=body, retry_write=0, response_hook=cosmos_response
+                    )
+                return await proxy.replace_item(
+                    item=item_id,
+                    body=body,
+                    etag=str(current["_etag"]),
+                    match_condition=MatchConditions.IfNotModified,
+                    retry_write=0,
+                    response_hook=cosmos_response,
+                )
+
+            try:
+                saved = await self._run(
+                    save_marker,
+                    deadline=deadline,
+                    read_only=False,
+                    operation_name="replace" if current else "create",
+                    container=container,
+                )
+            except CosmosError as error:
+                if error.code in {CosmosFailure.EXISTS, CosmosFailure.CONFLICT}:
+                    continue
+                raise
+            if not isinstance(saved, dict) or any(saved.get(k) != v for k, v in body.items()):
+                raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4(), outcome_unknown=True)
+            return _JSON_OBJECT.validate_python(saved, strict=True), (
+                container == ProductContainer.USERS and current is not None
+            )
+        raise CosmosError(CosmosFailure.CONFLICT, uuid4())
+
+    async def _guarded_batch(
+        self,
+        user: AuthenticatedUser,
+        container: ProductContainer,
+        operations: list[BatchOperation],
+        deadline: float,
+    ) -> list[dict[str, JsonValue]]:
+        await self._require_active(user, deadline)
+        marker, _ = await self._privacy_marker(user, container, deadline=deadline)
+        if marker["state"] == "deleted":
+            raise UserDataDeleted
+        # A server-side predicate, not a preflight read, fences the entire transaction.
+        # Do not use the guard's ETag: unrelated active writes may share this partition.
+        guard: BatchOperation = (
+            "patch",
+            (PRIVACY_GUARD_ID, [{"op": "set", "path": "/state", "value": "active"}]),
+            {"filter_predicate": "FROM c WHERE c.state = 'active'"},
+        )
+        results = await self._containers[container].execute_item_batch(
+            batch_operations=[guard, *deepcopy(operations)],
+            partition_key=user.user_id,
+            retry_write=0,
+            response_hook=cosmos_response,
+        )
+        if len(results) != len(operations) + 1 or results[0].get("statusCode") != 200:
+            raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4(), outcome_unknown=True)
+        return [_JSON_OBJECT.validate_python(result, strict=True) for result in results[1:]]
+
+    async def purge_user(self, user: AuthenticatedUser, request_id: UUID) -> DeletionResult:
+        """Operator-only, bounded resumable pass; never removes privacy fences."""
+        if request_id.version != 4:
+            raise ValueError("A deletion request UUID v4 is required.")
+        marker, replaced_profile = await self._privacy_marker(
+            user, ProductContainer.USERS, request_id=request_id, deadline=self._deadline(None)
+        )
+        operation = UUID(str(marker["requestId"]))
+        for container in (ProductContainer.CHAT_HISTORY, ProductContainer.RECIPE_HISTORY):
+            await self._privacy_marker(
+                user, container, request_id=operation, deadline=self._deadline(None)
+            )
+        removed = {container.value: 0 for container in ProductContainer}
+        removed[ProductContainer.USERS] = int(replaced_profile)
+        complete = True
+        for container in ProductContainer:
+            protected = user.user_id if container == ProductContainer.USERS else PRIVACY_GUARD_ID
+
+            async def purge_partition(
+                container: ProductContainer = container, protected: str = protected
+            ) -> int:
+                operations: list[BatchOperation] = []
+                rows = self._containers[container].query_items(
+                    query="SELECT TOP 50 c.id, c.userId, c._etag FROM c WHERE c.id != @protected",
+                    parameters=[{"name": "@protected", "value": protected}],
+                    partition_key=user.user_id,
+                    max_item_count=50,
+                    response_hook=cosmos_response,
+                )
+                async for raw in rows:
+                    if not isinstance(raw, dict) or len(operations) >= 50:
+                        raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4())
+                    user.require_owned(raw)
+                    item_id = raw.get("id")
+                    if not isinstance(item_id, str) or item_id == protected:
+                        raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4())
+                    self._identifier(item_id)
+                    try:
+                        revision = RecordRevision.model_validate({"etag": raw.get("_etag")})
+                    except ValidationError:
+                        raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4()) from None
+                    operations.append(("delete", (item_id,), {"if_match_etag": revision.etag}))
+                if operations:
+                    results = await self._containers[container].execute_item_batch(
+                        batch_operations=operations,
+                        partition_key=user.user_id,
+                        retry_write=0,
+                        response_hook=cosmos_response,
+                    )
+                    if len(results) != len(operations) or any(
+                        result.get("statusCode") != 204 for result in results
+                    ):
+                        raise CosmosError(
+                            CosmosFailure.INVALID_RESULT, uuid4(), outcome_unknown=True
+                        )
+                return len(operations)
+
+            count = await self._run(
+                purge_partition,
+                deadline=self._deadline(None),
+                read_only=False,
+                operation_name="batch",
+                container=container,
+            )
+            removed[container.value] += count
+            complete = complete and count < 50
+        if complete and marker.get("purgeCompletedAt") is None:
+
+            async def finish() -> None:
+                await self._containers[ProductContainer.USERS].patch_item(
+                    item=user.user_id,
+                    partition_key=user.user_id,
+                    patch_operations=[
+                        {"op": "set", "path": "/purgeCompletedAt", "value": _timestamp()}
+                    ],
+                    etag=str(marker["_etag"]),
+                    match_condition=MatchConditions.IfNotModified,
+                    retry_write=0,
+                    response_hook=cosmos_response,
+                )
+
+            await self._run(
+                finish,
+                deadline=self._deadline(None),
+                read_only=False,
+                operation_name="patch",
+                container=ProductContainer.USERS,
+            )
+        return DeletionResult(operation, complete, removed)
 
     def _new_body(self, user: AuthenticatedUser, request: NewRecord) -> dict[str, JsonValue]:
         scope = self._scope(user)
@@ -339,6 +624,8 @@ class CosmosRepository:
             "createdAt": now,
             "updatedAt": now,
         }
+        if request.kind in _KINDS[ProductContainer.CHAT_HISTORY]:
+            body.update(self._chat_lifetime(body))
         if _size(body) > MAX_RECORD_BYTES:
             raise CosmosError(CosmosFailure.TOO_LARGE, uuid4())
         return body
@@ -373,11 +660,11 @@ class CosmosRepository:
         }
 
         async def action() -> StoredRecord:
-            results = await self._containers[ProductContainer.CHAT_HISTORY].execute_item_batch(
-                batch_operations=[("create", (receipt,)), ("create", (body,))],
-                partition_key=user.user_id,
-                retry_write=0,
-                response_hook=cosmos_response,
+            results = await self._guarded_batch(
+                user,
+                ProductContainer.CHAT_HISTORY,
+                [("create", (receipt,)), ("create", (body,))],
+                deadline,
             )
             if len(results) != 2 or any(
                 not isinstance(result, dict) or result.get("statusCode") != 201
@@ -424,9 +711,17 @@ class CosmosRepository:
         body = self._new_body(user, request)
 
         async def action() -> StoredRecord:
-            raw = await self._containers[container].create_item(
-                body=body, retry_write=0, response_hook=cosmos_response
-            )
+            raw: object
+            if container == ProductContainer.USERS:
+                raw = await self._containers[container].create_item(
+                    body=body, retry_write=0, response_hook=cosmos_response
+                )
+            else:
+                results = await self._guarded_batch(
+                    user, container, [("create", (body,))], deadline
+                )
+                result = results[0]
+                raw = result.get("resourceBody") if isinstance(result, dict) else None
             record = self._record(raw, user, container)
             if record.body["id"] != body["id"]:
                 raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4(), outcome_unknown=True)
@@ -515,13 +810,11 @@ class CosmosRepository:
         deadline: float | None = None,
     ) -> tuple[StoredRecord, ...]:
         deadline = self._deadline(deadline)
-        scope = self._scope(user)
+        self._scope(user)
         if not creates and not patches or len(creates) + len(patches) > 3:
             raise ValueError("A history transition requires one bounded batch.")
         bodies = []
-        operations: list[
-            tuple[str, tuple[object, ...]] | tuple[str, tuple[object, ...], dict[str, object]]
-        ] = []
+        operations: list[BatchOperation] = []
         for request in creates:
             request = NewRecord.model_validate(request)
             if request.kind not in create_kinds:
@@ -535,33 +828,39 @@ class CosmosRepository:
             if current.body["recordKind"] not in patch_kinds or current.etag != patch.etag:
                 raise ValueError("A history patch requires its current owned revision.")
             changes = {**deepcopy(patch.fields), "updatedAt": _timestamp()}
+            if container == ProductContainer.CHAT_HISTORY:
+                changes.update(self._chat_lifetime(current.body))
             body = {**current.body, **changes}
             if _size(body) > MAX_RECORD_BYTES:
                 raise CosmosError(CosmosFailure.TOO_LARGE, uuid4())
             bodies.append(body)
-            operations.append(
-                (
-                    "patch",
+            if len(changes) > 10:
+                operations.append(
                     (
-                        body["id"],
-                        [
-                            {"op": "set", "path": "/" + name, "value": value}
-                            for name, value in changes.items()
-                        ],
-                    ),
-                    {"if_match_etag": patch.etag},
+                        "replace",
+                        (body["id"], {k: v for k, v in body.items() if k not in _SYSTEM_FIELDS}),
+                        {"if_match_etag": patch.etag},
+                    )
                 )
-            )
+            else:
+                operations.append(
+                    (
+                        "patch",
+                        (
+                            body["id"],
+                            [
+                                {"op": "set", "path": "/" + name, "value": value}
+                                for name, value in changes.items()
+                            ],
+                        ),
+                        {"if_match_etag": patch.etag},
+                    )
+                )
         if len({str(body["id"]) for body in bodies}) != len(bodies):
             raise ValueError("A history batch must address distinct records.")
 
         async def action() -> tuple[StoredRecord, ...]:
-            results = await self._containers[container].execute_item_batch(
-                batch_operations=operations,
-                partition_key=scope,
-                retry_write=0,
-                response_hook=cosmos_response,
-            )
+            results = await self._guarded_batch(user, container, operations, deadline)
             if len(results) != len(bodies):
                 raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4(), outcome_unknown=True)
             records: list[StoredRecord] = []
@@ -665,16 +964,19 @@ class CosmosRepository:
         self._identifier(generated_recipe_id)
 
         async def action() -> StoredRecord:
+            await self._require_active(user, self._deadline(None))
+            parameters: list[dict[str, object]] = [
+                {"name": "@kind", "value": "turn"},
+                {"name": "@status", "value": "completed"},
+                {"name": "@recipe", "value": generated_recipe_id},
+            ]
             items = self._containers[ProductContainer.CHAT_HISTORY].query_items(
                 query=(
                     "SELECT TOP 2 * FROM c WHERE c.recordKind = @kind"
                     " AND c.status = @status AND c.generatedRecipeId = @recipe"
-                ),
-                parameters=[
-                    {"name": "@kind", "value": "turn"},
-                    {"name": "@status", "value": "completed"},
-                    {"name": "@recipe", "value": generated_recipe_id},
-                ],
+                )
+                + self._chat_filter(parameters),
+                parameters=parameters,
                 partition_key=scope,
                 max_item_count=2,
                 response_hook=cosmos_response,
@@ -682,6 +984,8 @@ class CosmosRepository:
             records: list[StoredRecord] = []
             async for raw in items:
                 record = self._record(raw, user, ProductContainer.CHAT_HISTORY)
+                if self._expired(record.body):
+                    continue
                 if (
                     records
                     or record.body["recordKind"] != "turn"
@@ -727,6 +1031,8 @@ class CosmosRepository:
         if current.etag != request.etag:
             raise CosmosError(CosmosFailure.CONFLICT, uuid4())
         changes: dict[str, JsonValue] = {**deepcopy(request.fields), "updatedAt": _timestamp()}
+        if container == ProductContainer.CHAT_HISTORY:
+            changes.update(self._chat_lifetime(current.body))
         projected = {**current.body, **changes}
         if _size(projected) > MAX_RECORD_BYTES:
             raise CosmosError(CosmosFailure.TOO_LARGE, uuid4())
@@ -735,15 +1041,35 @@ class CosmosRepository:
         ]
 
         async def action() -> StoredRecord:
-            raw = await self._containers[container].patch_item(
-                item=item_id,
-                partition_key=user.user_id,
-                patch_operations=operations,
-                etag=request.etag,
-                match_condition=MatchConditions.IfNotModified,
-                retry_write=0,
-                response_hook=cosmos_response,
-            )
+            raw: object
+            if container == ProductContainer.USERS:
+                raw = await self._containers[container].patch_item(
+                    item=item_id,
+                    partition_key=user.user_id,
+                    patch_operations=operations,
+                    etag=request.etag,
+                    match_condition=MatchConditions.IfNotModified,
+                    retry_write=0,
+                    response_hook=cosmos_response,
+                )
+            else:
+                change: BatchOperation = (
+                    (
+                        "replace",
+                        (item_id, {k: v for k, v in projected.items() if k not in _SYSTEM_FIELDS}),
+                        {"if_match_etag": request.etag},
+                    )
+                    if len(operations) > 10
+                    else ("patch", (item_id, operations), {"if_match_etag": request.etag})
+                )
+                results = await self._guarded_batch(
+                    user,
+                    container,
+                    [change],
+                    deadline,
+                )
+                result = results[0]
+                raw = result.get("resourceBody") if isinstance(result, dict) else None
             record = self._record(raw, user, container)
             if record.body["id"] != item_id:
                 raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4(), outcome_unknown=True)
@@ -806,6 +1132,8 @@ class CosmosRepository:
             {"name": "@kind", "value": query.kind},
             {"name": "@upper", "value": _timestamp(query.created_before)},
         ]
+        if container == ProductContainer.CHAT_HISTORY:
+            sql += self._chat_filter(parameters)
         if query.recipe_filter != "all":
             sql += " AND IS_DEFINED(c.cookedAt) AND NOT IS_NULL(c.cookedAt)"
             if query.recipe_filter == "awaitingFeedback":
@@ -832,6 +1160,7 @@ class CosmosRepository:
         limit = page.limit if page.limit is not None else self._settings.cosmos_page_size
 
         async def action() -> RecordPage:
+            await self._require_active(user, deadline)
             items = self._containers[container].query_items(
                 query=sql,
                 parameters=parameters,
@@ -850,6 +1179,8 @@ class CosmosRepository:
                 if len(records) == limit:
                     raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4())
                 record = self._record(raw, user, container)
+                if container == ProductContainer.CHAT_HISTORY and self._expired(record.body):
+                    continue
                 if (
                     record.body["recordKind"] != query.kind
                     or (
@@ -947,17 +1278,29 @@ async def open_cosmos(
 
             async def initialize() -> None:
                 await client.__aenter__()
-                for container in proxies.values():
+                for name, container in proxies.items():
                     properties = await container.read(response_hook=cosmos_response)
+                    if name == ProductContainer.CHAT_HISTORY:
+                        repository._chat_ttl_enabled = properties.get("defaultTtl") == -1
                     partition = properties.get("partitionKey")
                     if not isinstance(partition, dict) or (
                         partition.get("paths") != ["/userId"]
                         or partition.get("kind") != "Hash"
                         or partition.get("version") != 2
-                        or properties.get("defaultTtl") is not None
+                        or (
+                            properties.get("defaultTtl") not in (None, -1)
+                            if name == ProductContainer.CHAT_HISTORY
+                            else properties.get("defaultTtl") is not None
+                        )
+                        or (
+                            name == ProductContainer.CHAT_HISTORY
+                            and settings.chat_retention_days is not None
+                            and properties.get("defaultTtl") != -1
+                        )
                     ):
                         raise ConfigurationError(
-                            "Cosmos product containers require /userId, Hash v2 and no TTL."
+                            "Cosmos requires /userId, Hash v2; only ChatHistory may enable "
+                            "per-item TTL (-1), required when chat retention is configured."
                         )
 
             await repository._run(
