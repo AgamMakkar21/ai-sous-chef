@@ -1,4 +1,4 @@
-"""Operational summaries preserve privacy and unknown measurements."""
+"""Operational summaries preserve privacy and match the real telemetry SDK."""
 
 import json
 from typing import Any, cast
