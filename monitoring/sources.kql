@@ -1,0 +1,4 @@
+let SpanSource = union AppRequests, AppDependencies
+    | where _ResourceId =~ '__INSIGHTS_RESOURCE_ID__';
+let MetricSource = AppMetrics
+    | where _ResourceId =~ '__INSIGHTS_RESOURCE_ID__';

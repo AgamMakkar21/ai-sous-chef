@@ -1,0 +1,21 @@
+union
+    (Failures | project Check = strcat('failures-', Area), Actual = todouble(Value),
+        Expected = iff(Area in ('application', 'agents', 'tools', 'learning', 'evaluation'), 1.0, 0.0)),
+    (Lag | project Check = 'lag', Actual = Value, Expected = 600000.0),
+    (CosmosThrottles | project Check = 'throttles', Actual = todouble(Value), Expected = 2.0),
+    (ModelLatency | project Check = 'latency', Actual = Value, Expected = 20000.0),
+    (ModelTokens | project Check = 'unknown-token-total',
+        Actual = iff(isnull(Value), 1.0, 0.0), Expected = 1.0),
+    (InvalidOutputs | project Check = 'invalid-output', Actual = todouble(Value), Expected = 1.0),
+    (Evaluation | project Check = 'evaluation', Actual = todouble(Value), Expected = 1.0),
+    (Learning | summarize Actual = sum(Events)
+        | project Check = 'learning-events', Actual, Expected = 4.0),
+    (LearningFailures | project Check = 'learning-failures', Actual = Value, Expected = 1.0),
+    (Models | where Model == 'synthetic-model'
+        | project Check = 'priced-model', Actual = EstimatedUsd, Expected = 0.00014),
+    (Models | where isempty(Model)
+        | project Check = 'unknown-price',
+            Actual = iff(isnull(EstimatedUsd), 1.0, 0.0), Expected = 1.0)
+| extend Passed = isnotnull(Actual) and abs(Actual - Expected) < 0.00000001
+| project Check, Actual, Expected, Passed
+| order by Check asc

@@ -1,0 +1,34 @@
+let SpanSource = datatable(
+    Name:string, DurationMs:real, Success:bool, ResultCode:string,
+    AppRoleName:string, Properties:dynamic)
+[
+    'GET /synthetic', 100.0, true, '200', 'synthetic-api',
+        dynamic({'asc.operation':'http.request'}),
+    'GET /synthetic', 500.0, false, '503', 'synthetic-api',
+        dynamic({'asc.operation':'http.request'}),
+    'GET /synthetic', 10.0, false, '401', 'synthetic-api',
+        dynamic({'asc.operation':'http.request'}),
+    'agent.orchestrator', 900.0, false, '', 'synthetic-api', dynamic({'asc.result':'error'}),
+    'tool.usda.search', 200.0, false, '', 'synthetic-api', dynamic({'asc.result':'error'}),
+    'tool.foundry_iq', 100.0, true, '', 'synthetic-api', dynamic({}),
+    'cosmos.operation', 50.0, true, '', 'synthetic-api', dynamic({'asc.cosmos.throttle_count':2}),
+    'learning.process', 200.0, true, '', 'synthetic-learning',
+        dynamic({'asc.learning.processing_lag_ms':600000}),
+    'learning.extract', 1000.0, false, '', 'synthetic-learning',
+        dynamic({'error.type':'extraction_invalid_result','asc.result':'error'}),
+    'foundry.responses', 20000.0, true, '', 'synthetic-api',
+        dynamic({'gen_ai.request.model':'synthetic-model',
+            'gen_ai.usage.input_tokens':100,'gen_ai.usage.output_tokens':20}),
+    'evaluation.run', 1.0, true, '', 'synthetic-evaluator',
+        dynamic({'asc.evaluation.suite':'safety','asc.evaluation.passed':'True'}),
+    'evaluation.run', 1.0, true, '', 'synthetic-evaluator',
+        dynamic({'asc.evaluation.suite':'safety','asc.evaluation.passed':'False'})
+]
+| extend TimeGenerated = now();
+let MetricSource = datatable(Name:string, Sum:real, Properties:dynamic)
+[
+    'asc.learning.events', 1.0, dynamic({'asc.learning.event':'learning_ledger_committed'}),
+    'asc.learning.events', 1.0, dynamic({'asc.learning.event':'learning_deduplicated'}),
+    'asc.learning.events', 1.0, dynamic({'asc.learning.event':'learning_quarantined'}),
+    'asc.learning.batch.documents', 1.0, dynamic({'asc.learning.delivery_state':'failed'})
+];
