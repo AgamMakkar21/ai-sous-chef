@@ -900,28 +900,20 @@ def test_large_source_is_excerpted_without_losing_its_version_or_reference() -> 
     assert original.model_dump_json() == document["recipe_json"]
 
 
-def test_live_preflight_reserves_grounding_tokens_before_the_provider_call() -> None:
+def test_grounding_is_not_blocked_by_an_obsolete_input_token_hint() -> None:
     service, tools, harness = live_setup()
-    with pytest.raises(FoundryGatewayError) as caught:
-        run(service, max_input_tokens=1)
-    assert caught.value.code == FoundryFailure.REJECTED
-    assert not harness.requests and not tools.nutrition_requests
+    assert run(service, max_input_tokens=1).recipe is not None
+    assert len(harness.requests) == 1 and tools.nutrition_requests
+    assert "max_output_tokens" not in json.loads(harness.requests[0].content)
 
 
 @pytest.mark.parametrize("context_tokens", [256, 512, 4000])
-def test_live_preflight_reserves_service_minimum_even_with_a_smaller_local_limit(
+def test_retrieval_size_configuration_does_not_create_a_local_token_rejection(
     context_tokens: int,
 ) -> None:
     service, _, harness = live_setup(foundry_iq_max_context_tokens=context_tokens)
-    original = FoundryGateway._check_recipe_input
-    with patch.object(
-        FoundryGateway, "_check_recipe_input", autospec=True, side_effect=original
-    ) as check:
-        with pytest.raises(FoundryGatewayError) as caught:
-            run(service, max_input_tokens=1)
-    assert caught.value.code == FoundryFailure.REJECTED
-    assert not harness.requests
-    assert check.call_args.kwargs["reserved_tool_tokens"] == 5000
+    assert run(service, max_input_tokens=1).recipe is not None
+    assert len(harness.requests) == 1
 
 
 def test_live_deadline_cancels_the_http_request_without_a_replacement() -> None:

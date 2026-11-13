@@ -421,7 +421,7 @@ user-entered values or security constraints.
 | Context prior recipes | At most 5 relevant owned snapshots/evidence summaries |
 | Context learned preferences | At most 20 currently eligible insights |
 | Recipe retrieval | At most 3 snippets per lookup, 1,500 characters per snippet |
-| Aggregate tool response inserted per model call | At most 4,000 tokens, also counted in total input |
+| Aggregate recipe/chat tool response | Schema and character bounds; no token-count rejection |
 | Extraction output | At most 10 candidate insights per execution |
 | Learning evidence lookup | At most 100 recent independent occasions within 180 days |
 
@@ -431,8 +431,10 @@ only when the user explicitly confirms no known entries; absence is not consent.
 Version the supported strict restriction rules and catalog coverage.
 Unsupported safety inputs return a clear limitation, never silent acceptance.
 
-Use the selected deployment's tokenizer/accounting rules, not character counts,
-to enforce the ADR token ceilings. Reserve output capacity before each invocation.
+Recipe/chat input and output tokens are recorded, not application-limited.
+Do not reject valid evidence or completed responses for high token usage or send
+an application output cap; provider model limits still apply. Background learning
+retains its separate execution policy. Context retains its transport-character bound.
 Context order is: trusted instructions and complete hard constraints, current
 request, explicit soft preferences/current groceries, recent conversation,
 eligible learned preferences, relevant history, and bounded retrieved/tool data.

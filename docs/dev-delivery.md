@@ -166,8 +166,8 @@ PostgreSQL, import USDA data, register API keys or copy developer credentials.
    | `ASC_FOUNDRY_PROJECT_NAME` | Existing dev project name |
 
 5. Review the explicit stage in `deploy/agents.dev.json`. The current candidate
-   enables combined-mode chat with the read-back-verified Orchestrator source 12
-   and Recipe + Nutrition combined source 21. This is release configuration,
+   enables combined-mode chat with the read-back-verified Orchestrator source 36
+   and Recipe + Nutrition combined source 44. This is release configuration,
    not evidence that the candidate has been deployed or passed live UI acceptance.
    Agent-enabled releases pin the **actual approved agent versions**.
    Both agents must already have separate, enabled Entra Agent identities.
@@ -206,7 +206,7 @@ exactly verifying the reviewed `--phase combined` source, use this manifest shap
   "schema_version": 4,
   "agents_enabled": true,
   "agents": {
-    "orchestrator": {"name": "sous-chef-orchestrator-dev", "version": "32"},
+    "orchestrator": {"name": "sous-chef-orchestrator-dev", "version": "36"},
     "recipe_nutrition": {
       "name": "sous-chef-recipe-nutrition-dev",
       "version": "44"
@@ -220,6 +220,8 @@ not assumed next-version numbers. Future releases must read back their selected
 versions again. Deployment sets `ASC_FOUNDRY_RECIPE_NUTRITION_MODE=combined`,
 verifies and clones both exact sources under their existing identities, then pins
 the resulting release versions. It does not publish separate retrieval/web phases.
+Orchestrator source 36 carries policy 6 and the structured AI quantity-routing
+schema; the earlier policy-5 source 32 is incompatible with this backend.
 Readiness requires the combined strict schema and policy-10 fingerprint. Manually
 adding a web tool/reasoning settings to old version 4 does not automatically meet
 that contract. Source 44 was published with both tasks and their shared strict output envelope and
@@ -318,7 +320,8 @@ the commit-pinned, Node.js 24 Azure Login v3 action. It
 checks out the event SHA, refuses a superseded dev SHA, verifies dev resource
 tags/settings/authentication. In the agent-enabled stage it reads each manifest's
 exact agent version through the pinned **New Foundry SDK**, API `v1`.
-Before creating any release version, it verifies every specialist source's phase,
+Before creating any release version, it verifies the Orchestrator's current policy,
+instructions, strict tool schema and fingerprint, and every specialist source's phase,
 policy metadata, fingerprint, tool restriction and output schema. It copies the entire approved
 definition (including instructions, tools and safety configuration) into a new
 version under the **same agent**, preserving source/phase metadata and adding

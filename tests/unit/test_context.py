@@ -9,8 +9,8 @@ from sous_chef.app import create_app
 from sous_chef.domain.authorization import AuthenticatedUser
 from sous_chef.domain.chat import ChatExecution, ValidatedReply
 from sous_chef.domain.context import (
+    MAX_CONTEXT_CHARACTERS,
     MAX_CONTEXT_EXCHANGES,
-    MAX_CONTEXT_TOKENS,
     ContextExchange,
     ContextLimitExceeded,
     ContextPreference,
@@ -145,14 +145,14 @@ def test_user_role_context_is_json_data_without_application_policy(content: str)
     assert payload["learnedPreferences"] == []
 
 
-def test_exact_token_boundary_keeps_mandatory_context_or_fails(
+def test_transport_character_boundary_keeps_mandatory_context_or_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     context = minimal_context()
-    tokens = context_tokens(context)
-    monkeypatch.setattr(contexts, "MAX_CONTEXT_TOKENS", tokens)
+    characters = len(context.prompt)
+    monkeypatch.setattr(contexts, "MAX_CONTEXT_CHARACTERS", characters)
     assert bound_context(context) == context
-    monkeypatch.setattr(contexts, "MAX_CONTEXT_TOKENS", tokens - 1)
+    monkeypatch.setattr(contexts, "MAX_CONTEXT_CHARACTERS", characters - 1)
     with pytest.raises(ContextLimitExceeded):
         bound_context(context)
 
@@ -190,28 +190,29 @@ def test_trimming_keeps_complete_exchanges_then_drops_learned_then_groceries(
     )
     for keep in (9, 0):
         expected = full.model_copy(update={"history": history[-keep:] if keep else ()})
-        monkeypatch.setattr(contexts, "MAX_CONTEXT_TOKENS", context_tokens(expected))
+        monkeypatch.setattr(contexts, "MAX_CONTEXT_CHARACTERS", len(expected.prompt))
         bounded = bound_context(full)
         assert bounded.history == expected.history
         assert bounded.groceries == groceries
         assert bounded.learned_preferences == learned
     expected = full.model_copy(update={"history": (), "learned_preferences": learned[:1]})
-    monkeypatch.setattr(contexts, "MAX_CONTEXT_TOKENS", context_tokens(expected))
+    monkeypatch.setattr(contexts, "MAX_CONTEXT_CHARACTERS", len(expected.prompt))
     assert bound_context(full) == expected
     expected = base.model_copy(update={"groceries": groceries[:1], "omitted_grocery_count": 199})
-    monkeypatch.setattr(contexts, "MAX_CONTEXT_TOKENS", context_tokens(expected))
+    monkeypatch.setattr(contexts, "MAX_CONTEXT_CHARACTERS", len(expected.prompt))
     bounded = bound_context(full)
     assert bounded == expected
     assert bounded.explicit_preferences == base.explicit_preferences
 
 
-def test_real_ceiling_with_maximum_unicode_history_preserves_hard_constraints() -> None:
+def test_token_heavy_unicode_context_is_not_trimmed_by_a_token_ceiling() -> None:
     base = minimal_context()
     text = "".join(chr(0x4E00 + index) for index in range(4000))
     history = tuple(ContextExchange(turn_id=uuid4(), user=text, assistant=text) for _ in range(10))
     context = bound_context(base.model_copy(update={"history": history}))
-    assert context_tokens(context) <= MAX_CONTEXT_TOKENS
-    assert len(context.history) < 10
+    assert context_tokens(context) > 11000
+    assert len(context.prompt) <= MAX_CONTEXT_CHARACTERS
+    assert len(context.history) == 10
     assert context.explicit_preferences == base.explicit_preferences
     assert context.current_request == base.current_request
 
@@ -388,7 +389,7 @@ def test_context_overflow_returns_safe_problem_without_admitting_a_turn(
     monkeypatch: pytest.MonkeyPatch,
     harness: tuple[Transport, SyntheticCredential],
 ) -> None:
-    monkeypatch.setattr(contexts, "MAX_CONTEXT_TOKENS", 1)
+    monkeypatch.setattr(contexts, "MAX_CONTEXT_CHARACTERS", 1)
     result = send(chat_api, create(chat_api))
     assert result.status_code == 422
     assert result.headers["content-type"] == "application/problem+json"

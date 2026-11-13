@@ -116,7 +116,10 @@ def _contains_phrase(tokens: tuple[str, ...], phrase: tuple[str, ...]) -> bool:
 
 
 def validate_ingredients(
-    profile: SafetyProfile, ingredients: tuple[IngredientLine, ...] | list[IngredientLine]
+    profile: SafetyProfile,
+    ingredients: tuple[IngredientLine, ...] | list[IngredientLine],
+    *,
+    references: tuple[str, ...] = (),
 ) -> SafetyResult:
     """Check the complete final ingredient list against stored hard restrictions."""
     findings: list[Finding] = []
@@ -175,7 +178,7 @@ def validate_ingredients(
                     DislikeMatch(line_id=line.line_id, ingredient=line.name, dislike=dislike)
                 )
         if has_hard_restrictions:
-            findings.extend(_check_line(line, forbidden, custom_allergies))
+            findings.extend(_check_line(line, forbidden, custom_allergies, references))
 
     if any(f.kind is FindingKind.VIOLATION for f in findings):
         verdict = Verdict.BLOCKED
@@ -192,8 +195,9 @@ def _check_line(
     line: IngredientLine,
     forbidden: dict[Trait, str],
     custom_allergies: list[tuple[str, tuple[str, ...]]],
+    references: tuple[str, ...],
 ) -> list[Finding]:
-    resolution = resolve(line.name)
+    resolution = resolve(line.name, references=references)
     ids = tuple(dict.fromkeys(entry.ingredient_id for entry in resolution.entries))
     findings: list[Finding] = []
     line_tokens = tokenize(line.name)

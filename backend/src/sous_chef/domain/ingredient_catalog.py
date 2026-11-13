@@ -52,7 +52,7 @@ DESCRIPTORS = frozenset(
 _NON_WORD = re.compile(r"[^a-z0-9]+")
 
 
-def _singular(token: str) -> str:
+def singularize(token: str) -> str:
     if len(token) > 4 and token.endswith("ies"):
         return token[:-3] + "y"
     if len(token) > 4 and token.endswith(("ches", "shes", "xes", "sses")):
@@ -65,7 +65,7 @@ def _singular(token: str) -> str:
 def tokenize(text: str) -> tuple[str, ...]:
     """Lowercase, strip accents and punctuation, and singularize each word."""
     folded = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
-    return tuple(_singular(token) for token in _NON_WORD.split(folded) if token)
+    return tuple(singularize(token) for token in _NON_WORD.split(folded) if token)
 
 
 def _entry(
@@ -407,9 +407,10 @@ class Resolution(BaseModel):
         return bool(self.entries) and not self.unresolved
 
 
-def resolve(name: str) -> Resolution:
-    """Explain every word of an ingredient name with catalog entries or descriptors."""
+def resolve(name: str, *, references: tuple[str, ...] = ()) -> Resolution:
+    """Resolve whole aliases, binding shorthand only to one known declared reference."""
     tokens = tokenize(name)
+    declared = {tokenize(reference): resolve(reference) for reference in references}
     entries: list[CatalogEntry] = []
     unresolved: list[str] = []
     position = 0
@@ -417,7 +418,17 @@ def resolve(name: str) -> Resolution:
         for length in range(min(_MAX_ALIAS_TOKENS, len(tokens) - position), 0, -1):
             entry = _INDEX.get(tokens[position : position + length])
             if entry is not None:
-                entries.append(entry)
+                phrase = tokens[position : position + length]
+                matches = [
+                    resolution
+                    for reference, resolution in declared.items()
+                    if resolution.is_known
+                    and any(
+                        reference[start : start + length] == phrase
+                        for start in range(len(reference) - length + 1)
+                    )
+                ]
+                entries.extend(matches[0].entries if len(matches) == 1 else (entry,))
                 position += length
                 break
         else:

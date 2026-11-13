@@ -11,11 +11,14 @@ import zipfile
 from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.error import HTTPError
 
 from scripts import deploy_dev as delivery
+
+if TYPE_CHECKING:
+    from azure.ai.projects.models import AgentVersionDetails
 
 ROOT = Path(__file__).resolve().parents[2]
 SHA = "a" * 40
@@ -45,6 +48,26 @@ ENABLED_MANIFEST = {
     "agents_enabled": True,
     "agents": AGENT_PINS,
 }
+
+
+def orchestrator_source() -> "AgentVersionDetails":
+    from azure.ai.projects.models import AgentVersionDetails
+    from sous_chef.orchestrator_definition import (
+        build_orchestrator_definition,
+        orchestrator_source_metadata,
+    )
+
+    definition = build_orchestrator_definition("orchestrator-model", "approved-policy")
+    return AgentVersionDetails(
+        {
+            "name": "orchestrator",
+            "version": "1",
+            "status": "active",
+            "draft": False,
+            "definition": definition.as_dict(),
+            "metadata": orchestrator_source_metadata(definition),
+        }
+    )
 
 
 class DeliveryTests(unittest.TestCase):
@@ -102,19 +125,7 @@ class DeliveryTests(unittest.TestCase):
             )
         ]
         project.agents.get_version.side_effect = [
-            AgentVersionDetails(
-                {
-                    "name": "orchestrator",
-                    "version": "1",
-                    "status": "active",
-                    "draft": False,
-                    "definition": {
-                        "kind": "prompt",
-                        "model": "orchestrator",
-                        "instructions": "approved",
-                    },
-                }
-            ),
+            orchestrator_source(),
             AgentVersionDetails(
                 {
                     "name": "recipe-nutrition",
@@ -675,7 +686,11 @@ class DeliveryTests(unittest.TestCase):
                 self.assertFalse((root / "app.zip").exists())
 
     def test_agent_release_preserves_approved_definition_and_separate_identities(self) -> None:
-        from azure.ai.projects.models import AgentVersionDetails
+        from azure.ai.projects.models import (
+            AgentVersionDetails,
+            FunctionTool,
+            PromptAgentDefinition,
+        )
         from sous_chef.recipe_definition import (
             RecipePhase,
             build_recipe_definition,
@@ -683,23 +698,29 @@ class DeliveryTests(unittest.TestCase):
             recipe_source_metadata,
         )
 
-        for mode in ("ok", "shared", "workload", "legacy", "disabled", "phase"):
-            sources = [
-                AgentVersionDetails(
-                    {
-                        "name": "orchestrator",
-                        "version": "1",
-                        "status": "active",
-                        "draft": False,
-                        "definition": {
-                            "kind": "prompt",
-                            "model": "orchestrator-model",
-                            "instructions": "approved",
-                        },
-                        "metadata": {},
-                    }
-                )
-            ]
+        for mode in (
+            "ok",
+            "shared",
+            "workload",
+            "legacy",
+            "disabled",
+            "phase",
+            "orchestrator-policy",
+            "orchestrator-schema",
+            "orchestrator-instructions",
+        ):
+            sources = [orchestrator_source()]
+            source_definition = sources[0].definition
+            assert isinstance(source_definition, PromptAgentDefinition)
+            if mode == "orchestrator-policy":
+                sources[0].metadata["asc_policy_version"] = "stale"
+            elif mode == "orchestrator-schema":
+                assert source_definition.tools is not None
+                tool = source_definition.tools[0]
+                assert isinstance(tool, FunctionTool)
+                tool.parameters["properties"].pop("quantity_ingredients")
+            elif mode == "orchestrator-instructions":
+                source_definition.instructions = "stale instructions"
             for index, phase in enumerate(
                 (
                     RecipePhase.GENERATION,

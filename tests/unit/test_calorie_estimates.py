@@ -89,6 +89,125 @@ def test_fallback_query_only_uses_public_food_names_and_preserves_explicit_forms
     )
 
 
+def test_fallback_covers_rice_and_spice_forms_without_relabeling_missing_macros() -> None:
+    names = (
+        "basmati rice, dry",
+        "cumin seeds",
+        "ground coriander",
+        "garam masala",
+        "red chili powder",
+    )
+    payload = request(
+        *(ingredient(name, 10, line_id=f"food{index}") for index, name in enumerate(names))
+    ).model_copy(update={"allow_estimates": True})
+    evidence = asyncio.run(UsdaNutritionTool(config()).lookup(payload, deadline=monotonic() + 10))
+    fallback = calorie_request(
+        payload,
+        evidence,
+        operation_id=uuid4(),
+        max_input_tokens=16000,
+        max_output_tokens=1500,
+    )
+    assert fallback is not None
+    data = json.loads(fallback.prompt)
+    assert [item["name"] for item in data["ingredients"]] == list(names)
+    assert fallback.ingredient_line_ids == tuple(line.line_id for line in payload.ingredients)
+    assert all(name in fallback.query for name in names)
+    estimates = tuple(
+        CalorieEstimate(
+            ingredient_line_id=line.line_id,
+            amount=30,
+            source="ai_knowledge",
+            reference=None,
+            basis="Synthetic calorie estimate for this 10 g portion.",
+        )
+        for line in payload.ingredients
+    )
+    merged = with_calorie_estimates(evidence, estimates)
+    energy = next(item for item in merged.coverage if item.name == "energy")
+    assert energy.status == "known" and not energy.unknown_ingredient_line_ids
+    assert energy.whole_recipe_amount == 150
+    assert all("energy" not in item.unknown_nutrients for item in merged.unknown_components)
+    assert all(item.status == "unavailable" for item in merged.coverage if item.name != "energy")
+    assert not merged.mappings and not merged.sources
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "unlisted ingredient variety 742",
+        "regional spice mixture, freshly toasted",
+        "unfamiliar grain (uncooked)",
+        "ingredient with a brand-new preparation",
+        "\u672a\u767b\u9332\u306e\u98df\u6750",
+    ],
+)
+def test_fallback_is_not_limited_to_known_foods_or_preparation_words(name: str) -> None:
+    payload = request(ingredient(name, 37, unit="g", line_id="carrot"))
+    fallback = calorie_request(
+        payload,
+        partial(),
+        operation_id=uuid4(),
+        max_input_tokens=6000,
+        max_output_tokens=1500,
+    )
+    assert fallback is not None
+    assert json.loads(fallback.prompt)["ingredients"] == [
+        {"ingredientLineId": "carrot", "name": name, "quantity": 37, "unit": "g"}
+    ]
+    assert name in fallback.query
+
+
+def test_query_length_limit_does_not_drop_ingredients_from_the_fallback_request() -> None:
+    payload = request(
+        *(
+            ingredient(f"unlisted regional ingredient number {index}", 10, line_id=f"food{index}")
+            for index in range(30)
+        )
+    ).model_copy(update={"allow_estimates": True})
+    evidence = asyncio.run(
+        UsdaNutritionTool(config("no_food")).lookup(payload, deadline=monotonic() + 10)
+    )
+    fallback = calorie_request(
+        payload,
+        evidence,
+        operation_id=uuid4(),
+        max_input_tokens=16000,
+        max_output_tokens=1500,
+    )
+    assert fallback is not None and len(fallback.query) <= 240
+    assert len(json.loads(fallback.prompt)["ingredients"]) == 30
+    assert fallback.ingredient_line_ids == tuple(line.line_id for line in payload.ingredients)
+
+
+def test_empty_fallback_keeps_unknown_calories_instead_of_inventing_zero() -> None:
+    payload = request(ingredient("unlisted food"))
+    evidence = asyncio.run(
+        UsdaNutritionTool(config("no_food")).lookup(payload, deadline=monotonic() + 10)
+    )
+    assert with_calorie_estimates(evidence, ()) is evidence
+    assert not evidence.nutrients and not evidence.ingredient_calories
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "garam masala for person@example.invalid",
+        "ingredient for patient 123456789",
+        "basmati rice dry https://private.example.invalid",
+        "red chili powder for my diagnosis",
+    ],
+)
+def test_fallback_does_not_send_obvious_private_name_suffixes(name: str) -> None:
+    payload = request(ingredient(name, line_id="carrot"))
+    assert (
+        calorie_request(
+            payload, partial(), operation_id=uuid4(), max_input_tokens=6000, max_output_tokens=1500
+        )
+        is None
+    )
+
+
 def test_optional_calorie_summary_does_not_break_a_near_limit_recipe() -> None:
     data = full_recipe(
         names=("rice", "carrot"), instructions=("Cook the rice and carrot.",) * 8

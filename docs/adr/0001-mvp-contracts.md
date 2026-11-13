@@ -569,14 +569,15 @@ financial gates. Changing them requires review of safety and runtime behavior.
 | Learning execution | 30 seconds per attempt; at most 3 attempts per revision |
 | Recipe model work | At most 4 total model invocations, including at most one specialist regeneration |
 | Recipe tool work | At most 8 total calls, including retries; Web IQ at most once |
-| Recipe tokens | At most 16,000 input tokens per invocation; 32,000 cumulative input and 6,000 cumulative output tokens across the request |
+| Recipe tokens | Provider limits only; record usage without application input/output or cumulative token ceilings (Orchestrator policy 6) |
 | Learning tokens | At most 6,000 cumulative input and 1,000 cumulative output tokens per revision, including retries |
 | Generation admission | One active send per conversation and user; two active generations globally in dev; no unbounded queue |
 | User rate limits | 3 generation admissions/minute; non-AI mutations 60/minute with a burst of 10 |
 | Performance acceptance workload | Five authenticated synthetic users, two concurrent generations, five concurrent CRUD clients over 10 minutes |
 
-Account for provider-counted input, output, and reasoning tokens within the
-execution limits. Reserve sufficient output capacity before an invocation.
+Record provider-counted input, output, and reasoning tokens. Recipe/chat does not
+reject valid responses for token usage or impose an output cap. Separate background
+learning execution limits remain unchanged.
 If token accounting, nested calls, or cancellation cannot be bounded reliably,
 report an implementation failure and fix the accounting or cancellation wiring.
 Never automatically replay an ambiguously

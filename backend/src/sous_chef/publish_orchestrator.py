@@ -12,14 +12,13 @@ from azure.identity import AzureCliCredential
 from sous_chef.adapters.agent_identity import resolve_agent_identities
 from sous_chef.adapters.foundry_iq import RecipeKnowledgeConfig, validated_project_resource_id
 from sous_chef.domain.agent_identity import AgentRole, IdentityError
-from sous_chef.domain.orchestrator import POLICY
-from sous_chef.orchestrator_definition import ORCHESTRATOR_MODEL, build_orchestrator_definition
+from sous_chef.orchestrator_definition import (
+    build_orchestrator_definition,
+    orchestrator_source_metadata,
+)
 from sous_chef.recipe_definition import (
-    RECIPE_MODEL,
-    RECIPE_POLICY_VERSION,
     RecipePhase,
     build_recipe_definition,
-    definition_fingerprint,
     recipe_knowledge_tool,
     recipe_source_metadata,
 )
@@ -51,13 +50,9 @@ def prepare_agent_source(
             raise ConfigurationError("Specialist phases cannot be published to the Orchestrator.")
         name = settings.foundry_orchestrator_agent_name
         deployment = settings.foundry_orchestrator_deployment
-        model = ORCHESTRATOR_MODEL
-        policy_version = POLICY.version
     else:
         name = settings.foundry_recipe_nutrition_agent_name
         deployment = settings.foundry_recipe_nutrition_deployment
-        model = RECIPE_MODEL
-        policy_version = RECIPE_POLICY_VERSION
     if name is None or deployment is None:
         raise ConfigurationError("Configure the agent and model deployment names.")
     if (
@@ -96,11 +91,7 @@ def prepare_agent_source(
         definition=definition,
         metadata=recipe_source_metadata(definition, phase)
         if role == AgentRole.RECIPE_NUTRITION
-        else {
-            "asc_policy_version": str(policy_version),
-            "asc_model": model,
-            "asc_definition_sha256": definition_fingerprint(definition),
-        },
+        else orchestrator_source_metadata(definition),
     )
 
 

@@ -128,14 +128,13 @@ class Specialist:
         *,
         operation_id: UUID,
         budget: SpecialistBudget,
-        max_input_tokens: int,
-        max_output_tokens: int,
+        max_input_tokens: int | None,
+        max_output_tokens: int | None,
         deadline: float,
     ) -> SpecialistResult:
         self.calls.append((context, arguments))
         self.budgets.append(budget)
-        assert 0 < max_input_tokens <= POLICY.max_input_tokens
-        assert max_output_tokens == POLICY.output_tokens_per_call
+        assert max_input_tokens is None and max_output_tokens is None
         assert deadline <= monotonic() + POLICY.deadline_seconds
         for operation in self.tools:
             budget.tool(operation)
@@ -319,7 +318,7 @@ def test_disallowed_specialist_tool_is_a_safe_execution_failure() -> None:
     assert "cosmos_read" not in str(caught.value)
 
 
-def test_model_usage_and_output_reservations_fail_closed() -> None:
+def test_model_call_and_time_limits_remain_but_token_usage_never_exhausts_budget() -> None:
     budget = ExecutionBudget(uuid4())
     for _ in range(4):
         budget.model()
@@ -327,16 +326,33 @@ def test_model_usage_and_output_reservations_fail_closed() -> None:
     assert budget.input_tokens == 32000 and budget.output_tokens == 6000
     with pytest.raises(OrchestratorError):
         budget.model()
-    for usage in (
-        TokenUsage(input_tokens=16001, output_tokens=1),
-        TokenUsage(input_tokens=1, output_tokens=1501),
-    ):
-        with pytest.raises(OrchestratorError):
-            ExecutionBudget(uuid4()).usage(usage)
+    large = ExecutionBudget(uuid4())
+    large.usage(TokenUsage(input_tokens=160001, output_tokens=16001))
+    large.model()
+    assert large.input_tokens == 160001 and large.output_tokens == 16001
     expired = ExecutionBudget(uuid4(), deadline=0)
     with pytest.raises(OrchestratorError) as caught:
         expired.tool("usda_nutrition")
     assert caught.value.code == OrchestratorFailure.TIMEOUT
+
+
+def test_calorie_allowance_does_not_consume_the_final_answers_original_headroom() -> None:
+    budget = ExecutionBudget(uuid4())
+    with pytest.raises(OrchestratorError):
+        budget.model_allowance(calorie_fallback=True)
+    for _ in range(2):
+        budget.model()
+        budget.usage(TokenUsage(input_tokens=8000, output_tokens=1500))
+    budget.tool("web_iq", calorie_fallback=True)
+    budget.model(calorie_fallback=True)
+    assert budget.model_allowance(calorie_fallback=True) == (None, None)
+    budget.usage(TokenUsage(input_tokens=16000, output_tokens=8192), calorie_fallback=True)
+    budget.model()
+    assert budget.model_allowance() == (None, None)
+    budget.usage(TokenUsage(input_tokens=16000, output_tokens=1500))
+    assert budget.input_tokens == 48000 and budget.output_tokens == 12692
+    with pytest.raises(OrchestratorError):
+        budget.tool("web_iq", calorie_fallback=True)
 
 
 def test_timeout_and_cancellation_stop_the_local_specialist_without_replay() -> None:
@@ -421,6 +437,11 @@ def test_source_definition_is_reproducible_strict_and_does_not_bind_extra_tools(
     assert tool["name"] == "recipe_specialist" and tool["strict"] is True
     assert tool["parameters"]["additionalProperties"] is False
     assert set(tool["parameters"]["required"]) == set(tool["parameters"]["properties"])
+    quantity_names = tool["parameters"]["properties"]["quantity_ingredients"]
+    assert quantity_names["type"] == "array" and quantity_names["maxItems"] == 30
+    assert quantity_names["items"]["type"] == "string"
+    assert quantity_names["items"]["maxLength"] == 100
+    assert "Interpret ingredient amounts semantically" in ORCHESTRATOR_INSTRUCTIONS
     assert "Current explicit direction overrides learned preferences" in ORCHESTRATOR_INSTRUCTIONS
     assert "do not invent a feasible cooking time" in ORCHESTRATOR_INSTRUCTIONS
     assert "never hidden reasoning" in ORCHESTRATOR_INSTRUCTIONS

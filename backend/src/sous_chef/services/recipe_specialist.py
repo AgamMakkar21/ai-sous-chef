@@ -77,27 +77,17 @@ def _inventory(
         name = " ".join(line.name.casefold().split())
         # A safety-catalog match alone does not prove prepared/raw inventory equivalence.
         matches = [
-            row
-            for row in context.groceries
-            if canonical is not None
-            and _ingredient_id(row.name) == canonical
-            and " ".join(row.name.casefold().split()) == name
+            row for row in context.groceries if " ".join(row.name.casefold().split()) == name
         ]
         exact = [row for row in matches if row.unit == line.unit and row.quantity is not None]
         available = sum((remaining[row.grocery_id] for row in exact), start=Decimal(0))
         consumed: list[UUID] = []
         status: Literal["available", "missing", "unknown"]
         shortage = line.quantity
-        if (
-            canonical is not None
-            and line.quantity is not None
-            and line.unit is not None
-            and available >= line.quantity
-        ):
+        if line.quantity is not None and line.unit is not None and available >= line.quantity:
             status = "available"
         elif (
-            canonical is None
-            or context.omitted_grocery_count
+            context.omitted_grocery_count
             or any(row not in exact for row in matches)
             or (matches and (line.quantity is None or line.unit is None))
         ):
@@ -165,8 +155,8 @@ class RecipeSpecialistService:
         *,
         operation_id: UUID,
         budget: SpecialistBudget,
-        max_input_tokens: int,
-        max_output_tokens: int,
+        max_input_tokens: int | None,
+        max_output_tokens: int | None,
         deadline: float,
         selected_food_ids: dict[str, str] | None = None,
     ) -> SpecialistResult:
@@ -177,7 +167,7 @@ class RecipeSpecialistService:
             prompt=context.prompt,
             operation_id=operation_id,
             max_input_tokens=max_input_tokens,
-            max_output_tokens=min(max_output_tokens, POLICY.output_tokens_per_call),
+            max_output_tokens=max_output_tokens,
             grounding_json="{}",
         )
         started = monotonic()
@@ -210,14 +200,13 @@ class RecipeSpecialistService:
                                     role=AgentRole.RECIPE_NUTRITION,
                                     operation_id=operation_id,
                                     prompt=query,
-                                    max_input_tokens=min(2000, max_input_tokens),
+                                    max_input_tokens=max_input_tokens,
                                     max_output_tokens=request.max_output_tokens,
                                     allow_empty=not arguments.use_web,
                                 )
                             )
                         budget.usage(web_usage)
-                        input_allowance, _ = budget.model_allowance()
-                        max_input_tokens = min(max_input_tokens, input_allowance)
+                        budget.model_allowance()
                     authorize_tool(AgentRole.RECIPE_NUTRITION, AgentTool.FOUNDRY_IQ_RECIPES)
                     budget.tool(AgentTool.FOUNDRY_IQ_RECIPES)
                     request = RecipeGenerationRequest(
@@ -315,14 +304,9 @@ class RecipeSpecialistService:
                         draft.skill
                     ) > skill.index(context.explicit_preferences.cooking_skill):
                         raise FoundryGatewayError(FoundryFailure.REJECTED, request)
-                    if (
-                        not set(draft.source_ids) <= sources.keys()
-                        or any(
-                            claim.quote not in snippets.get(claim.source_id, "")
-                            for claim in draft.source_claims
-                        )
-                        or usage.input_tokens > max_input_tokens
-                        or usage.output_tokens > request.max_output_tokens
+                    if not set(draft.source_ids) <= sources.keys() or any(
+                        claim.quote not in snippets.get(claim.source_id, "")
+                        for claim in draft.source_claims
                     ):
                         raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
                     if safety.verdict != Verdict.PASS:
@@ -343,30 +327,41 @@ class RecipeSpecialistService:
                         nutrition_request,
                         evidence,
                         operation_id=operation_id,
-                        max_input_tokens=(
-                            request.max_input_tokens
-                            if self._combined
-                            else min(6000, request.max_input_tokens)
-                        ),
+                        max_input_tokens=request.max_input_tokens,
                         max_output_tokens=request.max_output_tokens,
                     )
                     if fallback is not None:
                         budget.tool(AgentTool.WEB_IQ, calorie_fallback=True)
-                        budget.model()
-                        input_allowance, output_allowance = budget.model_allowance()
+                        budget.model(calorie_fallback=True)
+                        input_allowance, output_allowance = budget.model_allowance(
+                            calorie_fallback=True
+                        )
                         fallback = fallback.model_copy(
                             update={
-                                "max_input_tokens": min(fallback.max_input_tokens, input_allowance),
+                                "max_input_tokens": input_allowance,
                                 "max_output_tokens": output_allowance,
                             }
                         )
                         try:
-                            async with asyncio.timeout(POLICY.web_deadline_seconds):
+                            async with asyncio.timeout_at(
+                                min(deadline - 2, monotonic() + POLICY.calorie_deadline_seconds)
+                            ):
                                 estimates, fallback_usage = await self._generator.estimate_calories(
                                     fallback
                                 )
-                            budget.usage(fallback_usage)
-                            evidence = with_calorie_estimates(evidence, estimates)
+                            budget.usage(fallback_usage, calorie_fallback=True)
+                            if len(estimates) < len(fallback.ingredient_line_ids):
+                                operational_event(
+                                    Event.CALORIE_FALLBACK_UNAVAILABLE,
+                                    category=ErrorCategory.FOUNDRY_NO_RESULTS,
+                                )
+                            try:
+                                merged = with_calorie_estimates(evidence, estimates)
+                            except ValueError:
+                                raise FoundryGatewayError(
+                                    FoundryFailure.INVALID_RESULT, fallback
+                                ) from None
+                            evidence = merged
                         except (TimeoutError, FoundryGatewayError) as error:
                             code = (
                                 error.code
@@ -377,10 +372,14 @@ class RecipeSpecialistService:
                                 FoundryFailure.TIMEOUT,
                                 FoundryFailure.UNAVAILABLE,
                                 FoundryFailure.THROTTLED,
+                                FoundryFailure.INVALID_RESULT,
+                                FoundryFailure.REJECTED,
+                                FoundryFailure.NO_RESULTS,
                             }:
                                 raise
                             operational_event(
-                                Event.USDA_UNAVAILABLE, category=ErrorCategory(code.value)
+                                Event.CALORIE_FALLBACK_UNAVAILABLE,
+                                category=ErrorCategory(code.value),
                             )
                     ingredients, shopping = _inventory(draft.ingredients, context)
                     recipe = StructuredRecipe(

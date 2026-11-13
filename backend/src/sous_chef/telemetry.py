@@ -120,6 +120,7 @@ class Event(StrEnum):
     USDA_COMPLETED = "usda_completed"
     USDA_UNAVAILABLE = "usda_unavailable"
     USDA_FAILED = "usda_failed"
+    CALORIE_FALLBACK_UNAVAILABLE = "calorie_fallback_unavailable"
     LEARNING_ELIGIBLE = "learning_eligible"
     LEARNING_IGNORED = "learning_ignored"
     LEARNING_INVALID = "learning_invalid"

@@ -49,38 +49,39 @@ on a revision. The Orchestrator owns fit review; it does not invent nutrition.
 
 ## Backend limits and candidate validation
 
-The frozen policy in `domain/orchestrator.py` is version 3:
+The frozen policy in `domain/orchestrator.py` is version 6:
 
 | Limit | Value |
 | --- | --- |
-| Total model invocations | 4 |
+| Total model invocations | 4, plus at most one optional calorie fallback |
 | Specialist invocations | 2: initial plus one revision |
 | Total tool calls, including retries and specialist handoffs | 8 |
-| Web IQ | At most once for justified current information; 10-second search ceiling |
+| Web IQ | At most one ordinary search plus one calorie fallback; 10-second search ceiling |
 | Whole-operation deadline | 60 seconds, or the earlier caller deadline |
-| Input tokens per invocation / cumulative | 16,000 / 32,000 |
-| Output tokens per invocation / cumulative, including reasoning | 1,500 / 6,000 |
+| Application input/output token ceilings | None; provider model limits apply |
+
+The one optional calorie fallback does not permit additional revisions or extra
+searches beyond that one fallback. Calorie generation can use up to 30 seconds
+of the remaining operation time, while preserving two seconds for completion.
 
 `ExecutionBudget` is request-local and shared across both specialist attempts.
 Adapters must reserve each external tool attempt using `budget.tool()` **before**
 execution. Foundry IQ recipes, USDA nutrition and conditional Web IQ are the
 specialist's allowlist; arbitrary operations and Cosmos are denied.
-The live specialist implementation must honor the supplied input/output ceilings,
-total deadline and budget, return provider-counted usage including reasoning, and
+The live specialist implementation must honor the total deadline and call budget,
+return provider-counted usage including reasoning, and
 never hide nested model/tool calls. An autonomous managed specialist tool loop
 that cannot be intercepted/accounted is not a valid implementation of this seam.
 Neither slice supplies a fake production specialist or silently selects fixture tools.
 
-Coordination input is preflighted with the existing `o200k_base` tokenizer,
-source instructions, function schema, current function result/opaque state,
-and framing allowance. The function result itself must fit the 4,000-token
-aggregate tool-result allowance. Provider usage is required and cumulative usage is checked
-after every invocation. The specialist receives the remaining input allowance
-and output reservation before execution. Missing/mismatched accounting is an
-implementation error, never a successful fallback. Native coordination has its
-own 131,072-character transport ceiling so ASC-23's token-bounded context is not
-rejected by the original gateway's 16,000-character limit. No hard constraint is
-truncated to fit; oversized requests fail explicitly.
+Provider token usage remains required and recorded after every invocation for
+observability, never as a per-call or cumulative rejection threshold. Chat does
+not send `max_output_tokens`; the provider's context/output limits apply. Actual
+provider errors, incomplete output and invalid schemas remain explicit failures.
+Native coordination retains its 131,072-character transport ceiling. Context
+packing uses that character boundary rather than a tokenizer-dependent 11,000-token
+ceiling; optional old exchanges, learned hints and groceries can be omitted to fit,
+but explicit restrictions and the current request are never truncated.
 
 The specialist returns a strict, bounded **internal recipe projection**: title,
 total minutes, ingredient IDs/names, instructions referencing those IDs, and
@@ -101,6 +102,17 @@ For [conditional Web IQ](recipe-specialist.md#conditional-web-iq), the strict
 routing function additionally supplies a minimized public `web_query`, or null
 when `use_web=false`. The specialist's isolated web invocation counts toward the
 same four-model limit; a successful web path leaves no additional revision call.
+The same routing function returns `quantity_ingredients`, a bounded array of public
+food names for ambiguous user-supplied amounts needing cited comparisons. The
+Orchestrator interprets wording and formats semantically; the backend constructs
+the quantity query from that array, not regexes, pantry aliases or user-word matching.
+An empty array means no quantity lookup. Ordinary recipe composition and unknown
+pantry stock do not automatically require one. Current-information intent likewise
+comes from the typed `use_web` flag, not a current/latest keyword pattern; query
+privacy and minimization guards still apply.
+Policy 6 changes the published function schema and source instructions. Publish
+and read back a matching Orchestrator source and update the environment's source
+pin before activating this backend; the existing policy-5 source is not compatible.
 Native sources and claims remain in the full recipe, not its fit-review projection.
 If a revision is requested, its specialist invocation is the fourth and last:
 the backend rechecks its projection and returns either a candidate with brief
@@ -319,6 +331,6 @@ python -m pytest tests\unit\test_orchestrator.py tests\unit\test_orchestrator_ga
 contradictory input, impossible time and explicit/learned-conflict contracts.
 Tests use scripted model decisions, mocked specialists/tools, and the real pinned
 SDK request/response transport. They cover native handoff, identity attribution,
-bounded errors/rejections, conditional Web IQ, token/call limits, cancellation,
+bounded errors/rejections, conditional Web IQ, call limits, token accounting, cancellation,
 and reproducible source publication. These are contract/policy tests, not evidence
 of live model interpretation quality or deployed tool access.

@@ -109,7 +109,7 @@ def test_one_pinned_agentic_retrieval_validates_provenance_without_writes() -> N
         "name": "recipe-agent",
         "version": "7",
     }
-    assert arguments["max_output_tokens"] == 1500
+    assert "max_output_tokens" not in arguments
     assert arguments["extra_body"]["max_tool_calls"] == 1
     assert arguments["extra_body"]["store"] is False
     assert '{"query_variants":["rice dinner"]}' in arguments["input"]

@@ -12,9 +12,9 @@ from sous_chef.adapters.cosmos import CosmosRepository
 from sous_chef.domain.authorization import AuthenticatedUser
 from sous_chef.domain.context import (
     CONTEXT_FRAMING_TOKENS,
+    MAX_CONTEXT_CHARACTERS,
     MAX_CONTEXT_EXCHANGES,
     MAX_CONTEXT_LEARNED,
-    MAX_CONTEXT_TOKENS,
     MIN_LEARNED_CONFIDENCE,
     MIN_LEARNED_COOKED_SUPPORT,
     ContextExchange,
@@ -58,7 +58,7 @@ def context_tokens(context: RequestContext) -> int:
 
 
 def bound_context(context: RequestContext) -> RequestContext:
-    while context_tokens(context) > MAX_CONTEXT_TOKENS:
+    while len(context.prompt) > MAX_CONTEXT_CHARACTERS:
         if context.history:
             context = context.model_copy(update={"history": context.history[1:]})
         elif context.learned_preferences:

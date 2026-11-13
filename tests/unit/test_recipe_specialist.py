@@ -26,7 +26,6 @@ from sous_chef.domain.recipes import (
     NutritionEvidence,
     NutritionRequest,
     RecipeDraft,
-    RecipeGenerationRequest,
     RecipeGrounding,
     RecipeToolError,
     StructuredRecipe,
@@ -36,7 +35,7 @@ from sous_chef.recipe_definition import RECIPE_INSTRUCTIONS, build_recipe_defini
 from sous_chef.services.context import _encoding
 from sous_chef.services.orchestrator import ExecutionBudget, OrchestratorService
 from sous_chef.services.recipe_grounding import retrieval_query
-from sous_chef.services.recipe_specialist import RecipeSpecialistService
+from sous_chef.services.recipe_specialist import RecipeSpecialistService, _inventory
 from sous_chef.settings import ConfigurationError
 from sous_chef.telemetry import configure_safe_telemetry, trace_id
 from test_foundry_gateway import Harness, response_body
@@ -125,7 +124,7 @@ def run(
     *,
     budget: ExecutionBudget | None = None,
     deadline: float | None = None,
-    max_input_tokens: int = POLICY.max_input_tokens,
+    max_input_tokens: int | None = None,
     selected_food_ids: dict[str, str] | None = None,
 ) -> SpecialistResult:
     operation = uuid4() if budget is None else budget.operation_id
@@ -138,7 +137,7 @@ def run(
             operation_id=operation,
             budget=ExecutionBudget(operation) if budget is None else budget,
             max_input_tokens=max_input_tokens,
-            max_output_tokens=POLICY.output_tokens_per_call,
+            max_output_tokens=None,
             deadline=monotonic() + 60 if deadline is None else deadline,
             selected_food_ids=selected_food_ids,
         )
@@ -323,9 +322,9 @@ def test_citations_cannot_support_invented_quotes_or_adaptation_claims(
     assert not tools.nutrition_requests
 
 
-def test_ordinary_pantry_request_cannot_authorize_web_using_specialist_requirements() -> None:
+def test_specialist_cannot_search_without_coordinator_budget_authorization() -> None:
     service, tools, transport = setup()
-    with pytest.raises(FoundryGatewayError) as caught:
+    with pytest.raises(OrchestratorError) as caught:
         asyncio.run(
             service.generate(
                 cooking_context(),
@@ -342,7 +341,7 @@ def test_ordinary_pantry_request_cannot_authorize_web_using_specialist_requireme
                 deadline=monotonic() + 60,
             )
         )
-    assert caught.value.code == FoundryFailure.REJECTED
+    assert caught.value.code == OrchestratorFailure.BUDGET_EXHAUSTED
     assert not tools.queries and not transport.requests
 
 
@@ -417,6 +416,25 @@ def test_repeated_ingredient_lines_do_not_reuse_the_same_groceries() -> None:
     assert recipe.shopping_items[0].quantity == Decimal(50)
 
 
+@pytest.mark.parametrize("name", ["regional spice blend", "unlisted grain", "\u98df\u6750"])
+def test_unlisted_inventory_matches_exact_names_and_tracks_remaining_amounts(name: str) -> None:
+    base = RecipeDraft.model_validate_json(json.dumps(FIXTURE["draft"])).ingredients[0]
+    lines = (
+        base.model_copy(update={"name": name, "quantity": Decimal(100)}),
+        base.model_copy(update={"line_id": "second", "name": name, "quantity": Decimal(150)}),
+    )
+    pantry = grocery(name.upper(), 200)
+    data = cooking_context().model_copy(update={"groceries": (pantry,)})
+    ingredients, shopping = _inventory(lines, data)
+    assert [line.inventory_status for line in ingredients] == ["available", "missing"]
+    assert all(line.ingredient_id is None for line in ingredients)
+    assert all(line.grocery_ids == (pantry.grocery_id,) for line in ingredients)
+    assert shopping[0].ingredient_line_id == "second" and shopping[0].quantity == Decimal(50)
+    cooked = data.model_copy(update={"groceries": (grocery("cooked " + name, 200),)})
+    ingredients, _ = _inventory(lines[:1], cooked)
+    assert ingredients[0].inventory_status == "missing" and not ingredients[0].grocery_ids
+
+
 @pytest.mark.parametrize("quantity", [None, 0.001, 1_000_000])
 def test_supported_quantity_boundaries_remain_numeric_or_explicitly_unknown(
     quantity: float | None,
@@ -459,34 +477,34 @@ def test_tool_calls_share_budget_and_fail_before_an_unreserved_call() -> None:
     assert len(tools.queries) == 1 and len(transport.requests) == 1
 
 
-def test_token_preflight_stops_before_the_managed_invocation() -> None:
+def test_obsolete_input_hint_does_not_block_a_managed_invocation() -> None:
     service, tools, transport = setup()
-    with pytest.raises(FoundryGatewayError) as caught:
-        run(service, max_input_tokens=1)
-    assert caught.value.code == FoundryFailure.REJECTED
-    assert len(tools.queries) == 1 and transport.requests == []
+    assert run(service, max_input_tokens=1).recipe is not None
+    assert len(tools.queries) == 1 and len(transport.requests) == 1
+    assert "max_output_tokens" not in json.loads(transport.requests[0].content)
 
 
-def test_aggregate_tool_token_ceiling_accepts_4000_but_rejects_4001() -> None:
+def test_recipe_grounding_above_the_old_token_ceiling_is_accepted() -> None:
     encoding = _encoding()
-    text = json.dumps("\u4e00" * (POLICY.max_tool_result_tokens - 2), ensure_ascii=False)
-    assert len(encoding.encode(text, disallowed_special=())) == 4000
-    request = RecipeGenerationRequest(
-        role=AgentRole.RECIPE_NUTRITION,
-        prompt=text,
-        grounding_json=text,
-        max_input_tokens=16000,
-        max_output_tokens=1500,
+    service, tools, transport = setup()
+    tools.grounding = tools.grounding.model_copy(
+        update={
+            "recipes": tuple(
+                item.model_copy(
+                    update={"snippet": "".join(chr(0x20000 + index) for index in range(1500))}
+                )
+                for item in tools.grounding.recipes
+            )
+        }
     )
-    gateway = FoundryGateway(coordination_settings())
-    gateway._check_recipe_input(request)
-    larger = json.dumps("\u4e00" * (POLICY.max_tool_result_tokens - 1), ensure_ascii=False)
-    assert len(encoding.encode(larger, disallowed_special=())) == 4001
-    with pytest.raises(FoundryGatewayError) as caught:
-        gateway._check_recipe_input(
-            request.model_copy(update={"prompt": larger, "grounding_json": larger})
-        )
-    assert caught.value.code == FoundryFailure.REJECTED
+    assert len(encoding.encode(tools.grounding.model_dump_json())) > 4000
+    draft = copy.deepcopy(FIXTURE["draft"])
+    draft["sourceClaims"] = []
+    transport.body = body(
+        response_body()["output"][0]
+        | {"content": [{"type": "output_text", "text": json.dumps(draft), "annotations": []}]}
+    )
+    assert run(service).recipe is not None
 
 
 @pytest.mark.parametrize(

@@ -33,7 +33,6 @@ from sous_chef.adapters.foundry_iq import (
 )
 from sous_chef.bootstrap_agents import verify_identity, verify_version
 from sous_chef.domain.agent_identity import AgentRole, IdentityError
-from sous_chef.domain.orchestrator import POLICY
 from sous_chef.domain.recipes import CuratedRecipe, RecipeToolError
 from sous_chef.publish_orchestrator import prepare_agent_source
 from sous_chef.recipe_definition import (
@@ -664,7 +663,6 @@ def check(
                 "Do not use web search. Follow the published response format after retrieval. "
                 "The generated draft is not presented or used as an accepted recipe."
             ),
-            max_output_tokens=POLICY.output_tokens_per_call,
             extra_headers={"X-Client-Request-Id": str(operation_id)},
             extra_body={
                 "agent_reference": {
@@ -681,8 +679,6 @@ def check(
         or response.error is not None
         or response.incomplete_details is not None
         or response.usage is None
-        or response.usage.input_tokens > POLICY.max_input_tokens
-        or response.usage.output_tokens > POLICY.output_tokens_per_call
     ):
         raise KnowledgeCheckError(
             "The bounded specialist invocation did not complete successfully."
@@ -706,10 +702,7 @@ def check(
         validate_recipe_mcp_envelopes(
             [item.model_dump_json() for item in listings],
             [item.model_dump_json() for item in calls],
-            max_tool_result_tokens=max(
-                POLICY.max_tool_result_tokens,
-                knowledge.mcp_max_context_tokens,
-            ),
+            max_tool_result_tokens=knowledge.mcp_max_context_tokens,
         )
     except ValueError:
         raise KnowledgeCheckError(
