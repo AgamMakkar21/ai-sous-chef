@@ -1,0 +1,803 @@
+{
+  "before": {
+    "version": "asc58-model-efficiency-v1",
+    "measured_at": "2026-11-13T20:43:55.983684+00:00",
+    "versions": {
+      "git_commit": "7b83f9ac89d06828aa35e73655e3107e11b8f074",
+      "git_worktree_dirty": true,
+      "source_tree_sha256": "62f0be243080aaf94e8183374416d90f50997b027385aecbee291f302d3c30f9",
+      "prompt_sha256": {
+        "orchestrator_definition.py": "473ee903c2ab4f68937f0905e125c6d80c01179ab103b25092255a52de40a575",
+        "recipe_definition.py": "9a47a481d75636c548463c9b7cfa4cdc70740064d2e91116afef97fba8aa6213"
+      },
+      "policy_versions": {
+        "orchestrator": 5,
+        "recipe": 8
+      },
+      "sdk": {
+        "azure-ai-projects": "2.8.0",
+        "openai": "3.27.0",
+        "azure-identity": "1.26.0"
+      },
+      "tools": {
+        "foundry_iq": "production validated MCP retrieval envelope",
+        "usda": "production USDA MCP adapter and deterministic serving aggregation",
+        "web_iq": "production minimized public-query policy and native citations",
+        "implementation_sha256": "62f0be243080aaf94e8183374416d90f50997b027385aecbee291f302d3c30f9"
+      },
+      "python": "3.12.10",
+      "platform": "Windows-11-10.0.26300-SP0",
+      "tiktoken": "0.12.0"
+    },
+    "tokenizer": "o200k_base",
+    "workload_sha256": "0d140f85961029388d0c0fc517c86d7e123dd9bf7815b16f9b8b06cdfcea742a",
+    "quality_suite_sha256": "c14b6c47e080a1cd413e438f7ccae3eb4b82719d96deb77ca8d9b7679207a94a",
+    "fixed_models": {
+      "orchestrator": "gpt-5.4-mini",
+      "recipe_nutrition": "gpt-5.4",
+      "extraction": "gpt-5.1-nano"
+    },
+    "budgets": {
+      "orchestrator": {
+        "version": 5,
+        "max_model_calls": 4,
+        "max_calorie_fallback_calls": 1,
+        "max_specialist_calls": 2,
+        "max_revisions": 1,
+        "max_tool_calls": 8,
+        "max_web_calls": 1,
+        "web_deadline_seconds": 10,
+        "max_tool_result_tokens": 4000,
+        "deadline_seconds": 60,
+        "max_input_tokens": 16000,
+        "total_input_tokens": 32000,
+        "total_output_tokens": 6000,
+        "output_tokens_per_call": 1500
+      },
+      "context_tokens_including_framing": 11000,
+      "history_exchanges": 10,
+      "learned_entries": 20,
+      "retrieval_max_results_default": 3,
+      "retrieval_max_context_tokens_default": 4000,
+      "extraction_input_tokens": 6000,
+      "extraction_output_tokens": 1000,
+      "extraction_prior_notes": 5
+    },
+    "contexts": {
+      "pantry-3": {
+        "visible_input_tokens": 297,
+        "backend_context_sha256": "2ebcde5eac870a0276bfb6886050516a1bc9f3e7254553b1c54b8aef3894dc0c",
+        "semantic_input_sha256": "381371dc31ad61a9eda0b228d9f76e902e876160dd7aef5cf356c132a216fef1",
+        "local_context_preparation_ms": {
+          "samples": 101,
+          "p50": 0.38690000656060874,
+          "p95": 0.8392000017920509,
+          "p99": 1.2196000025141984
+        }
+      },
+      "pantry-40": {
+        "visible_input_tokens": 2644,
+        "backend_context_sha256": "fe3cbafa8554192b8e74062c8909a92c07ebbf94cab8eebcf74384ab9ff8965e",
+        "semantic_input_sha256": "05b37397d38f1bc898d8061293bd2c8c8e654fea762367c9e292a1e9751b0488",
+        "local_context_preparation_ms": {
+          "samples": 101,
+          "p50": 3.7447000067913905,
+          "p95": 5.967500008409843,
+          "p99": 8.875200001057237
+        }
+      },
+      "pantry-100": {
+        "visible_input_tokens": 6448,
+        "backend_context_sha256": "5b928655b903d34312f0f72bfab76a6d422d45a5cb8dfab914bb8e9a9d8a27d2",
+        "semantic_input_sha256": "bffe83e20904554ac005a2799cc7cf28ec0ed56bdc41e76dc03c661b5337b160",
+        "local_context_preparation_ms": {
+          "samples": 101,
+          "p50": 8.058699997491203,
+          "p95": 9.596000003512017,
+          "p99": 20.861400000285357
+        }
+      },
+      "history-10": {
+        "visible_input_tokens": 799,
+        "backend_context_sha256": "dce864d25fcd3a431dd3ed78ea988c052fe2d607a1d52c1cdc9b50ac74ae1984",
+        "semantic_input_sha256": "b7aeaa22a3a38fc6aaf028792b3a0db330cbb1fe9259ad74c21811002b4b01b5",
+        "local_context_preparation_ms": {
+          "samples": 101,
+          "p50": 0.6591000128537416,
+          "p95": 1.3722000003326684,
+          "p99": 1.7041999963112175
+        }
+      }
+    },
+    "replay": [
+      {
+        "case_id": "normal-no-web",
+        "model_calls": 3,
+        "recorded_model_calls": 3,
+        "checks": {
+          "expected_outcome": "pass",
+          "bounded_execution": "pass",
+          "necessary_tools": "pass",
+          "no_fault_retry": "pass",
+          "usage_attribution": "pass",
+          "structured_recipe": "pass",
+          "time_skill": "pass",
+          "inventory_facts": "pass",
+          "pantry_coverage": "pass",
+          "source_facts": "pass",
+          "nutrition_provenance": "pass",
+          "nutrition_arithmetic": "pass"
+        },
+        "outcome_sha256": "ed00917d0885f79046d134a998775a75cdc87a12796bf936dd056bb1dce69755"
+      },
+      {
+        "case_id": "insufficient-groceries",
+        "model_calls": 3,
+        "recorded_model_calls": 3,
+        "checks": {
+          "expected_outcome": "pass",
+          "bounded_execution": "pass",
+          "necessary_tools": "pass",
+          "no_fault_retry": "pass",
+          "usage_attribution": "pass",
+          "structured_recipe": "pass",
+          "time_skill": "pass",
+          "inventory_facts": "pass",
+          "source_facts": "pass",
+          "nutrition_provenance": "pass",
+          "nutrition_arithmetic": "pass"
+        },
+        "outcome_sha256": "ed00917d0885f79046d134a998775a75cdc87a12796bf936dd056bb1dce69755"
+      },
+      {
+        "case_id": "unrealistic-time",
+        "model_calls": 1,
+        "recorded_model_calls": 1,
+        "checks": {
+          "expected_outcome": "pass",
+          "bounded_execution": "pass",
+          "necessary_tools": "pass",
+          "no_fault_retry": "pass",
+          "usage_attribution": "pass",
+          "structured_recipe": "pass"
+        },
+        "outcome_sha256": "0a08ce5be27ecb87eb7c8ac45025b18f0fbd0062aaa67e470acfed05239dfd57"
+      },
+      {
+        "case_id": "missing-nutrition",
+        "model_calls": 3,
+        "recorded_model_calls": 3,
+        "checks": {
+          "expected_outcome": "pass",
+          "bounded_execution": "pass",
+          "necessary_tools": "pass",
+          "no_fault_retry": "pass",
+          "usage_attribution": "pass",
+          "structured_recipe": "pass",
+          "time_skill": "pass",
+          "inventory_facts": "pass",
+          "pantry_coverage": "pass",
+          "source_facts": "pass",
+          "nutrition_provenance": "pass",
+          "missing_nutrition_handling": "pass"
+        },
+        "outcome_sha256": "ed00917d0885f79046d134a998775a75cdc87a12796bf936dd056bb1dce69755"
+      },
+      {
+        "case_id": "nutrition-timeout",
+        "model_calls": 2,
+        "recorded_model_calls": 2,
+        "checks": {
+          "expected_outcome": "pass",
+          "bounded_execution": "pass",
+          "necessary_tools": "pass",
+          "no_fault_retry": "pass",
+          "usage_attribution": "pass",
+          "structured_recipe": "pass"
+        },
+        "outcome_sha256": "a36b0865a997d46f2b9ceb1f80d38485a65cc6f061bad700b11f226d92227c49"
+      },
+      {
+        "case_id": "conflicting-taste-nutrition",
+        "model_calls": 3,
+        "recorded_model_calls": 3,
+        "checks": {
+          "expected_outcome": "pass",
+          "bounded_execution": "pass",
+          "necessary_tools": "pass",
+          "no_fault_retry": "pass",
+          "usage_attribution": "pass",
+          "structured_recipe": "pass",
+          "time_skill": "pass",
+          "inventory_facts": "pass",
+          "pantry_coverage": "pass",
+          "source_facts": "pass",
+          "nutrition_provenance": "pass",
+          "nutrition_arithmetic": "pass"
+        },
+        "outcome_sha256": "ed00917d0885f79046d134a998775a75cdc87a12796bf936dd056bb1dce69755"
+      },
+      {
+        "case_id": "current-public-information",
+        "model_calls": 3,
+        "recorded_model_calls": 3,
+        "checks": {
+          "expected_outcome": "pass",
+          "bounded_execution": "pass",
+          "necessary_tools": "pass",
+          "no_fault_retry": "pass",
+          "usage_attribution": "pass",
+          "structured_recipe": "pass",
+          "time_skill": "pass",
+          "inventory_facts": "pass",
+          "pantry_coverage": "pass",
+          "source_facts": "pass",
+          "nutrition_provenance": "pass",
+          "nutrition_arithmetic": "pass"
+        },
+        "outcome_sha256": "ed00917d0885f79046d134a998775a75cdc87a12796bf936dd056bb1dce69755"
+      },
+      {
+        "case_id": "creative-within-constraints",
+        "model_calls": 3,
+        "recorded_model_calls": 3,
+        "checks": {
+          "expected_outcome": "pass",
+          "bounded_execution": "pass",
+          "necessary_tools": "pass",
+          "no_fault_retry": "pass",
+          "usage_attribution": "pass",
+          "structured_recipe": "pass",
+          "time_skill": "pass",
+          "inventory_facts": "pass",
+          "pantry_coverage": "pass",
+          "source_facts": "pass",
+          "nutrition_provenance": "pass",
+          "nutrition_arithmetic": "pass"
+        },
+        "outcome_sha256": "ed00917d0885f79046d134a998775a75cdc87a12796bf936dd056bb1dce69755"
+      }
+    ],
+    "calls": [
+      {
+        "case_id": "normal-no-web",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 297
+      },
+      {
+        "case_id": "normal-no-web",
+        "model": "gpt-5.4",
+        "visible_input_tokens": 440
+      },
+      {
+        "case_id": "normal-no-web",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 297
+      },
+      {
+        "case_id": "insufficient-groceries",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 185
+      },
+      {
+        "case_id": "insufficient-groceries",
+        "model": "gpt-5.4",
+        "visible_input_tokens": 346
+      },
+      {
+        "case_id": "insufficient-groceries",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 185
+      },
+      {
+        "case_id": "unrealistic-time",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 309
+      },
+      {
+        "case_id": "missing-nutrition",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 308
+      },
+      {
+        "case_id": "missing-nutrition",
+        "model": "gpt-5.4",
+        "visible_input_tokens": 473
+      },
+      {
+        "case_id": "missing-nutrition",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 308
+      },
+      {
+        "case_id": "nutrition-timeout",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 294
+      },
+      {
+        "case_id": "nutrition-timeout",
+        "model": "gpt-5.4",
+        "visible_input_tokens": 431
+      },
+      {
+        "case_id": "conflicting-taste-nutrition",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 320
+      },
+      {
+        "case_id": "conflicting-taste-nutrition",
+        "model": "gpt-5.4",
+        "visible_input_tokens": 509
+      },
+      {
+        "case_id": "conflicting-taste-nutrition",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 320
+      },
+      {
+        "case_id": "current-public-information",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 314
+      },
+      {
+        "case_id": "current-public-information",
+        "model": "gpt-5.4",
+        "visible_input_tokens": 500
+      },
+      {
+        "case_id": "current-public-information",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 314
+      },
+      {
+        "case_id": "creative-within-constraints",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 315
+      },
+      {
+        "case_id": "creative-within-constraints",
+        "model": "gpt-5.4",
+        "visible_input_tokens": 494
+      },
+      {
+        "case_id": "creative-within-constraints",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 315
+      }
+    ],
+    "reference_prices": {
+      "basis": "OpenAI public standard uncached input; not an approved Azure rate card",
+      "usd_per_million_input_tokens": {
+        "gpt-5.4-mini": 0.75,
+        "gpt-5.4": 2.5
+      },
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-5.4-mini",
+        "https://developers.openai.com/api/docs/models/gpt-5.4"
+      ]
+    },
+    "cost": {
+      "estimated_visible_input_reference_usd": 0.01104325,
+      "scope": "Only request.prompt text; excludes instructions, schemas, tool results, reasoning, output, caching and tool charges. Local tokens are not provider usage.",
+      "actual_cloud_spend_usd": 0,
+      "azure_full_request_estimated_usd": null,
+      "provider_input_tokens": null,
+      "provider_output_tokens": null,
+      "live_model_latency_ms": null
+    },
+    "deterministic_passed": true,
+    "live_quality_passed": false
+  },
+  "after": {
+    "version": "asc58-model-efficiency-v1",
+    "measured_at": "2026-11-13T20:51:27.086500+00:00",
+    "versions": {
+      "git_commit": "7b83f9ac89d06828aa35e73655e3107e11b8f074",
+      "git_worktree_dirty": true,
+      "source_tree_sha256": "88e9253f59b62700f555163021f81d68ba2e8c3e1dc355e27624d883a9972537",
+      "prompt_sha256": {
+        "orchestrator_definition.py": "473ee903c2ab4f68937f0905e125c6d80c01179ab103b25092255a52de40a575",
+        "recipe_definition.py": "9a47a481d75636c548463c9b7cfa4cdc70740064d2e91116afef97fba8aa6213"
+      },
+      "policy_versions": {
+        "orchestrator": 5,
+        "recipe": 8
+      },
+      "sdk": {
+        "azure-ai-projects": "2.8.0",
+        "openai": "3.27.0",
+        "azure-identity": "1.26.0"
+      },
+      "tools": {
+        "foundry_iq": "production validated MCP retrieval envelope",
+        "usda": "production USDA MCP adapter and deterministic serving aggregation",
+        "web_iq": "production minimized public-query policy and native citations",
+        "implementation_sha256": "88e9253f59b62700f555163021f81d68ba2e8c3e1dc355e27624d883a9972537"
+      },
+      "python": "3.12.10",
+      "platform": "Windows-11-10.0.26300-SP0",
+      "tiktoken": "0.12.0"
+    },
+    "tokenizer": "o200k_base",
+    "workload_sha256": "0d140f85961029388d0c0fc517c86d7e123dd9bf7815b16f9b8b06cdfcea742a",
+    "quality_suite_sha256": "c14b6c47e080a1cd413e438f7ccae3eb4b82719d96deb77ca8d9b7679207a94a",
+    "fixed_models": {
+      "orchestrator": "gpt-5.4-mini",
+      "recipe_nutrition": "gpt-5.4",
+      "extraction": "gpt-5.1-nano"
+    },
+    "budgets": {
+      "orchestrator": {
+        "version": 5,
+        "max_model_calls": 4,
+        "max_calorie_fallback_calls": 1,
+        "max_specialist_calls": 2,
+        "max_revisions": 1,
+        "max_tool_calls": 8,
+        "max_web_calls": 1,
+        "web_deadline_seconds": 10,
+        "max_tool_result_tokens": 4000,
+        "deadline_seconds": 60,
+        "max_input_tokens": 16000,
+        "total_input_tokens": 32000,
+        "total_output_tokens": 6000,
+        "output_tokens_per_call": 1500
+      },
+      "context_tokens_including_framing": 11000,
+      "history_exchanges": 10,
+      "learned_entries": 20,
+      "retrieval_max_results_default": 3,
+      "retrieval_max_context_tokens_default": 4000,
+      "extraction_input_tokens": 6000,
+      "extraction_output_tokens": 1000,
+      "extraction_prior_notes": 5
+    },
+    "contexts": {
+      "pantry-3": {
+        "visible_input_tokens": 237,
+        "backend_context_sha256": "2ebcde5eac870a0276bfb6886050516a1bc9f3e7254553b1c54b8aef3894dc0c",
+        "semantic_input_sha256": "381371dc31ad61a9eda0b228d9f76e902e876160dd7aef5cf356c132a216fef1",
+        "local_context_preparation_ms": {
+          "samples": 101,
+          "p50": 0.2609000075608492,
+          "p95": 0.5875000060768798,
+          "p99": 0.9103999909712002
+        }
+      },
+      "pantry-40": {
+        "visible_input_tokens": 1844,
+        "backend_context_sha256": "fe3cbafa8554192b8e74062c8909a92c07ebbf94cab8eebcf74384ab9ff8965e",
+        "semantic_input_sha256": "05b37397d38f1bc898d8061293bd2c8c8e654fea762367c9e292a1e9751b0488",
+        "local_context_preparation_ms": {
+          "samples": 101,
+          "p50": 2.482600000803359,
+          "p95": 3.9495000091847032,
+          "p99": 4.815099993720651
+        }
+      },
+      "pantry-100": {
+        "visible_input_tokens": 4448,
+        "backend_context_sha256": "5b928655b903d34312f0f72bfab76a6d422d45a5cb8dfab914bb8e9a9d8a27d2",
+        "semantic_input_sha256": "bffe83e20904554ac005a2799cc7cf28ec0ed56bdc41e76dc03c661b5337b160",
+        "local_context_preparation_ms": {
+          "samples": 101,
+          "p50": 5.643900003633462,
+          "p95": 6.930000003194436,
+          "p99": 7.581999991089106
+        }
+      },
+      "history-10": {
+        "visible_input_tokens": 528,
+        "backend_context_sha256": "dce864d25fcd3a431dd3ed78ea988c052fe2d607a1d52c1cdc9b50ac74ae1984",
+        "semantic_input_sha256": "b7aeaa22a3a38fc6aaf028792b3a0db330cbb1fe9259ad74c21811002b4b01b5",
+        "local_context_preparation_ms": {
+          "samples": 101,
+          "p50": 0.7261999999172986,
+          "p95": 1.2408000038703904,
+          "p99": 1.633800013223663
+        }
+      }
+    },
+    "replay": [
+      {
+        "case_id": "normal-no-web",
+        "model_calls": 3,
+        "recorded_model_calls": 3,
+        "checks": {
+          "expected_outcome": "pass",
+          "bounded_execution": "pass",
+          "necessary_tools": "pass",
+          "no_fault_retry": "pass",
+          "usage_attribution": "pass",
+          "structured_recipe": "pass",
+          "time_skill": "pass",
+          "inventory_facts": "pass",
+          "pantry_coverage": "pass",
+          "source_facts": "pass",
+          "nutrition_provenance": "pass",
+          "nutrition_arithmetic": "pass"
+        },
+        "outcome_sha256": "ed00917d0885f79046d134a998775a75cdc87a12796bf936dd056bb1dce69755"
+      },
+      {
+        "case_id": "insufficient-groceries",
+        "model_calls": 3,
+        "recorded_model_calls": 3,
+        "checks": {
+          "expected_outcome": "pass",
+          "bounded_execution": "pass",
+          "necessary_tools": "pass",
+          "no_fault_retry": "pass",
+          "usage_attribution": "pass",
+          "structured_recipe": "pass",
+          "time_skill": "pass",
+          "inventory_facts": "pass",
+          "source_facts": "pass",
+          "nutrition_provenance": "pass",
+          "nutrition_arithmetic": "pass"
+        },
+        "outcome_sha256": "ed00917d0885f79046d134a998775a75cdc87a12796bf936dd056bb1dce69755"
+      },
+      {
+        "case_id": "unrealistic-time",
+        "model_calls": 1,
+        "recorded_model_calls": 1,
+        "checks": {
+          "expected_outcome": "pass",
+          "bounded_execution": "pass",
+          "necessary_tools": "pass",
+          "no_fault_retry": "pass",
+          "usage_attribution": "pass",
+          "structured_recipe": "pass"
+        },
+        "outcome_sha256": "0a08ce5be27ecb87eb7c8ac45025b18f0fbd0062aaa67e470acfed05239dfd57"
+      },
+      {
+        "case_id": "missing-nutrition",
+        "model_calls": 3,
+        "recorded_model_calls": 3,
+        "checks": {
+          "expected_outcome": "pass",
+          "bounded_execution": "pass",
+          "necessary_tools": "pass",
+          "no_fault_retry": "pass",
+          "usage_attribution": "pass",
+          "structured_recipe": "pass",
+          "time_skill": "pass",
+          "inventory_facts": "pass",
+          "pantry_coverage": "pass",
+          "source_facts": "pass",
+          "nutrition_provenance": "pass",
+          "missing_nutrition_handling": "pass"
+        },
+        "outcome_sha256": "ed00917d0885f79046d134a998775a75cdc87a12796bf936dd056bb1dce69755"
+      },
+      {
+        "case_id": "nutrition-timeout",
+        "model_calls": 2,
+        "recorded_model_calls": 2,
+        "checks": {
+          "expected_outcome": "pass",
+          "bounded_execution": "pass",
+          "necessary_tools": "pass",
+          "no_fault_retry": "pass",
+          "usage_attribution": "pass",
+          "structured_recipe": "pass"
+        },
+        "outcome_sha256": "a36b0865a997d46f2b9ceb1f80d38485a65cc6f061bad700b11f226d92227c49"
+      },
+      {
+        "case_id": "conflicting-taste-nutrition",
+        "model_calls": 3,
+        "recorded_model_calls": 3,
+        "checks": {
+          "expected_outcome": "pass",
+          "bounded_execution": "pass",
+          "necessary_tools": "pass",
+          "no_fault_retry": "pass",
+          "usage_attribution": "pass",
+          "structured_recipe": "pass",
+          "time_skill": "pass",
+          "inventory_facts": "pass",
+          "pantry_coverage": "pass",
+          "source_facts": "pass",
+          "nutrition_provenance": "pass",
+          "nutrition_arithmetic": "pass"
+        },
+        "outcome_sha256": "ed00917d0885f79046d134a998775a75cdc87a12796bf936dd056bb1dce69755"
+      },
+      {
+        "case_id": "current-public-information",
+        "model_calls": 3,
+        "recorded_model_calls": 3,
+        "checks": {
+          "expected_outcome": "pass",
+          "bounded_execution": "pass",
+          "necessary_tools": "pass",
+          "no_fault_retry": "pass",
+          "usage_attribution": "pass",
+          "structured_recipe": "pass",
+          "time_skill": "pass",
+          "inventory_facts": "pass",
+          "pantry_coverage": "pass",
+          "source_facts": "pass",
+          "nutrition_provenance": "pass",
+          "nutrition_arithmetic": "pass"
+        },
+        "outcome_sha256": "ed00917d0885f79046d134a998775a75cdc87a12796bf936dd056bb1dce69755"
+      },
+      {
+        "case_id": "creative-within-constraints",
+        "model_calls": 3,
+        "recorded_model_calls": 3,
+        "checks": {
+          "expected_outcome": "pass",
+          "bounded_execution": "pass",
+          "necessary_tools": "pass",
+          "no_fault_retry": "pass",
+          "usage_attribution": "pass",
+          "structured_recipe": "pass",
+          "time_skill": "pass",
+          "inventory_facts": "pass",
+          "pantry_coverage": "pass",
+          "source_facts": "pass",
+          "nutrition_provenance": "pass",
+          "nutrition_arithmetic": "pass"
+        },
+        "outcome_sha256": "ed00917d0885f79046d134a998775a75cdc87a12796bf936dd056bb1dce69755"
+      }
+    ],
+    "calls": [
+      {
+        "case_id": "normal-no-web",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 237
+      },
+      {
+        "case_id": "normal-no-web",
+        "model": "gpt-5.4",
+        "visible_input_tokens": 380
+      },
+      {
+        "case_id": "normal-no-web",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 237
+      },
+      {
+        "case_id": "insufficient-groceries",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 165
+      },
+      {
+        "case_id": "insufficient-groceries",
+        "model": "gpt-5.4",
+        "visible_input_tokens": 326
+      },
+      {
+        "case_id": "insufficient-groceries",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 165
+      },
+      {
+        "case_id": "unrealistic-time",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 249
+      },
+      {
+        "case_id": "missing-nutrition",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 248
+      },
+      {
+        "case_id": "missing-nutrition",
+        "model": "gpt-5.4",
+        "visible_input_tokens": 413
+      },
+      {
+        "case_id": "missing-nutrition",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 248
+      },
+      {
+        "case_id": "nutrition-timeout",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 234
+      },
+      {
+        "case_id": "nutrition-timeout",
+        "model": "gpt-5.4",
+        "visible_input_tokens": 371
+      },
+      {
+        "case_id": "conflicting-taste-nutrition",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 260
+      },
+      {
+        "case_id": "conflicting-taste-nutrition",
+        "model": "gpt-5.4",
+        "visible_input_tokens": 449
+      },
+      {
+        "case_id": "conflicting-taste-nutrition",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 260
+      },
+      {
+        "case_id": "current-public-information",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 254
+      },
+      {
+        "case_id": "current-public-information",
+        "model": "gpt-5.4",
+        "visible_input_tokens": 440
+      },
+      {
+        "case_id": "current-public-information",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 254
+      },
+      {
+        "case_id": "creative-within-constraints",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 255
+      },
+      {
+        "case_id": "creative-within-constraints",
+        "model": "gpt-5.4",
+        "visible_input_tokens": 434
+      },
+      {
+        "case_id": "creative-within-constraints",
+        "model": "gpt-5.4-mini",
+        "visible_input_tokens": 255
+      }
+    ],
+    "reference_prices": {
+      "basis": "OpenAI public standard uncached input; not an approved Azure rate card",
+      "usd_per_million_input_tokens": {
+        "gpt-5.4-mini": 0.75,
+        "gpt-5.4": 2.5
+      },
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-5.4-mini",
+        "https://developers.openai.com/api/docs/models/gpt-5.4"
+      ]
+    },
+    "cost": {
+      "estimated_visible_input_reference_usd": 0.00952325,
+      "scope": "Only request.prompt text; excludes instructions, schemas, tool results, reasoning, output, caching and tool charges. Local tokens are not provider usage.",
+      "actual_cloud_spend_usd": 0,
+      "azure_full_request_estimated_usd": null,
+      "provider_input_tokens": null,
+      "provider_output_tokens": null,
+      "live_model_latency_ms": null
+    },
+    "deterministic_passed": true,
+    "live_quality_passed": false
+  },
+  "comparison": {
+    "matched": true,
+    "context_savings": {
+      "pantry-3": {
+        "tokens_saved": 60,
+        "percent_saved": 20.2020202020202
+      },
+      "pantry-40": {
+        "tokens_saved": 800,
+        "percent_saved": 30.257186081694403
+      },
+      "pantry-100": {
+        "tokens_saved": 2000,
+        "percent_saved": 31.017369727047146
+      },
+      "history-10": {
+        "tokens_saved": 271,
+        "percent_saved": 33.917396745932415
+      }
+    },
+    "estimated_visible_input_reference_usd_saved": 0.0015199999999999988,
+    "latency_scope": "Local context preparation only; noisy observations, not a live SLO."
+  }
+}

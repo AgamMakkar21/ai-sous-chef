@@ -127,6 +127,8 @@ def test_selected_file_and_environment_override(
         ("ASC_READINESS_TIMEOUT_SECONDS", "inf"),
         ("ASC_READINESS_TIMEOUT_SECONDS", "0"),
         ("ASC_READINESS_TIMEOUT_SECONDS", "11"),
+        ("ASC_CONTEXT_MAX_TOKENS", "255"),
+        ("ASC_CONTEXT_MAX_TOKENS", "11001"),
         ("ASC_COSMOS_ENDPOINT", "secret-invalid-url"),
     ],
 )
