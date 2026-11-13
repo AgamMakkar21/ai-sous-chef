@@ -370,6 +370,7 @@ def release_agents(
         IdentityError,
         verify_distinct,
     )
+    from sous_chef.orchestrator_definition import verify_orchestrator_source
     from sous_chef.recipe_definition import (
         RecipePhase,
         recipe_knowledge_tool,
@@ -402,7 +403,15 @@ def release_agents(
                 raise DeliveryError(
                     "This release expects active pinned New Foundry prompt sources."
                 )
-            if role == "recipe_nutrition":
+            if role == "orchestrator":
+                try:
+                    verify_orchestrator_source(source)
+                except (ConfigurationError, ValueError):
+                    raise DeliveryError(
+                        "Orchestrator source is incompatible with this backend; "
+                        "publish and pin the current reviewed policy before deployment."
+                    ) from None
+            else:
                 phase = {
                     "version": RecipePhase.GENERATION,
                     "retrieval_version": RecipePhase.RETRIEVAL,

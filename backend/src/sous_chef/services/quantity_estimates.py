@@ -68,8 +68,7 @@ def _compatible(name: str, source_name: str) -> bool:
         return False
     requested -= FOOD_FORMS | {"meat", "only"}
     candidate -= FOOD_FORMS | {"meat", "only"}
-    extras = _CUTS if "chicken" in requested else set()
-    return bool(requested) and requested <= candidate and candidate <= requested | extras
+    return bool(requested) and requested <= candidate and candidate <= requested | _CUTS
 
 
 def _source_amount(name: str, reference: str, text: str) -> QuantitySource | None:

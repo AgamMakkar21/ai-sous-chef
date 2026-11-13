@@ -103,7 +103,7 @@ try {
 }
 ```
 
-Eight requests retain production per-request call/token/deadline limits:
+Eight requests retain production per-request call/deadline limits and token accounting:
 at most 32 target model invocations. The Foundry run contains eight observed rows
 plus four calibration anchors and five graders, or 60 grading slots; service-side
 judge token use/retries are controlled by Foundry, not a local dollar cap.

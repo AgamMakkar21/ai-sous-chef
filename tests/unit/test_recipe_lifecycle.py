@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from sous_chef.adapters.cosmos import CosmosRepository, open_cosmos
 from sous_chef.app import create_app
 from sous_chef.domain.cosmos import ProductContainer, RecordKind, StoredRecord
+from sous_chef.services import context as contexts
 from sous_chef.settings import Settings
 from test_chat_api import FakeExecutor, documents, send
 from test_chat_api import chat_api as chat_api
@@ -481,10 +482,13 @@ def test_explicit_failed_revision_retry_keeps_mandatory_source_and_lineage(
     assert len(documents(harness[0], "behavior")) == 1
 
 
-def test_oversized_revision_source_cannot_be_trimmed_or_start_generation(
+@pytest.mark.parametrize("transport_limit", [None, 100])
+def test_token_heavy_revision_preserves_mandatory_source_and_transport_boundary(
     chat_api: TestClient,
     executor: FakeExecutor,
     harness: tuple[Transport, SyntheticCredential],
+    monkeypatch: pytest.MonkeyPatch,
+    transport_limit: int | None,
 ) -> None:
     source = generate(chat_api, executor)
     turn = documents(harness[0], "turn")[0]
@@ -492,10 +496,22 @@ def test_oversized_revision_source_cannot_be_trimmed_or_start_generation(
     turn["recipe"]["instructions"] = [
         {**step, "text": "\U0001f600" * 500, "step": index + 1} for index in range(30)
     ]
+    if transport_limit is not None:
+        monkeypatch.setattr(contexts, "MAX_CONTEXT_CHARACTERS", transport_limit)
+    executor.recipe_id = uuid4()
     response = signal(chat_api, source["generatedRecipeId"], "revisions")
-    assert response.status_code == 422, response.text
-    assert response.json()["code"] == "context_limit_exceeded"
-    assert len(executor.calls) == len(documents(harness[0], "turn")) == 1
+    if transport_limit is None:
+        assert response.status_code == 200, response.text
+        assert len(executor.calls) == len(documents(harness[0], "turn")) == 2
+        context = executor.calls[-1].context
+        assert contexts.context_tokens(context) > 11000
+        assert context.revision is not None
+        assert len(context.revision.recipe.instructions) == 30
+        assert all(item.text == "\U0001f600" * 500 for item in context.revision.recipe.instructions)
+    else:
+        assert response.status_code == 422, response.text
+        assert response.json()["code"] == "context_limit_exceeded"
+        assert len(executor.calls) == len(documents(harness[0], "turn")) == 1
     assert len(documents(harness[0], "behavior")) == 1
     assert documents(harness[0], "behavior")[0]["kind"] == "revisionRequested"
 

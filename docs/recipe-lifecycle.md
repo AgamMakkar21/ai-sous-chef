@@ -225,8 +225,8 @@ identity rather than creating another intent or model invocation.
 
 The revision uses the existing chat admission, current-profile context, managed
 agents, bounded budgets, final safety gate and atomic turn completion. Its source
-recipe is mandatory structured untrusted context, counted within the existing
-11,000-token input ceiling; it cannot be trimmed away to make an oversized request
+recipe is mandatory structured untrusted context within the gateway's
+131,072-character transport boundary; it cannot be trimmed away to make an oversized request
 appear valid. The result is a new turn in the source conversation with the same
 `occasionId` and `supersedesRecipeId` pointing to its parent. Older generated turns
 without lineage use their original generated ID as the occasion.

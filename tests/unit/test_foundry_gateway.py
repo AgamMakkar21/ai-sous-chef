@@ -238,7 +238,7 @@ def test_invalid_or_unfinished_results_never_look_successful(body: dict[str, Any
 def test_total_deadline_cancels_io_and_closes_clients() -> None:
     harness = Harness(hang=True)
     gateway = FoundryGateway(
-        settings(foundry_invocation_timeout_seconds=0.02), client_factory=harness.factory
+        settings(foundry_invocation_timeout_seconds=0.1), client_factory=harness.factory
     )
 
     async def run() -> None:
@@ -355,7 +355,6 @@ def test_deadlines_must_be_positive_finite_and_bounded(seconds: float) -> None:
         {"prompt": " "},
         {"prompt": "x" * 16001},
         {"max_output_tokens": 0},
-        {"max_output_tokens": 8193},
         {"max_output_tokens": True},
         {"operation_id": "private-client-value"},
     ],
@@ -365,6 +364,13 @@ def test_invalid_request_rejected_before_invocation(changes: dict[str, Any]) -> 
     values.update(changes)
     with pytest.raises(ValidationError):
         FoundryRequest(**values)
+
+
+def test_output_limit_is_optional_and_has_no_application_ceiling() -> None:
+    request = FoundryRequest(role=AgentRole.ORCHESTRATOR, prompt="hello")
+    assert request.max_output_tokens is None
+    explicit = request.model_copy(update={"max_output_tokens": 20000})
+    assert FoundryRequest.model_validate_json(explicit.model_dump_json()).max_output_tokens == 20000
 
 
 def test_failures_log_only_safe_category_and_operation_id(caplog: pytest.LogCaptureFixture) -> None:

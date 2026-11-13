@@ -4,8 +4,6 @@ import json
 from uuid import UUID
 
 from sous_chef.domain.agent_identity import AgentRole
-from sous_chef.domain.ingredient_catalog import resolve, tokenize
-from sous_chef.domain.nutrition_inputs import FOOD_FORMS, food_words
 from sous_chef.domain.recipes import (
     CalorieEstimate,
     CalorieGroundingRequest,
@@ -15,6 +13,7 @@ from sous_chef.domain.recipes import (
     NutritionEvidence,
     NutritionRequest,
 )
+from sous_chef.services.web_grounding import public_ingredient_name
 
 
 def calorie_request(
@@ -22,8 +21,8 @@ def calorie_request(
     evidence: NutritionEvidence,
     *,
     operation_id: UUID,
-    max_input_tokens: int,
-    max_output_tokens: int,
+    max_input_tokens: int | None,
+    max_output_tokens: int | None,
 ) -> CalorieGroundingRequest | None:
     energy = next((item for item in evidence.coverage if item.name == "energy"), None)
     if energy is None:
@@ -33,34 +32,9 @@ def calorie_request(
     for line in request.ingredients:
         if line.line_id not in missing:
             continue
-        food = resolve(line.name)
-        if not food.is_known or len(food.entries) != 1:
+        name = public_ingredient_name(line.name)
+        if name is None:
             continue
-        forms = food_words(line.name) & (
-            FOOD_FORMS
-            | {
-                "skinless",
-                "skin",
-                "boneless",
-                "whole",
-                "skim",
-                "unsweetened",
-                "sweetened",
-                "salted",
-                "unsalted",
-                "plain",
-                "ground",
-                "lean",
-                "nonfat",
-            }
-        )
-        words = " " + " ".join(tokenize(line.name)) + " "
-        aliases = [
-            alias
-            for alias in food.entries[0].aliases
-            if " " + " ".join(tokenize(alias)) + " " in words
-        ]
-        name = " ".join((max(aliases, key=len), *sorted(forms)))
         ingredients.append(
             {
                 "ingredientLineId": line.line_id,
@@ -92,6 +66,8 @@ def calorie_request(
 def with_calorie_estimates(
     evidence: NutritionEvidence, estimates: tuple[CalorieEstimate, ...]
 ) -> NutritionEvidence:
+    if not estimates:
+        return evidence
     energy = next(item for item in evidence.coverage if item.name == "energy")
     unknown = set(energy.unknown_ingredient_line_ids)
     if any(item.ingredient_line_id not in unknown for item in estimates):

@@ -100,7 +100,7 @@ The fixed check does not authorize web; any returned web call is rejected. With 
 combined native-web source that is a post-call rejection, not a pre-execution
 disable of the attached tool. No USDA call, source publication, role assignment, resource configuration
 or runtime activation occurs. Provider storage is disabled. The response must
-complete within the configured SDK timeout and token limits, use the expected
+complete within the configured SDK timeout, use the expected
 query/tool, and return nonempty recipe grounding that passes the existing
 bounded provenance parser. The published strict draft format remains in force;
 the resulting draft is not displayed, accepted as a recipe or saved.
@@ -299,8 +299,9 @@ unavailable; it does not prevent delivery of an otherwise valid recipe.
 
 A grocery name-only lookup requires one unambiguous description/short-description match:
 case/whitespace/comma normalization or equivalent words in a different order.
-The matcher accepts only the noun inflections `apple`/`apples` and
-`carrot`/`carrots`, plus USDA's optional `Spices,` category prefix. It preserves every
+The matcher shares generic noun normalization with recipe nutrition rather than
+maintaining a separate list of supported ingredient plurals. It also accepts
+USDA's optional `Spices,` category prefix. It preserves every
 food-form qualifier: `raw apple with skin` can match `Apples, raw, with skin`,
 and `ground cinnamon` can match `Spices, cinnamon, ground`, but generic `apple`
 or `cinnamon` cannot choose a preparation or skin state.
@@ -314,18 +315,25 @@ Recipe enrichment explicitly enables approximate, source-backed matches. It remo
 non-nutritional preparation words such as sliced, minced, drained, deveined,
 boneless and generic pieces/chunks (without removing an actual breast/thigh cut),
 but preserves raw/cooked, ground meat, fat, skin and other composition qualifiers.
-Generic chicken uses `chicken meat raw` as an ingredient-weight estimate to exclude
-spreads and other prepared products. Explicit cooked/ground states and named cuts
-remain distinct; broth is not treated as raw meat.
+Search terms retain the ingredient's identity instead of substituting a named
+variety or adding a food-specific cut. Matching rejects unrelated products,
+unrequested skin and incompatible cooking forms. Explicit cooked/ground states
+and named cuts remain distinct; broth is not treated as raw meat.
 
-Vague amounts such as "some chicken" or unconvertible pieces can use a
-**quantity assumption**, separate from the USDA food match. For current requests
-containing vague-amount wording and recognizable public food names, the backend
-authorizes one existing Web IQ search for comparable recipe ingredient masses
-and serving counts. Only matched catalog food aliases leave the application,
-not the original prompt, profile, allergies, inventory or history. Ordinary
-measured requests do not enable this search. The existing one-search, model,
-token and deadline limits remain unchanged in combined and phased modes.
+Ambiguous user-supplied amounts can use a **quantity assumption**, separate from
+the USDA food match. The Orchestrator interprets the request semantically and returns
+`quantity_ingredients`: public food names needing cited comparable-recipe masses
+and serving counts. The backend builds one bounded Web IQ query from that typed
+array, with the same obvious-private-identifier check used for calorie fallback.
+No ingredient catalog, vague-phrase regex, exact phrase or token matching decides
+whether to search. Empty names mean no quantity search; an unknown pantry stock
+or an ordinary request to compose a recipe does not automatically imply a missing
+recipe portion. Only the classified food names leave the application, not the
+surrounding request, other inventory entries, profile, allergies or history.
+Current public information takes priority if both searches are requested. Existing
+one-search, model-call and deadline limits still apply in combined and phased modes.
+This routing requires the policy-6 Orchestrator source described in
+[Orchestrator](orchestrator.md#backend-limits-and-candidate-validation).
 
 The backend checks cited curated excerpts and native-cited web claims for an
 explicit ingredient mass (g/kg/oz/lb) and source serving count. Compatible amounts
@@ -351,13 +359,13 @@ remain explicit. Older snapshots without quantity assumptions remain readable.
 Rollback to an older strict reader requires compatibility review before exposing
 new nullable-quantity mappings or `quantityEstimate` fields to that reader.
 
-A small documented set of culinary equivalents maps neutral oil to canola oil, jasmine
-rice to long-grain white rice, bell pepper to sweet pepper, cilantro to coriander
-leaves, ground cumin to cumin seed and chili flakes to red/cayenne pepper.
-Dry/uncooked rice stays raw, never cooked. Unqualified tomatoes use red ripe
-tomatoes; water uses generic bottled water, not plants whose names contain
-"water". Approximate matches reject unrelated prepared dishes, organ meats and
-unrequested poultry skin. Compatible candidates are ranked by exact word match,
+There is no ingredient-specific synonym/substitution table in nutrition lookup.
+Generic preparation normalization converts `uncooked` to `raw` and `skinless`
+to `meat only`, but keeps variety, blend, dry/ground and composition wording.
+Compatible USDA comma-separated identity/qualifier descriptions are supported;
+an unrelated compound name or explicit added-ingredient wording is not a match merely because
+it contains a requested word. Approximate matches reject unrelated prepared
+dishes, organ meats and unrequested skin. Compatible candidates are ranked by exact word match,
 raw form, SR Legacy data (which commonly includes household portions), then
 specificity and stable source identity. A truncated search is not proof of
 uniqueness, but can supply a clearly labeled approximate recipe match. Explicit
@@ -424,16 +432,16 @@ Household volumes (`ml`, `l`, `tsp`, `tbsp`, `cup`) use the selected USDA food's
 Equivalent volumes scale using US customary measures (cup 236.5882365 mL,
 tablespoon 14.78676478125 mL, teaspoon 4.92892159375 mL). Preparation-specific
 portions are preferred where available. Recipe pieces/items use compatible
-source portions for common whole produce/eggs or explicit cloves, slices and
-wedges; medium size is the disclosed default when no size was specified.
-Two lime wedges are not treated as two whole limes. If only a whole lime/lemon
-fruit weight is available, a disclosed eight-wedges-per-fruit estimate is used.
+source portions for any identified food, not a whitelist of produce or eggs.
+Explicit part names must match the source part; a whole fruit cannot establish
+a wedge's weight. Medium size is preferred when no size was specified.
 
-When no usable USDA volume portion exists, recipe-only density estimates are
-limited to oil (0.92 g/mL), water (1 g/mL), and lemon/lime juice (1.03 g/mL).
-There is no universal mL-to-gram conversion. Unknown quantities, unsupported
-food-specific densities, unknown package/can sizes and cooking yields remain
-unknown. The original recipe quantities/units are never rewritten.
+There are no ingredient-name density constants or assumed wedges-per-fruit
+ratios. Source-backed volume weights work for any food; without usable source
+portions, quantity estimates require cited comparable recipe evidence rather
+than a universal mL-to-gram conversion. Unknown package/can sizes and cooking
+yields remain unknown. Missing calories still enter the separately attributed
+web/AI fallback below. Original recipe quantities/units are never rewritten.
 Amounts describe the selected food form/ingredient inputs, not an asserted
 laboratory measurement after cooking. Nutrients are energy (kcal), protein,
 carbohydrate, fat, fiber (g) and sodium (mg). An unexpected source unit fails;
@@ -457,7 +465,7 @@ Every newly calculated response includes:
 - `mappings`: the requested quantity/unit, converted `weightGrams`, unchanged
   USDA food ID and source reference for every contributing ingredient.
   Additive `foodDescription`, `approximateMatch` and `conversionBasis` fields
-  disclose the actual food and measured/source-portion/density basis in the
+  disclose the actual food and measured/source-portion/quantity-assumption basis in the
   recipe card's nutrition sources. Older snapshots may omit these fields.
 
 A nutrient is `known` only if every ingredient contributes that nutrient;
@@ -494,12 +502,17 @@ USDA is attempted first. Successful ingredient mappings, calories and other
 nutrients are preserved, including when a later ingredient fails. Missing
 calories trigger at most one additional invocation of the same combined
 Recipe + Nutrition version (or the web phase in legacy phased mode).
-Only matched public catalog food aliases, explicit
-food-form qualifiers and recipe quantities enter that invocation; only the
+Only recipe ingredient names and quantities enter that invocation; only the
 backend-built public food/calorie query may enter native web search. Safety
-catalog groups are not nutritionally interchangeable: the matched alias is
-preserved (for example, carrot must not become the group's first alias, garlic).
-Private profile/history/allergy context is not included.
+catalog groups are not nutritionally interchangeable: ingredient names are
+preserved, not replaced by a group's first alias.
+Private profile/history/allergy context is not included. Obvious private identifiers
+in ingredient names are excluded using the shared public-query privacy check.
+This pattern check is not a guarantee of detecting all private text.
+Calorie lookup does not require membership in the allergy catalog or a separate
+food/qualifier allowlist: unfamiliar ingredients retain their actual names and
+food forms. This does not classify unfamiliar foods as allergen-safe or change
+deterministic recipe safety checks.
 
 The calorie task searches once and does not call recipe MCP. It returns kcal for each missing ingredient's
 entire recipe quantity, not per 100 g or per serving. A `web_iq` entry requires
@@ -514,11 +527,21 @@ Missing protein/fat/etc. remain unknown. Unknown quantities remain unchanged in
 the recipe; any calorie-portion assumption appears only in the estimate's basis.
 
 The backend reserves ten seconds for this fallback plus two seconds for final
-completion, within the original request deadline. Policy 5 permits one dedicated
-extra model/web call and up to 1,500 extra output tokens, not another revision.
+completion, within the original request deadline. When time remains, calorie
+generation may use up to 30 seconds; it always leaves the final two seconds
+and never extends the whole-operation deadline. No application input/output token
+ceiling is imposed or sent to the provider, and high reported usage cannot invalidate
+otherwise valid evidence. This does not permit another revision or search.
+Calorie output is bounded by the 30-line schema, 65,536 text characters and
+131,072 native-envelope characters. Up to 30 native citations/search sources
+can support the ingredient estimates.
 If the entire fallback invocation is itself unavailable, the recipe still
 reports missing nutrition honestly; no hardcoded success or fabricated citation
-is substituted. Malformed results and attribution failures remain errors.
+is substituted. Valid subsets are merged without filling omitted lines or
+turning an empty result into zero calories. Malformed/incomplete responses,
+rejected optional calls and invalid attribution are discarded and logged as
+`calorie_fallback_unavailable`; they cannot discard the already-validated recipe
+or existing USDA values. Authentication/configuration failures remain explicit.
 Transient USDA API failure after successful MCP initialization is logged but
 does not prevent startup; initialization/schema/authentication failures remain
 fail-closed. Live release smoke still requires actual known USDA-backed nutrition.
@@ -674,22 +697,16 @@ is valid and explicit, not zero nutrition; an actual tool failure stops the requ
 
 The supplied finite deadline covers retrieval, generation and nutrition together,
 with a 60-second ceiling. Cancellation starts no replacement invocation. The
-gateway preflights instructions, schema, full context, requirements and grounding
-against the remaining per-call input allowance. Dev recipe MCP retrieval allows
+gateway leaves input/output token limits to the model provider. Dev recipe MCP retrieval allows
 up to 65,536 characters for its complete result, including every
 reference record. Local/production retain the 16,000-character limit.
 Native MCP call/discovery envelopes retain their character bound; neither parsed
 MCP results nor native envelopes are rejected by token count.
-All other tool results, supplied generation grounding and model/call
-budgets remain unchanged. Azure Search requires a minimum 5,000-token
-output limit, distinct from these backend acceptance profiles. Live preflight reserves
-the full 5,000-token service allowance in addition to the complete input; oversized
-MCP results fail post-validation rather than being silently truncated. This check
-occurs after the provider's retrieval/generation call, not before the model sees
-the tool result. Output is capped at the existing 1,500-token reservation,
-including reasoning. Provider usage is mandatory and checked against both ceilings;
-the Orchestrator accounts it cumulatively. Nothing truncates hard constraints to
-fit a budget. Conditional web requests use the additional bounded stage below.
+Schema, character, attribution, model-call and deadline guards remain enforced.
+Azure Search requires a minimum 5,000-token retrieval-output setting, distinct
+from chat model input/output limits; that service-required setting is retained.
+Provider usage is mandatory and recorded, never rejected for exceeding an
+application token threshold. Conditional web requests use the stage below.
 
 ## Conditional Web IQ
 
@@ -732,10 +749,9 @@ does not retry, fabricate web facts or present a non-web result as web-grounded.
 Independent non-web requests continue through the unchanged ordinary path.
 
 The additional model invocation and `web_iq` tool attempt are reserved in the same
-request-local budget; actual usage is accounted immediately. The web invocation
-has at most 2,000 input tokens and the existing 1,500-token output reservation.
-Validated web evidence must fit the 4,000-token tool-result limit and the subsequent
-recipe input preflight. Token headroom is rechecked before recipe generation.
+request-local budget; actual usage is accounted immediately. Web input/output and
+validated evidence are not rejected by token count. Native evidence still obeys
+its schema, citation and character bounds, and incomplete provider output is not accepted.
 The normal web path therefore uses four total model invocations, leaving no extra
 allowance for a revision. The global one-web-call limit still spans revisions.
 Final-gate rejection cannot create an extra revision budget.
@@ -778,18 +794,21 @@ are explicit `null`, not omitted or guessed.
 | `sources` | Up to 33 references (3 recipe + 30 USDA), copied from cited recipe and nutrition tool evidence, never generated by the model |
 | `webGrounding` | Null on the ordinary path; otherwise 1-3 bounded claims, native citation URLs/titles and UTC retrieval time, validated by the backend |
 
-Inventory comparison is conservative. It uses catalog-recognized ingredients
-and matching normalized display names in the same unit, without implicit
+Inventory comparison is conservative. It uses matching normalized display names
+in the same unit, including unfamiliar foods absent from the safety catalog, without implicit
 raw/cooked equivalence, density conversion or LLM-minted IDs. Known quantities are
 allocated across repeated ingredient lines, not counted repeatedly. A shortage
 uses the positive difference, not the full recipe quantity. Unknown stock
-quantities, incompatible units, unresolved ingredients or omitted stock rows
+quantities, incompatible units or omitted stock rows
 cannot prove ownership/absence and remain `unknown` when the visible rows do not
 already prove enough stock. With a complete inventory and no matching row, a
-recognized ingredient is missing. Generating a recipe never mutates groceries.
+ingredient is missing. Canonical catalog IDs remain optional metadata, not
+eligibility checks. Generating a recipe never mutates groceries.
 
-Nutrition is never computed by the model. Known totals require every ingredient
-to have a tool mapping with exactly its recipe quantity/unit and a USDA source.
+USDA nutrient totals are computed from tool mappings with the recipe's
+quantity/unit and verified USDA source, never model-provided nutrient values.
+Separately attributed calorie estimates may complete energy coverage without
+inventing USDA mappings or filling missing macros.
 Partial values remain explicitly partial, not complete totals. Unavailable
 nutrition contains no amounts, mappings or fake citations. Nutrient units are
 fixed (`kcal` energy, `mg` sodium, `g` protein/carbohydrate/fat/fiber). The source
@@ -823,6 +842,12 @@ both attempts in the observed dev chat. A pass is not cooking-safety certificati
   words are not treated as unknown ingredient names. Known forbidden ingredients
   and relevant ambiguous products cannot be hidden in prose. Name specific oils,
   milks, stocks and sauces rather than ambiguous generic products.
+  In instruction steps, a complete recognized alias may refer to exactly one
+  already-validated ingredient linked by that step's `ingredientLineIds`.
+  This prevents shorthand from turning a declared specific product into an
+  unknown product. Multiple matches, cross-step borrowing, explicit conflicting
+  foods and unrecognized declared products still fail closed; metadata has no
+  such reference binding.
 - The catalog is English, not a universal language/ingredient classifier.
   Untranslated non-Latin letters in ingredients or recipe prose fail closed under
   stored allergies; accented Latin text is supported. Every consumed ingredient

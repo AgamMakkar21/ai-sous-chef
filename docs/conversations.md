@@ -38,12 +38,14 @@ Duplicating policy prose there can trigger a content-filter rejection even for a
 ordinary cooking request. The source policies, blocking content filters and
 deterministic safety checks remain unchanged; user-controlled text stays untrusted
 JSON data, not a policy override.
-Counting adds a 64-token framing allowance. The context ceiling
-is **11,000 input tokens**, leaving **1,000** for executor/agent instructions and
-**4,000** for bounded tools within the ADR's **16,000 input-token** per-call ceiling.
-The managed-agent executor uses the Orchestrator's *complete* provider-request
-counting, separate output reservations and cumulative request limits; these
-reservations do not authorize unchecked tool or instruction growth.
+Token counting, including a 64-token framing allowance, is diagnostic only.
+Context packing uses the gateway's **131,072-character** transport boundary,
+not an 11,000-token ceiling. Explicit restrictions, the current request and any
+requested revision remain mandatory; optional history, learned hints and groceries
+are omitted only when needed to fit that character boundary. The managed-agent
+executor records usage without per-call or cumulative token rejection and does
+not send an application output-token cap. Provider limits, strict schemas,
+call counts, attribution, safety checks and deadlines remain enforced.
 
 Install the updated locked dependencies. Before offline tests or a network-restricted
 deployment, populate the public tokenizer-data cache during environment/image setup:
@@ -222,7 +224,7 @@ instructions, shopping gaps, source-backed estimated nutrition and provenance.
 Its generated UUID identifies that persisted snapshot, not a saved/cooked recipe.
 Recipe generations establish an occasion; [explicit revisions](recipe-lifecycle.md)
 retain it and point to their source through `supersedesRecipeId`. The full source
-recipe remains mandatory, token-budgeted untrusted context, including on an
+recipe remains mandatory, character-bounded untrusted context, including on an
 explicit known-failure retry. Older stored turns without lineage still deserialize.
 It contains one user message while
 `pending`, `failed` or `outcomeUnknown`; only `completed` contains the user and

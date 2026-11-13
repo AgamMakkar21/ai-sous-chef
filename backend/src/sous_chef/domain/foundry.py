@@ -14,7 +14,7 @@ class FoundryRequest(BaseModel):
     role: AgentRole
     prompt: str = Field(min_length=1, max_length=16000, pattern=r"\S", repr=False)
     operation_id: UUID = Field(default_factory=uuid4)
-    max_output_tokens: int = Field(default=2048, ge=16, le=8192)
+    max_output_tokens: int | None = Field(default=None, ge=16)
 
 
 class FoundryResult(BaseModel):

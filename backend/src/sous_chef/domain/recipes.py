@@ -545,7 +545,7 @@ class NutritionRequest(RecipeModel):
 class RecipeGenerationRequest(FoundryRequest):
     role: Literal[AgentRole.RECIPE_NUTRITION]
     prompt: str = Field(min_length=1, max_length=131072, pattern=r"\S", repr=False)
-    max_input_tokens: int = Field(ge=1, le=16_000)
+    max_input_tokens: int | None = Field(default=None, ge=1)
     grounding_json: str = Field(min_length=1, max_length=16000, repr=False)
 
 
@@ -560,7 +560,7 @@ class CombinedRecipeGenerationRequest(GroundedRecipeGenerationRequest):
 class WebGroundingRequest(FoundryRequest):
     role: Literal[AgentRole.RECIPE_NUTRITION]
     prompt: str = Field(min_length=1, max_length=240, pattern=r"\S", repr=False)
-    max_input_tokens: int = Field(default=2000, ge=1, le=2000)
+    max_input_tokens: int | None = Field(default=None, ge=1)
     allow_empty: bool = False
 
 
@@ -568,7 +568,6 @@ class CalorieGroundingRequest(WebGroundingRequest):
     prompt: str = Field(min_length=1, max_length=12000, pattern=r"\S", repr=False)
     query: str = Field(min_length=1, max_length=240, pattern=r"\S", repr=False)
     ingredient_line_ids: tuple[LineId, ...] = Field(min_length=1, max_length=30)
-    max_input_tokens: int = Field(default=4000, ge=1, le=16_000)
 
 
 class RecipeGenerator(Protocol):

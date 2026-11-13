@@ -205,7 +205,7 @@ def test_invalid_or_unaccounted_actions_fail_closed(response: dict[str, Any]) ->
     assert "private" not in str(caught.value)
 
 
-def test_coordination_requires_attribution_and_preflights_input_budget() -> None:
+def test_coordination_requires_attribution_without_a_local_input_budget() -> None:
     harness = Harness(body=body(function_output()))
     gateway = FoundryGateway(settings(), client_factory=harness.factory)
     with pytest.raises(ConfigurationError):
@@ -214,10 +214,9 @@ def test_coordination_requires_attribution_and_preflights_input_budget() -> None
         coordination_settings(),
         client_factory=harness.factory,
     )
-    with pytest.raises(FoundryGatewayError) as caught:
-        asyncio.run(gateway.coordinate(request(max_input_tokens=1)))
-    assert caught.value.code == FoundryFailure.REJECTED
-    assert harness.requests == []
+    assert asyncio.run(gateway.coordinate(request(max_input_tokens=1))).call is not None
+    assert len(harness.requests) == 1
+    assert "max_output_tokens" not in json.loads(harness.requests[0].content)
 
 
 @pytest.mark.parametrize(
@@ -262,7 +261,7 @@ def test_fragmented_control_message_is_not_concatenated_into_a_valid_answer() ->
     assert caught.value.code == FoundryFailure.INVALID_RESULT
 
 
-def test_large_character_context_is_allowed_only_within_the_token_limit() -> None:
+def test_large_character_context_is_not_rejected_by_a_local_token_limit() -> None:
     harness = Harness(body=body(function_output()))
     gateway = FoundryGateway(coordination_settings(), client_factory=harness.factory)
     initial = CoordinationRequest(
@@ -270,29 +269,26 @@ def test_large_character_context_is_allowed_only_within_the_token_limit() -> Non
     )
     asyncio.run(gateway.coordinate(initial))
     assert len(json.loads(harness.requests[0].content)["input"]) > 16000
-    with pytest.raises(FoundryGatewayError):
-        asyncio.run(gateway.coordinate(request(max_input_tokens=100)))
-    assert len(harness.requests) == 1
+    asyncio.run(gateway.coordinate(request(max_input_tokens=100)))
+    assert len(harness.requests) == 2
 
 
-def test_aggregate_function_output_is_bounded_before_invocation() -> None:
+def test_function_output_above_the_old_token_limit_reaches_the_provider() -> None:
     harness = Harness(body=body(function_output()))
     gateway = FoundryGateway(coordination_settings(), client_factory=harness.factory)
     initial = request()
     step = asyncio.run(gateway.coordinate(initial))
     assert step.call is not None
-    with pytest.raises(FoundryGatewayError) as caught:
-        asyncio.run(
-            gateway.coordinate(
-                CoordinationRequest(
-                    request=initial.request,
-                    previous_call=step.call,
-                    tool_output="a " * 4001,
-                )
+    asyncio.run(
+        gateway.coordinate(
+            CoordinationRequest(
+                request=initial.request,
+                previous_call=step.call,
+                tool_output="a " * 4001,
             )
         )
-    assert caught.value.code == FoundryFailure.REJECTED
-    assert len(harness.requests) == 1
+    )
+    assert len(harness.requests) == 2
 
 
 def project() -> Mock:
@@ -340,7 +336,7 @@ def test_publication_creates_reproducible_source_version_under_existing_identity
             "/providers/Microsoft.CognitiveServices/accounts/synthetic/raiPolicies/asc-responsible-ai-v1"
         )
     }
-    assert invocation.kwargs["metadata"]["asc_policy_version"] == "5"
+    assert invocation.kwargs["metadata"]["asc_policy_version"] == "6"
     client.agents.create.assert_not_called()
     assert config.agents_enabled  # No settings or release manifest mutation.
 

@@ -65,7 +65,7 @@ def _check_prose(recipe: StructuredRecipe, profile: SafetyProfile) -> None:
         *recipe.adaptations,
         *(sub.reason for sub in recipe.substitutions),
     )
-    texts: list[str] = []
+    texts: list[tuple[str, tuple[str, ...]]] = []
     for text in metadata:
         normalized = " ".join(tokenize(text))
         for phrase, replacement in exclusions:
@@ -74,8 +74,11 @@ def _check_prose(recipe: StructuredRecipe, profile: SafetyProfile) -> None:
                 replacement,
                 normalized,
             )
-        texts.append(normalized)
-    texts.extend(step.text for step in recipe.instructions)
+        texts.append((normalized, ()))
+    texts.extend(
+        (step.text, tuple(lines[line_id].name for line_id in step.ingredient_line_ids))
+        for step in recipe.instructions
+    )
     for text in (
         *(line.name for line in recipe.ingredients),
         *metadata,
@@ -85,8 +88,12 @@ def _check_prose(recipe: StructuredRecipe, profile: SafetyProfile) -> None:
             char.isalpha() and not char.isascii() for char in unicodedata.normalize("NFKD", text)
         ):
             _reject(RecipeSafetyFailure.INGREDIENT)
-    for text in texts:
-        result = validate_ingredients(profile, (IngredientLine(line_id="prose", name=text),))
+    for text, references in texts:
+        result = validate_ingredients(
+            profile,
+            (IngredientLine(line_id="prose", name=text),),
+            references=references,
+        )
         # Ordinary prose is not an ingredient name; only actual restriction findings apply.
         if any(finding.kind != FindingKind.UNKNOWN_INGREDIENT for finding in result.findings):
             _reject(RecipeSafetyFailure.INGREDIENT)

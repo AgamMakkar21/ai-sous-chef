@@ -32,7 +32,6 @@ TOOLS = {
 _SEARCH = TypeAdapter(UsdaFoodSearch)
 _PROFILE = TypeAdapter(UsdaFoodProfile)
 _JSON = TypeAdapter(JsonValue)
-_FOOD_NOUN_SINGULARS = {"apples": "apple", "carrots": "carrot"}
 
 
 def _invalid() -> RecipeToolError:
@@ -51,7 +50,7 @@ def _normalize(value: str) -> str:
 
 def _food_words(value: str) -> set[str]:
     value = re.sub(r"^spices\s*,", "", value.strip().casefold())
-    return {_FOOD_NOUN_SINGULARS.get(word, word) for word in re.findall(r"[^\W_]+", value)}
+    return food_words(value)
 
 
 @dataclass(frozen=True)
