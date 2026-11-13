@@ -30,8 +30,8 @@ jobs:
           - check: tests
             command: |
               python -m scripts.evaluate_safety
-              python -m scripts.evaluate_learning
               python -m pytest
+              python -m scripts.evaluate_learning
           - check: build
             command: |
               python -m build --no-isolation
