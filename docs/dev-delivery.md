@@ -9,6 +9,12 @@ requires all six PR quality jobs to have succeeded for the merged PR's exact
 reviewed head. The same guard is reused when sealing the release. A missing,
 failed, incomplete or stale CI run blocks deployment, not just artifact retention.
 
+A human collaborator other than the PR author must formally approve the exact
+final PR head before merging. A review comment or the merge action alone is not
+an approval. For a documentation-only delivery retry, also review the pending
+application/configuration changes inherited from dev; the new diff is not the
+entire deployment payload.
+
 Agent-enabled smoke checks also execute one synthetic Orchestrator -> Recipe +
 Nutrition -> USDA request using the deployed agent pins and protected USDA key.
 They require a structured recipe with known, attributed nutrition; a healthy
