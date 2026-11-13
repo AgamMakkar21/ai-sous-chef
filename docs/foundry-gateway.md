@@ -21,7 +21,9 @@ The service rejects request-time tool overrides alongside `agent_reference`;
 see [microsoft/agent-framework#5087](https://github.com/microsoft/agent-framework/issues/5087).
 The current dev design selects `ASC_FOUNDRY_RECIPE_NUTRITION_MODE=combined`:
 one specialist version contains recipe MCP and native web search, with a strict
-recipe-plus-web-claims output schema. The legacy `phased` mode uses three versions
+`{recipe, calorieEstimates}` output schema. Recipe tasks return a draft (including
+web claims) and no calorie estimates; missing-USDA-calorie tasks return a null
+recipe and attributed estimates through that same version. The legacy `phased` mode uses three versions
 under that same identity: tool-free generation, curated retrieval plus generation,
 and isolated Web IQ.
 The backend selects the phase pin; user input cannot select an agent or version.
@@ -30,12 +32,13 @@ retrieval/web settings are not used. Web queries and citations are validated
 after native execution; this mode does not guarantee pre-search privacy isolation.
 See [combined boundaries](recipe-specialist.md#combined-recipe-agent-with-native-web-search).
 
-The recipe MCP result allowance follows validated `ASC_ENVIRONMENT`: dev allows
-65,536 characters/16,000 tokens for the full result, while local/production retain
-16,000 characters and the configured 256-4,000-token bound. Native MCP envelopes
-are counted in full; discovery metadata retains its separate 4,000-token limit.
-Source definitions, Search defaults, model usage/call budgets, other tools and
-provenance checks are unchanged. This backend change does not publish or activate agents.
+The recipe MCP character allowance follows validated `ASC_ENVIRONMENT`: dev allows
+65,536 characters for the full result; local/production retain 16,000 characters.
+Native MCP envelopes also retain their character bound. MCP results and discovery
+metadata are not rejected by token count. Search configuration, model usage/call
+budgets, other tools, schema and provenance checks remain enforced.
+The delivery smoke preserves the deployed environment and explicitly uses Azure CLI
+credentials instead of selecting local acceptance rules to obtain credentials.
 
 ## Configuration
 

@@ -343,7 +343,11 @@ class RecipeSpecialistService:
                         nutrition_request,
                         evidence,
                         operation_id=operation_id,
-                        max_input_tokens=request.max_input_tokens,
+                        max_input_tokens=(
+                            request.max_input_tokens
+                            if self._combined
+                            else min(6000, request.max_input_tokens)
+                        ),
                         max_output_tokens=request.max_output_tokens,
                     )
                     if fallback is not None:

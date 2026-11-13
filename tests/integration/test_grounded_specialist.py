@@ -309,15 +309,14 @@ def test_invalid_or_excessive_evidence_is_not_grounding(change: str) -> None:
     assert caught.value.code == FoundryFailure.INVALID_RESULT
 
 
-def test_configured_result_and_exact_context_budgets_are_enforced() -> None:
+def test_configured_result_count_is_enforced_without_token_rejection() -> None:
     data = chunks()
     output = json.dumps(data)
     from sous_chef.services.context import _encoding
 
     size = len(_encoding().encode(output, disallowed_special=()))
     assert parse_mcp_grounding(output, max_results=1, max_context_tokens=size).status == "available"
-    with pytest.raises(RecipeToolError):
-        parse_mcp_grounding(output, max_results=1, max_context_tokens=size - 1)
+    assert parse_mcp_grounding(output, max_results=1, max_context_tokens=1).status == "available"
     second = search_document(recipe_fixture(2))
     data.append({"ref_id": "1", "grounding": second["grounding"]})
     with pytest.raises(RecipeToolError):
@@ -348,7 +347,6 @@ def test_configured_result_and_exact_context_budgets_are_enforced() -> None:
         "recipe_schema",
         "provenance",
         "source_set",
-        "context_tokens",
         "mcp_tool_error",
     ],
 )
@@ -385,9 +383,6 @@ def test_grounding_rejections_report_fixed_stages_without_weakening_validation(s
         output = json.dumps(
             {"content": [{"type": "text", "text": "private provider error"}], "isError": True}
         )
-    else:
-        output = json.dumps(data)
-        limit = 1
     with pytest.raises(McpGroundingError) as caught:
         parse_mcp_grounding(output, max_results=3, max_context_tokens=limit)
     assert caught.value.stage == stage
@@ -475,14 +470,13 @@ def test_native_document_budgets_count_the_complete_original_output() -> None:
         ).status
         == "available"
     )
-    for token_limit, character_limit in ((tokens - 1, len(output)), (tokens, len(output) - 1)):
-        with pytest.raises(McpGroundingError):
-            parse_mcp_grounding(
-                output,
-                max_results=1,
-                max_context_tokens=token_limit,
-                max_output_characters=character_limit,
-            )
+    with pytest.raises(McpGroundingError):
+        parse_mcp_grounding(
+            output,
+            max_results=1,
+            max_context_tokens=tokens,
+            max_output_characters=len(output) - 1,
+        )
     with pytest.raises(McpGroundingError):
         parse_mcp_grounding(
             json.dumps(native_mcp_result(1, 2)), max_results=1, max_context_tokens=4000
@@ -561,7 +555,7 @@ def test_runtime_profile_does_not_change_search_defaults_or_published_sources(
     )
 
 
-def test_native_envelope_limits_accept_exact_bounds_and_keep_discovery_bounded() -> None:
+def test_native_envelope_keeps_size_bounds_without_token_rejection() -> None:
     from sous_chef.services.context import _encoding
 
     output = "x" * 65536
@@ -573,25 +567,19 @@ def test_native_envelope_limits_accept_exact_bounds_and_keep_discovery_bounded()
     output = "a " * 5000
     tokens = len(_encoding().encode(output, disallowed_special=()))
     validate_recipe_mcp_envelopes([], [output], max_tool_result_tokens=tokens)
-    with pytest.raises(ValueError):
-        validate_recipe_mcp_envelopes([], [output], max_tool_result_tokens=tokens - 1)
+    validate_recipe_mcp_envelopes([], [output], max_tool_result_tokens=1)
     listing = "a " * 3999 + "a"
     assert len(_encoding().encode(listing, disallowed_special=())) == 4000
     validate_recipe_mcp_envelopes([listing], ["{}"], max_tool_result_tokens=16000)
-    with pytest.raises(ValueError):
-        validate_recipe_mcp_envelopes([listing + " a"], ["{}"], max_tool_result_tokens=16000)
+    validate_recipe_mcp_envelopes([listing + " a"], ["{}"], max_tool_result_tokens=1)
 
 
-@pytest.mark.parametrize("fault", ["characters", "tokens", "provenance"])
+@pytest.mark.parametrize("fault", ["characters", "provenance"])
 def test_dev_expansion_keeps_full_response_and_provenance_guards(fault: str) -> None:
     result = observed_mcp_result()
     reference = json.loads(result["content"][1]["text"])
     reference["untrusted_metadata"] = (
-        "x" * 65536
-        if fault == "characters"
-        else "a " * 16001
-        if fault == "tokens"
-        else "private padding " * 1500
+        "x" * 65536 if fault == "characters" else "private padding " * 1500
     )
     result["content"][1]["text"] = json.dumps(reference)
     if fault == "provenance":
@@ -747,9 +735,7 @@ def test_full_envelope_budgets_include_reference_records_and_allow_exact_thresho
         ).status
         == "available"
     )
-    with pytest.raises(McpGroundingError) as caught:
-        parse_mcp_grounding(output, max_results=3, max_context_tokens=tokens - 1)
-    assert caught.value.stage == "context_tokens"
+    assert parse_mcp_grounding(output, max_results=3, max_context_tokens=1).status == "available"
     with pytest.raises(McpGroundingError) as caught:
         parse_mcp_grounding(
             output,
@@ -799,9 +785,7 @@ def test_expanded_diagnostic_budget_does_not_relax_provenance() -> None:
     assert caught.value.stage == "provenance"
 
 
-@pytest.mark.parametrize(
-    "change", ["duplicate_query", "oversized_arguments", "metadata", "metadata_tokens", "repeat"]
-)
+@pytest.mark.parametrize("change", ["duplicate_query", "oversized_arguments", "metadata", "repeat"])
 def test_untrusted_mcp_arguments_and_discovery_metadata_remain_bounded(
     change: str, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -825,9 +809,7 @@ def test_untrusted_mcp_arguments_and_discovery_metadata_remain_bounded(
     elif change == "oversized_arguments":
         call["arguments"] = " " * 32_769 + call["arguments"]
     elif change.startswith("metadata"):
-        listing["tools"][0]["description"] = "private metadata " * (
-            2001 if change == "metadata_tokens" else 4001
-        )
+        listing["tools"][0]["description"] = "private metadata " * 4001
         harness.body["output"].insert(0, listing)
     else:
         harness.body["output"][:0] = [listing, copy.deepcopy(listing)]

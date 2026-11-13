@@ -1,6 +1,6 @@
 # Recipe + Nutrition structured output and grounding (ASC-26 / ASC-30 / ASC-34)
 
-This slice implements the GPT-5.4 specialist's version-9 combined source policy, strict
+This slice implements the GPT-5.4 specialist's version-10 combined source policy, strict
 draft/full-recipe schemas, one-call New Foundry generation, backend enrichment,
 identity-bound Foundry IQ recipe retrieval and conditional Web IQ. It does not activate chat
 or an Azure release, save/cook a recipe, or replace
@@ -15,9 +15,9 @@ The current dev design keeps recipe MCP retrieval and **native web search on the
 same Recipe + Nutrition agent version**. Set
 `ASC_FOUNDRY_RECIPE_NUTRITION_MODE=combined` and pin its reviewed
 `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION`. A separate retrieval pin is not
-used in this mode. Calorie fallback also requires a reviewed policy-9 **web**
-phase pin in `ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION`; it is invoked only
-when USDA ingredient calories are missing. The default `phased` mode remains available for
+used in this mode. When USDA ingredient calories are missing, calorie fallback invokes
+that same combined version; no separate web-phase pin is required or used.
+The default `phased` mode remains available for
 existing releases; the phase-specific sections below describe that legacy route.
 
 The Orchestrator delegates once to this combined specialist. That one Responses
@@ -28,8 +28,12 @@ backend function or an A2A connection, and no separate Web IQ model invocation
 occurs. Current-information query authorization is unchanged; this does not
 introduce general web-based recipe inspiration.
 
-The combined strict output is `combined_recipe_draft_v1`: the existing recipe
-draft plus `webClaims` (at most three short claims with `sourceUrl`). The backend
+The combined strict output is `combined_recipe_nutrition_v2`, an envelope with
+`recipe` and `calorieEstimates`. Recipe generation returns the existing draft
+plus `webClaims` (at most three short claims with `sourceUrl`) inside `recipe`,
+and `calorieEstimates=[]`. Calorie fallback returns `recipe=null` and attributed
+estimates for the backend's missing ingredient lines. Nullable references remain
+required JSON properties, including explicit null for AI knowledge. The backend
 checks the native search query, single-search count, completion, retrieved URLs,
 URL annotations, citation spans and web-result budget. It attaches validated web
 grounding separately, then runs the existing USDA MCP calculation, source/quantity
@@ -43,10 +47,9 @@ searches. The backend validates queries only after Foundry has executed them;
 it cannot pre-approve native searches or undo an outgoing query. A rejected
 response is not proof that private data was never searched. This is intentionally
 different from the isolated web phase; do not describe combined mode as providing
-that phase's pre-search privacy isolation. No live combined invocation was made
-while implementing this change.
+that phase's pre-search privacy isolation.
 
-Combined source policy 9 has its own exact definition/phase/fingerprint checks.
+Combined source policy 10 has its own exact definition/phase/fingerprint checks.
 Manually attaching web search to an older retrieval version is not sufficient:
 the old instructions/output schema and stale fingerprint metadata do not meet
 this contract. Preserve existing agent identities and versions, and publish a
@@ -124,7 +127,7 @@ instructions or their fingerprint; an already verified retrieval source
 does not need republishing solely for that correction.
 
 Grounding rejection reports a fixed stage such as `chunk_schema`, `recipe_schema`,
-`provenance` or `context_tokens`, without raw provider data. The API failure code
+`provenance`, without raw provider data. The API failure code
 and production acceptance limits remain unchanged. Dev recipe MCP retrieval uses
 the larger full-envelope profile described below. Do not relax provenance or
 treat administrator-side acceptance as workload or end-to-end chat acceptance.
@@ -152,11 +155,12 @@ The diagnostic captures the native protocol result before the SDK's automatic
 output-schema validation, which can embed provider values in exceptions. The
 application's strict grounding parser still determines schema/provenance acceptance;
 server output-schema and structured-content presence are reported only as booleans.
-This Search-only dev diagnostic uses 65,536 characters and 16,000 tokens.
+This Search-only dev diagnostic enforces a 65,536-character MCP limit.
 Its `runtime_acceptance` object reports the configured environment's recipe MCP
 profile separately. The dev runtime and pinned-agent check now use that same
-larger profile; local/production retain 16,000 characters and the configured
-256-4,000-token limit. No hosted setting, source definition or model request
+larger character profile; local/production retain 16,000 characters.
+MCP response token counts are diagnostic, not rejection limits.
+No hosted setting, source definition or model request
 allowance changes. This local code change does not publish or activate chat.
 For oversized or multi-block results, it also inspects at most four native content
 blocks with a combined 65,536-character inspection budget. Only fixed known-field
@@ -488,15 +492,16 @@ standalone ingredient lookup retain the USDA-only contract.
 
 USDA is attempted first. Successful ingredient mappings, calories and other
 nutrients are preserved, including when a later ingredient fails. Missing
-calories trigger at most one isolated web-phase invocation under the existing
-Recipe + Nutrition identity. Only matched public catalog food aliases, explicit
+calories trigger at most one additional invocation of the same combined
+Recipe + Nutrition version (or the web phase in legacy phased mode).
+Only matched public catalog food aliases, explicit
 food-form qualifiers and recipe quantities enter that invocation; only the
 backend-built public food/calorie query may enter native web search. Safety
 catalog groups are not nutritionally interchangeable: the matched alias is
 preserved (for example, carrot must not become the group's first alias, garlic).
 Private profile/history/allergy context is not included.
 
-The web phase searches once. It returns kcal for each missing ingredient's
+The calorie task searches once and does not call recipe MCP. It returns kcal for each missing ingredient's
 entire recipe quantity, not per 100 g or per serving. A `web_iq` entry requires
 an actual searched HTTPS URL with a native citation. If source evidence is
 insufficient or the search tool fails, the model may return `ai_knowledge`
@@ -518,12 +523,12 @@ Transient USDA API failure after successful MCP initialization is logged but
 does not prevent startup; initialization/schema/authentication failures remain
 fail-closed. Live release smoke still requires actual known USDA-backed nutrition.
 
-Activation requires publishing and reading back the reviewed `--phase web`
-source, then adding its returned `web_version` alongside the combined `version`
-in the version-4 dev manifest. Delivery verifies and copies both definitions
-without changing identities; runtime readiness also verifies the extra web pin.
-Older release records without the optional pin remain readable for rollback,
-but cannot perform the new fallback. No runtime tool/schema override is used.
+Activation requires publishing and reading back the reviewed `--phase combined`
+source, then pinning its returned `version` in the version-4 dev manifest.
+Delivery verifies and copies that one specialist definition without changing
+identities; readiness verifies the shared schema and policy fingerprint.
+Historical phased releases remain available for rollback.
+No runtime tool/schema override is used.
 
 `ASC_USDA_MCP_TIMEOUT_SECONDS` defaults to 10 (maximum 10) for ingredient lookups.
 Recipe sessions scale that budget per nine ingredient lines, capped at 30 seconds
@@ -671,11 +676,11 @@ The supplied finite deadline covers retrieval, generation and nutrition together
 with a 60-second ceiling. Cancellation starts no replacement invocation. The
 gateway preflights instructions, schema, full context, requirements and grounding
 against the remaining per-call input allowance. Dev recipe MCP retrieval allows
-up to 65,536 characters and 16,000 tokens for its complete result, including every
-reference record. Local/production retain the 16,000-character and configured
-256-4,000-token result limits. Native MCP call/discovery envelopes are counted in
-full; discovery metadata separately retains its 4,000-token ceiling in every
-environment. All other tool results, supplied generation grounding and model/call
+up to 65,536 characters for its complete result, including every
+reference record. Local/production retain the 16,000-character limit.
+Native MCP call/discovery envelopes retain their character bound; neither parsed
+MCP results nor native envelopes are rejected by token count.
+All other tool results, supplied generation grounding and model/call
 budgets remain unchanged. Azure Search requires a minimum 5,000-token
 output limit, distinct from these backend acceptance profiles. Live preflight reserves
 the full 5,000-token service allowance in addition to the complete input; oversized
@@ -872,7 +877,7 @@ thermometer template to pass the backend.
 
 The specialist and Orchestrator source instructions describe natural recipe
 output and the remaining profile/integrity checks. Source policy versions are
-Orchestrator **5**, Recipe + Nutrition **8**, combined Recipe + Nutrition **9**,
+Orchestrator **5**, Recipe + Nutrition **8**, combined Recipe + Nutrition **10**,
 and isolated web/calorie **9**. These are
 policy versions, **not** Foundry agent-version pins. Existing immutable agents
 do not acquire the new instructions when only backend code changes.
@@ -1000,7 +1005,7 @@ managed-identity-first. An ambiguous publication error must be inspected before
 retrying. The command changes no app runtime flags or release manifest.
 
 The current `deploy/agents.dev.json` candidate pins read-back-verified combined
-source 21 (policy 9) and Orchestrator source 12 in an enabled schema-version-4 release
+source 44 (policy 10) and Orchestrator source 32 in an enabled schema-version-4 release
 (schema version 3 remains the legacy phased format). Live adapters and final
 safety are composed by the backend; publishing a source or preparing this manifest
 does not deploy that backend or prove end-to-end UI acceptance. Existing manually
@@ -1025,7 +1030,7 @@ Conflicting aliases are rejected. Every attached reference must uniquely match a
 overview entry and the same validated curated recipe. Supplied document keys,
 source IDs, source URLs and titles are cross-checked; supplied full `recipe_json`
 must reproduce the same indexed excerpt and provenance. The complete envelope,
-including all reference data, counts toward its character and token budget.
+including all reference data, counts toward its character budget.
 Native Foundry invocation can instead normalize the same response into
 `documents`, each containing an opaque `id`, a `url`, and JSON `content` with
 the indexed grounding and source fields. This shape is normalized into the same
@@ -1045,8 +1050,9 @@ Optional nonsecret bounds, also used by the setup command:
 | `ASC_FOUNDRY_IQ_MAX_CONTEXT_TOKENS` | 4,000 / 256-4,000 |
 
 `ASC_ENVIRONMENT=dev` selects a separate recipe-MCP envelope allowance of 65,536
-characters/16,000 tokens. The setting above still controls Search configuration,
-the REST retrieval path and standard local/production MCP acceptance; do not set
+characters. MCP results are no longer rejected by token count in any environment.
+The setting above still controls Search configuration and the REST retrieval
+request; do not set
 it to 16,000. The dev envelope allowance does not change the stored knowledge
 source/base, published source fingerprint, result count, snippet limits or
 provenance checks. It needs no source republication or Search refresh by itself.

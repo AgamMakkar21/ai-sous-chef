@@ -23,7 +23,6 @@ from sous_chef.domain.recipes import (
     RecipeGrounding,
     RecipeToolError,
 )
-from sous_chef.services.context import _encoding
 from sous_chef.services.recipe_indexing import RecipeIndexingError, search_document
 
 MCP_MAX_OUTPUT_CHARACTERS = 16000
@@ -72,7 +71,6 @@ GroundingStage = Literal[
     "reference_count",
     "reference_schema",
     "reference_match",
-    "context_tokens",
 ]
 
 
@@ -170,7 +168,10 @@ def parse_mcp_grounding(
     max_context_tokens: int,
     max_output_characters: int = MCP_MAX_OUTPUT_CHARACTERS,
 ) -> RecipeGrounding:
-    """Validate the overview and every attached reference within the full-response budget."""
+    """Validate all evidence with response-size, schema and provenance bounds.
+
+    max_context_tokens remains accepted for compatibility, but does not reject MCP responses.
+    """
     if len(output) > max_output_characters:
         raise McpGroundingError("output_size")
     stage: GroundingStage = "output_json"
@@ -299,10 +300,6 @@ def parse_mcp_grounding(
         grounding = RecipeGrounding(
             status="available" if recipes else "empty", recipes=tuple(recipes)
         )
-        stage = "context_tokens"
-        tokens = _encoding().encode(output, disallowed_special=())
-        if len(tokens) > max_context_tokens:
-            raise ValueError
         return grounding
     except (ValueError, ValidationError, RecursionError, RecipeIndexingError):
         raise McpGroundingError(stage) from None

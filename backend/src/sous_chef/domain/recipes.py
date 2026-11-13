@@ -432,6 +432,11 @@ class CombinedRecipeDraft(RecipeDraft):
     web_claims: tuple[WebClaim, ...] = Field(max_length=3, repr=False)
 
 
+class CombinedRecipeOutput(RecipeModel):
+    recipe: CombinedRecipeDraft | None
+    calorie_estimates: tuple[CalorieEstimate, ...] = Field(max_length=30, repr=False)
+
+
 class WebCitation(RecipeModel):
     url: str = Field(min_length=1, max_length=500, repr=False)
     title: Text = Field(repr=False)
@@ -563,7 +568,7 @@ class CalorieGroundingRequest(WebGroundingRequest):
     prompt: str = Field(min_length=1, max_length=12000, pattern=r"\S", repr=False)
     query: str = Field(min_length=1, max_length=240, pattern=r"\S", repr=False)
     ingredient_line_ids: tuple[LineId, ...] = Field(min_length=1, max_length=30)
-    max_input_tokens: int = Field(default=4000, ge=1, le=6000)
+    max_input_tokens: int = Field(default=4000, ge=1, le=16_000)
 
 
 class RecipeGenerator(Protocol):

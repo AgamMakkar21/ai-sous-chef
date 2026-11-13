@@ -10,11 +10,15 @@ import subprocess
 import sys
 import time
 import zipfile
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from azure.ai.projects import AIProjectClient
+    from openai import AsyncOpenAI
+    from sous_chef.settings import Settings
 
 ROOT = Path(__file__).resolve().parents[1]
 ROLES = ("orchestrator", "recipe_nutrition")
@@ -179,12 +183,7 @@ def manifest() -> dict[str, dict[str, str]]:
     for role in ROLES:
         target = agents[role]
         version_fields = (
-            ("version", "web_version")
-            if role == "recipe_nutrition"
-            and data["schema_version"] == 4
-            and isinstance(target, dict)
-            and "web_version" in target
-            else ("version",)
+            ("version",)
             if role == "orchestrator" or data["schema_version"] == 4
             else ("version", "retrieval_version", "web_version")
         )
@@ -688,6 +687,15 @@ def smoke(
     print(f"{environment} deployment smoke checks passed.")
 
 
+@asynccontextmanager
+async def _release_project_client(settings: "Settings") -> AsyncIterator["AsyncOpenAI"]:
+    from azure.identity.aio import AzureCliCredential
+    from sous_chef.adapters.foundry_gateway import _project_client
+
+    async with _project_client(settings, credential=AzureCliCredential()) as client:
+        yield client
+
+
 async def chat_smoke(deployed: dict[str, str]) -> None:
     """Exercise live release dependencies without reading/writing consumer documents."""
     from sous_chef.adapters.foundry_gateway import FoundryGateway
@@ -710,14 +718,18 @@ async def chat_smoke(deployed: dict[str, str]) -> None:
         and f"ASC_{name.upper()}" in deployed
     }
     try:
-        # Explicit CLI credentials for the delivery runner, never impersonate the app identity.
+        if deployed.get("ASC_ENVIRONMENT") not in {"dev", "prod"}:
+            raise DeliveryError("Live chat smoke requires the deployed dev/prod environment.")
         settings = Settings(
-            _env_file=None, environment="local", adapter_mode="live", **configuration
+            _env_file=None,
+            environment="dev" if deployed["ASC_ENVIRONMENT"] == "dev" else "prod",
+            adapter_mode="live",
+            **configuration,
         )
         if not settings.usda_enabled:
             raise DeliveryError("Agent-enabled chat requires USDA nutrition to be enabled.")
         nutrition = UsdaNutritionTool.from_settings(settings)
-        gateway = FoundryGateway(settings)
+        gateway = FoundryGateway(settings, client_factory=_release_project_client)
         specialist = RecipeSpecialistService(
             gateway,
             None,
@@ -743,8 +755,8 @@ async def chat_smoke(deployed: dict[str, str]) -> None:
             history=(),
             learned_preferences=(),
             current_request=(
-                "Make a simple chicken, white rice and carrot dinner for two in 30 minutes. "
-                "Use 200 g raw chicken breast, 100 g dry white rice, 100 g raw carrots "
+                "Make a simple chicken, rice and carrot dinner for two in 30 minutes. "
+                "Use 200 g raw chicken breast, 100 g raw rice, 100 g raw carrots "
                 "and 10 g olive oil. Give all ingredient quantities in grams."
             ),
         )

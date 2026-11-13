@@ -8,8 +8,7 @@
     },
     "recipe_nutrition": {
       "name": "sous-chef-recipe-nutrition-dev",
-      "version": "21",
-      "web_version": "37"
+      "version": "44"
     }
   }
 }
