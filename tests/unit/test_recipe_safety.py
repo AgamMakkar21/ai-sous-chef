@@ -230,6 +230,50 @@ def test_declared_food_ids_do_not_authorize_a_restricted_food_in_prose() -> None
         )
 
 
+@pytest.mark.parametrize(
+    "name,text,allergy",
+    [
+        ("olive oil", "Heat the oil, then cook the rice.", "peanut"),
+        ("coconut milk", "Warm the milk, then add the rice.", "milk"),
+        ("rice flour", "Mix the flour with the rice.", "gluten"),
+    ],
+)
+def test_step_shorthand_uses_its_unambiguous_validated_ingredient_reference(
+    name: str, text: str, allergy: str
+) -> None:
+    recipe = full_recipe(names=("rice", name), instructions=(text,))
+    assert validate_final_recipe(recipe, SafetyProfile(allergies=(allergy,))) == recipe
+
+
+@pytest.mark.parametrize(
+    "names,text,allergy",
+    [
+        (("rice", "olive oil"), "Cook the rice with peanut oil.", "peanut"),
+        (("rice", "coconut milk"), "Cook the rice with almond milk.", "tree nut"),
+        (("rice", "coconut milk"), "Cook the rice with milk powder.", "milk"),
+        (("rice", "coconut milk", "oat milk"), "Cook the rice with milk.", "milk"),
+    ],
+)
+def test_step_references_do_not_hide_explicit_allergens_or_ambiguous_shorthand(
+    names: tuple[str, ...], text: str, allergy: str
+) -> None:
+    with pytest.raises(RecipeSafetyError):
+        validate_final_recipe(
+            full_recipe(names=names, instructions=(text,)),
+            SafetyProfile(allergies=(allergy,)),
+        )
+
+
+def test_step_shorthand_cannot_borrow_another_steps_ingredient_reference() -> None:
+    recipe = full_recipe(
+        names=("rice", "olive oil"),
+        instructions=("Cook the rice in oil.", "Drizzle the olive oil."),
+        references=(("line0",), ("line1",)),
+    )
+    with pytest.raises(RecipeSafetyError):
+        validate_final_recipe(recipe, SafetyProfile(allergies=("peanut",)))
+
+
 def test_incorrect_instruction_references_and_model_copy_bypasses_are_revalidated() -> None:
     recipe = full_recipe()
     forged = recipe.model_copy(update={"servings": 0})

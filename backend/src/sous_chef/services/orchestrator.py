@@ -62,8 +62,8 @@ class ExecutionBudget:
     def fail(self) -> None:
         raise OrchestratorError(OrchestratorFailure.BUDGET_EXHAUSTED, self.operation_id)
 
-    def model(self, *, specialist: bool = False) -> None:
-        self.model_allowance()
+    def model(self, *, specialist: bool = False, calorie_fallback: bool = False) -> None:
+        self.model_allowance(calorie_fallback=calorie_fallback)
         if self.model_calls >= POLICY.max_model_calls + self.calorie_fallback_calls:
             self.fail()
         if specialist:
@@ -76,30 +76,15 @@ class ExecutionBudget:
             self.specialist_calls += 1
         self.model_calls += 1
 
-    def model_allowance(self) -> tuple[int, int]:
+    def model_allowance(self, *, calorie_fallback: bool = False) -> tuple[None, None]:
         self._check_deadline()
-        if (
-            self.output_tokens + POLICY.output_tokens_per_call
-            > POLICY.total_output_tokens
-            + self.calorie_fallback_calls * POLICY.output_tokens_per_call
-            or self.input_tokens >= POLICY.total_input_tokens
-        ):
+        if calorie_fallback and not self.calorie_fallback_calls:
             self.fail()
-        return (
-            min(POLICY.max_input_tokens, POLICY.total_input_tokens - self.input_tokens),
-            POLICY.output_tokens_per_call,
-        )
+        return None, None
 
-    def usage(self, usage: TokenUsage) -> None:
+    def usage(self, usage: TokenUsage, *, calorie_fallback: bool = False) -> None:
         self._check_deadline()
-        if (
-            usage.input_tokens > POLICY.max_input_tokens
-            or usage.output_tokens > POLICY.output_tokens_per_call
-            or self.input_tokens + usage.input_tokens > POLICY.total_input_tokens
-            or self.output_tokens + usage.output_tokens
-            > POLICY.total_output_tokens
-            + self.calorie_fallback_calls * POLICY.output_tokens_per_call
-        ):
+        if calorie_fallback and not self.calorie_fallback_calls:
             self.fail()
         self.input_tokens += usage.input_tokens
         self.output_tokens += usage.output_tokens
@@ -210,7 +195,6 @@ class OrchestratorService:
                 role=AgentRole.ORCHESTRATOR,
                 prompt=context.prompt,
                 operation_id=budget.operation_id,
-                max_output_tokens=POLICY.output_tokens_per_call,
             )
             try:
                 budget.model()
@@ -223,9 +207,7 @@ class OrchestratorService:
                     request=request,
                     previous_call=previous,
                     tool_output=output,
-                    max_input_tokens=min(
-                        POLICY.max_input_tokens, POLICY.total_input_tokens - budget.input_tokens
-                    ),
+                    max_input_tokens=budget.model_allowance()[0],
                 )
             )
             budget.usage(step.usage)
@@ -259,7 +241,9 @@ class OrchestratorService:
                 if final_rejected and error.code == OrchestratorFailure.BUDGET_EXHAUSTED:
                     return OrchestrationResult(status="unable", explanation=UNABLE)
                 raise
-            budget.web_allowed = call.arguments.use_web or quantity_web_query(context) is not None
+            budget.web_allowed = (
+                call.arguments.use_web or quantity_web_query(call.arguments) is not None
+            )
             rejection_code: RecipeSafetyFailure | None = None
             specialist: SpecialistResult | None
             try:
@@ -268,10 +252,8 @@ class OrchestratorService:
                     call.arguments,
                     operation_id=budget.operation_id,
                     budget=budget,
-                    max_input_tokens=min(
-                        POLICY.max_input_tokens, POLICY.total_input_tokens - budget.input_tokens
-                    ),
-                    max_output_tokens=POLICY.output_tokens_per_call,
+                    max_input_tokens=budget.model_allowance()[0],
+                    max_output_tokens=None,
                     deadline=deadline,
                 )
             except RecipeAllergyError as error:

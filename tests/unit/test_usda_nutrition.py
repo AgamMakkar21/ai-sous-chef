@@ -148,22 +148,18 @@ def test_mass_conversion_and_servings_are_deterministic(
 
 
 @pytest.mark.parametrize(
-    ("unit", "quantity", "grams"),
-    [("ml", 10, 9.2), ("l", 1, 920), ("tbsp", 1, 13.60382359875)],
+    ("unit", "quantity"),
+    [("ml", 10), ("l", 1), ("tbsp", 1)],
 )
-def test_oil_volume_fallback_is_food_specific_and_disclosed(
-    unit: str, quantity: int, grams: float
-) -> None:
+def test_food_name_alone_does_not_invent_a_volume_density(unit: str, quantity: int) -> None:
     payload = request(ingredient("olive oil", quantity, unit))
     payload = payload.model_copy(update={"allow_estimates": True})
     evidence = asyncio.run(
         UsdaNutritionTool(config("varied")).lookup(payload, deadline=monotonic() + 10)
     )
-    assert evidence.status == "known"
-    assert evidence.mappings[0].weight_grams == pytest.approx(grams)
-    assert evidence.mappings[0].conversion_basis is not None
-    assert "0.92 g/mL" in evidence.mappings[0].conversion_basis
-    assert evidence.nutrients[0].amount == pytest.approx(round(grams * 9 / 2, 2))
+    assert evidence.status == "unavailable"
+    assert evidence.unknown_components[0].reason == "unsupported_unit"
+    assert not evidence.mappings
 
 
 def test_approximation_does_not_invent_density_or_count_weights_for_unknown_portions() -> None:

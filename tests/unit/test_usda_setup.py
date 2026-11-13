@@ -9,7 +9,11 @@ import httpx
 import pytest
 from pydantic import SecretStr
 from sous_chef.adapters.usda_mcp import UsdaMcpConfig
-from sous_chef.domain.nutrition_inputs import recipe_food_match, recipe_food_query
+from sous_chef.domain.nutrition_inputs import (
+    ingredient_weight,
+    recipe_food_match,
+    recipe_food_query,
+)
 from sous_chef.settings import ConfigurationError, Settings
 from sous_chef.usda_mcp_server import FdcError, FoodDataCentral
 
@@ -35,11 +39,11 @@ def test_recipe_normalization_preserves_meaningful_food_forms_and_composition() 
         )
 
     assert recipe_food_query("shrimp, raw, peeled and deveined") == "shrimp raw"
-    assert recipe_food_query("jasmine rice dry") == "white long grain rice raw"
+    assert recipe_food_query("jasmine rice dry") == "jasmine rice dry"
     assert (
         recipe_food_query("boneless skinless chicken breast, sliced") == "meat only chicken breast"
     )
-    assert recipe_food_query("red bell peppers, sliced") == "red sweet pepper"
+    assert recipe_food_query("red bell peppers, sliced") == "red bell pepper"
     assert recipe_food_match(candidate("Chicken, breast, meat only, raw"), "chicken raw")
     assert not recipe_food_match(candidate("Chicken, breast, roasted"), "chicken raw")
     assert not recipe_food_match(candidate("Chicken, breast, roasted"), "chicken")
@@ -49,16 +53,39 @@ def test_recipe_normalization_preserves_meaningful_food_forms_and_composition() 
     assert not recipe_food_match(candidate("Chicken, skin only, raw"), "chicken raw")
     assert not recipe_food_match(candidate("Chicken, ground, raw"), "chicken")
     assert recipe_food_match(candidate("Chicken, ground, raw"), "ground chicken")
-    assert recipe_food_query("chicken, boneless pieces") == "chicken meat raw"
+    assert recipe_food_query("chicken, boneless pieces") == "chicken"
     assert recipe_food_query("chicken thighs, boneless chunks") == "chicken thigh"
     assert recipe_food_query("chicken broth") == "chicken broth"
     assert recipe_food_query("chicken, cooked pieces") == "chicken cooked"
     assert not recipe_food_match(
         candidate("Chicken spread"), recipe_food_query("chicken, boneless pieces")
     )
-    assert recipe_food_query("water") == "water bottled generic"
+    assert recipe_food_query("water") == "water"
     assert not recipe_food_match(candidate("Water convolvulus, raw"), recipe_food_query("water"))
-    assert recipe_food_query("tomatoes, chopped") == "tomato red ripe"
+    assert recipe_food_query("tomatoes, chopped") == "tomato"
+    assert recipe_food_query("neutral oil") == "neutral oil"
+    assert recipe_food_query("regional grain blend, uncooked") == "regional grain blend raw"
+    assert not recipe_food_match(
+        candidate("Regional grain blend with milk"), "regional grain blend"
+    )
+    assert not recipe_food_match(
+        candidate("Regional grain blend, with milk"), "regional grain blend"
+    )
+    assert recipe_food_match(candidate("Rice, white, long-grain, regular, raw, enriched"), "rice")
+
+
+@pytest.mark.parametrize(
+    ("name", "query"),
+    [
+        ("mushrooms, chopped", "mushroom"),
+        ("radishes, sliced", "radish"),
+        ("blueberries, fresh", "blueberry"),
+        ("potatoes, cubed", "potato"),
+        ("asparagus, trimmed", "asparagus"),
+    ],
+)
+def test_regular_noun_inflections_do_not_need_a_food_name_dictionary(name: str, query: str) -> None:
+    assert recipe_food_query(name) == query
 
 
 def test_source_portions_retain_amount_and_unit_without_inventing_missing_weights() -> None:
@@ -86,6 +113,44 @@ def test_source_portions_retain_amount_and_unit_without_inventing_missing_weight
         assert profile.portions[0].amount == 3 and profile.portions[0].gram_weight == 9
         assert profile.portions[1].measure_unit == "cup"
         assert profile.portions[1].modifier == "chopped"
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize(
+    ("name", "label", "unit", "expected"),
+    [
+        ("regional food", "medium", "piece", 50),
+        ("regional food", "whole", "item", 50),
+        ("regional food", "small package", "piece", None),
+        ("regional food", "medium slice", "piece", None),
+        ("regional food slice", "slice", "piece", 50),
+        ("regional food wedge", "fruit", "piece", None),
+        ("regional food pod", "pod", "piece", 50),
+        ("regional food", "tablespoon", "tbsp", 50),
+        ("\u98df\u6750", "piece", "piece", 50),
+    ],
+)
+def test_source_portions_work_for_unlisted_foods_without_guessing_item_parts(
+    name: str, label: str, unit: str, expected: int | None
+) -> None:
+    async def check() -> None:
+        response = {
+            **FOOD,
+            "description": name,
+            "foodNutrients": [{"nutrient": {"id": 1008, "unitName": "KCAL"}, "amount": 100}],
+            "foodPortions": [{"amount": 2, "gramWeight": 50, "modifier": label}],
+        }
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, json=response))
+        ) as client:
+            profile = await FoodDataCentral(client, SecretStr("synthetic-key")).profile("1234567")
+        result = ingredient_weight(name, Decimal(2), unit, profile, estimates=True)
+        if expected is None:
+            assert result is None
+        else:
+            assert result is not None and result[0] == expected
+            assert result[1].startswith("USDA portion:")
 
     asyncio.run(check())
 

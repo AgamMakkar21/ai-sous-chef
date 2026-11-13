@@ -16,9 +16,9 @@ from uuid import UUID
 
 from sous_chef.domain.context import (
     CONTEXT_FRAMING_TOKENS,
+    MAX_CONTEXT_CHARACTERS,
     MAX_CONTEXT_EXCHANGES,
     MAX_CONTEXT_LEARNED,
-    MAX_CONTEXT_TOKENS,
     ContextExchange,
     RequestContext,
 )
@@ -185,7 +185,8 @@ async def measure(iterations: int) -> dict[str, Any]:
         },
         "budgets": {
             "orchestrator": asdict(POLICY),
-            "context_tokens_including_framing": MAX_CONTEXT_TOKENS,
+            "context_transport_characters": MAX_CONTEXT_CHARACTERS,
+            "context_tokens_including_framing": None,
             "history_exchanges": MAX_CONTEXT_EXCHANGES,
             "learned_entries": MAX_CONTEXT_LEARNED,
             "retrieval_max_results_default": 3,

@@ -21,11 +21,13 @@ from sous_chef.domain.orchestrator import (
     OrchestratorFailure,
     SpecialistArguments,
     SpecialistResult,
+    TokenUsage,
 )
 from sous_chef.domain.recipe_safety import UNABLE
-from sous_chef.domain.recipes import CalorieGroundingRequest, StructuredRecipe
+from sous_chef.domain.recipes import CalorieEstimate, CalorieGroundingRequest, StructuredRecipe
 from sous_chef.orchestrator_definition import specialist_tool
 from sous_chef.services import orchestrator, recipe_specialist
+from sous_chef.services.context import _encoding
 from sous_chef.services.orchestrator import ExecutionBudget, OrchestratorService
 from sous_chef.services.recipe_grounding import retrieval_query
 from sous_chef.services.recipe_specialist import RecipeSpecialistService
@@ -123,6 +125,7 @@ def calorie_response(payload: dict[str, Any], *, combined: bool = False) -> dict
         "missing_citation",
         "invented_source",
         "invented_id",
+        "duplicate_id",
         "ai_citation",
         "failed",
         "foreign_discovery",
@@ -161,6 +164,8 @@ def test_calorie_fallback_validates_native_web_sources_and_distinguishes_ai_know
         draft["calorieEstimates"][0]["reference"] = "https://invented.example.invalid"
     elif fault == "invented_id":
         draft["calorieEstimates"][0]["ingredientLineId"] = "not-requested"
+    elif fault == "duplicate_id":
+        draft["calorieEstimates"].append(copy.deepcopy(draft["calorieEstimates"][0]))
     elif fault == "ai_citation":
         draft["calorieEstimates"][0]["source"] = "ai_knowledge"
     elif fault == "failed":
@@ -219,6 +224,147 @@ def test_calorie_fallback_validates_native_web_sources_and_distinguishes_ai_know
     assert payload["agent_reference"]["version"] == ("4" if combined else "5")
     assert payload["store"] is False and payload["max_tool_calls"] == 1
     assert not {"model", "tools", "text", "instructions"} & payload.keys()
+
+
+def test_combined_fallback_returns_every_requested_rice_and_spice_estimate() -> None:
+    names = (
+        "basmati rice dry",
+        "cumin seed",
+        "coriander ground",
+        "garam masala",
+        "chili powder red",
+    )
+    ingredients = [
+        {"ingredientLineId": f"food{index}", "name": name, "quantity": 10, "unit": "g"}
+        for index, name in enumerate(names)
+    ]
+    query = "calories kcal per 100 g; " + "; ".join(names)
+    prompt = json.dumps({"purpose": "calorie_fallback", "query": query, "ingredients": ingredients})
+    request = CalorieGroundingRequest(
+        role=AgentRole.RECIPE_NUTRITION,
+        prompt=prompt,
+        query=query,
+        ingredient_line_ids=tuple(f"food{index}" for index in range(len(names))),
+        max_input_tokens=16000,
+    )
+    transport = Harness(body=calorie_response({"input": prompt}, combined=True))
+    gateway = FoundryGateway(
+        configuration(
+            foundry_recipe_nutrition_mode="combined",
+            foundry_recipe_nutrition_agent_version="4",
+            foundry_recipe_nutrition_retrieval_agent_version=None,
+            foundry_recipe_nutrition_web_agent_version=None,
+        ),
+        client_factory=transport.factory,
+    )
+    estimates, _ = asyncio.run(gateway.estimate_calories(request))
+    assert tuple(item.ingredient_line_id for item in estimates) == request.ingredient_line_ids
+    assert estimates[0].source == "web_iq" and estimates[0].reference == URL
+    assert all(item.source == "ai_knowledge" and item.reference is None for item in estimates[1:])
+    assert len(transport.requests) == 1
+    assert json.loads(transport.requests[0].content)["agent_reference"]["version"] == "4"
+
+
+@pytest.mark.parametrize("returned", [0, 1, 2])
+def test_calorie_fallback_accepts_only_the_valid_subset_actually_returned(returned: int) -> None:
+    prompt = json.dumps(
+        {
+            "purpose": "calorie_fallback",
+            "query": "calories for regional ingredients",
+            "ingredients": [
+                {"ingredientLineId": f"food{i}", "name": f"regional ingredient {i}"}
+                for i in range(2)
+            ],
+        }
+    )
+    response = calorie_response({"input": prompt}, combined=True)
+    content = response["output"][-1]["content"][0]
+    output = json.loads(content["text"])
+    output["calorieEstimates"] = output["calorieEstimates"][:returned]
+    content["text"] = json.dumps(output)
+    transport = Harness(body=response)
+    gateway = FoundryGateway(
+        configuration(
+            foundry_recipe_nutrition_mode="combined",
+            foundry_recipe_nutrition_agent_version="4",
+            foundry_recipe_nutrition_retrieval_agent_version=None,
+            foundry_recipe_nutrition_web_agent_version=None,
+        ),
+        client_factory=transport.factory,
+    )
+    request = CalorieGroundingRequest(
+        role=AgentRole.RECIPE_NUTRITION,
+        prompt=prompt,
+        query="calories for regional ingredients",
+        ingredient_line_ids=("food0", "food1"),
+        max_input_tokens=16000,
+        max_output_tokens=8192,
+    )
+    estimates, _ = asyncio.run(gateway.estimate_calories(request))
+    assert (
+        tuple(item.ingredient_line_id for item in estimates)
+        == request.ingredient_line_ids[:returned]
+    )
+
+
+def test_thirty_realistic_calorie_estimates_are_not_rejected_as_a_small_tool_result() -> None:
+    prompt = json.dumps(
+        {
+            "purpose": "calorie_fallback",
+            "query": "calories for regional ingredients",
+            "ingredients": [
+                {"ingredientLineId": f"food{i}", "name": f"regional ingredient {i}"}
+                for i in range(30)
+            ],
+        }
+    )
+    response = calorie_response({"input": prompt}, combined=True)
+    content = response["output"][-1]["content"][0]
+    output = json.loads(content["text"])
+    for index, estimate in enumerate(output["calorieEstimates"]):
+        estimate["basis"] = (
+            "Synthetic estimate: 10 g at 360 kcal per 100 g yields 36 kcal; no added oil or water. "
+            * 5
+        ).strip()
+        estimate.update(source="web_iq", reference=f"{URL}/{index}", amount=36)
+    content["text"] = json.dumps(output)
+    content["annotations"] = [
+        {
+            "type": "url_citation",
+            "start_index": content["text"].index(estimate["reference"]),
+            "end_index": content["text"].index(estimate["reference"]) + len(estimate["reference"]),
+            "title": "Synthetic nutrition source",
+            "url": estimate["reference"],
+        }
+        for estimate in output["calorieEstimates"]
+    ]
+    response["output"][-2]["action"]["sources"] = [
+        {"type": "url", "url": estimate["reference"]} for estimate in output["calorieEstimates"]
+    ]
+    response["usage"]["output_tokens"] = 6500
+    assert len(content["text"]) > 16000
+    assert len(_encoding().encode(content["text"])) > 4000
+    transport = Harness(body=response)
+    gateway = FoundryGateway(
+        configuration(
+            foundry_recipe_nutrition_mode="combined",
+            foundry_recipe_nutrition_agent_version="4",
+            foundry_recipe_nutrition_retrieval_agent_version=None,
+            foundry_recipe_nutrition_web_agent_version=None,
+        ),
+        client_factory=transport.factory,
+    )
+    request = CalorieGroundingRequest(
+        role=AgentRole.RECIPE_NUTRITION,
+        prompt=prompt,
+        query="calories for regional ingredients",
+        ingredient_line_ids=tuple(f"food{i}" for i in range(30)),
+        max_input_tokens=16000,
+        max_output_tokens=8192,
+    )
+    estimates, usage = asyncio.run(gateway.estimate_calories(request))
+    assert len(estimates) == 30 and usage.output_tokens == 6500
+    assert json.loads(transport.requests[0].content)["max_output_tokens"] == 8192
 
 
 class WebHarness(Harness):
@@ -300,10 +446,8 @@ class WebHarness(Harness):
                 self.arguments,
                 operation_id=budget.operation_id,
                 budget=budget,
-                max_input_tokens=min(
-                    POLICY.max_input_tokens, POLICY.total_input_tokens - budget.input_tokens
-                ),
-                max_output_tokens=POLICY.output_tokens_per_call,
+                max_input_tokens=None,
+                max_output_tokens=None,
                 deadline=monotonic() + 60,
             )
         )
@@ -396,7 +540,10 @@ def test_vague_quantity_uses_one_minimized_native_search_then_real_usda_mcp() ->
         }
     )
     harness.service = RecipeSpecialistService(harness.gateway, None, api_tool(), combined=True)
-    query = quantity_web_query(harness.data)
+    harness.arguments = harness.arguments.model_copy(
+        update={"quantity_ingredients": ("chicken", "rice")}
+    )
+    query = quantity_web_query(harness.arguments)
     assert query is not None
     message = harness.combined["output"][1]
     draft = json.loads(message["content"][0]["text"])
@@ -446,7 +593,8 @@ def test_empty_quantity_search_keeps_phased_recipe_and_explicit_missing_quantity
     harness.data = harness.data.model_copy(
         update={"current_request": "Make dinner with some rice."}
     )
-    query = quantity_web_query(harness.data)
+    harness.arguments = harness.arguments.model_copy(update={"quantity_ingredients": ("rice",)})
+    query = quantity_web_query(harness.arguments)
     assert query is not None
     harness.web["output"][0]["action"]["query"] = query
     harness.web["output"][1]["content"][0].update(text=json.dumps({"claims": []}), annotations=[])
@@ -464,6 +612,33 @@ def test_empty_quantity_search_keeps_phased_recipe_and_explicit_missing_quantity
     )
     assert len(harness.requests) == 3  # Public quantity search, recipe, calorie fallback.
     assert any(item.source != "usda_mcp" for item in recipe.nutrition.ingredient_calories)
+
+
+def test_calorie_generation_has_its_own_deadline_for_larger_responses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        recipe_specialist,
+        "POLICY",
+        replace(POLICY, web_deadline_seconds=0.001, calorie_deadline_seconds=1),
+    )
+    harness = CombinedHarness(use_web=False)
+    original = harness.gateway.estimate_calories
+
+    async def delayed(
+        request: CalorieGroundingRequest,
+    ) -> tuple[tuple[CalorieEstimate, ...], TokenUsage]:
+        await asyncio.sleep(0.02)
+        return await original(request)
+
+    monkeypatch.setattr(harness.gateway, "estimate_calories", delayed)
+    harness.service = RecipeSpecialistService(harness.gateway, None, api_tool(), combined=True)
+    recipe = harness.generate().recipe
+    assert recipe is not None
+    energy = next(item for item in recipe.nutrition.coverage if item.name == "energy")
+    assert energy.status == "known"
+    assert any(item.source == "web_iq" for item in recipe.nutrition.ingredient_calories)
+    assert len(harness.requests) == 2
 
 
 @pytest.mark.parametrize("use_web", [False, True])
@@ -581,7 +756,6 @@ def test_generated_attribution_cannot_abort_or_fabricate_grounded_recipe_sources
         "annotations",
         "unattributed",
         "tool-error",
-        "usage",
         "web-tokens",
     ],
 )
@@ -605,8 +779,6 @@ def test_combined_native_results_fail_closed_before_usda_and_are_not_replayed(fa
         native["action"]["sources"] = []
     elif fault == "tool-error":
         native["status"] = "failed"
-    elif fault == "usage":
-        harness.combined["usage"]["input_tokens"] = 16001
     else:
         native["action"]["sources"] = [
             {"type": "url", "url": URL + "?padding=" + "a " * 4001},
@@ -879,7 +1051,7 @@ def test_web_recipe_accepts_natural_cooking_prose() -> None:
     assert len(harness.requests) == 4 and len(harness.tools.nutrition_requests) == 1
 
 
-@pytest.mark.parametrize("limit", ["model_calls", "tool_calls", "web_calls", "output_tokens"])
+@pytest.mark.parametrize("limit", ["model_calls", "tool_calls", "web_calls"])
 def test_shared_limits_stop_web_before_it_runs(limit: str) -> None:
     harness = WebHarness()
     budget = ExecutionBudget(uuid4())
@@ -887,7 +1059,7 @@ def test_shared_limits_stop_web_before_it_runs(limit: str) -> None:
     setattr(
         budget,
         limit,
-        {"model_calls": 4, "tool_calls": 8, "web_calls": 1, "output_tokens": 6000}[limit],
+        {"model_calls": 4, "tool_calls": 8, "web_calls": 1}[limit],
     )
     with pytest.raises(OrchestratorError) as caught:
         harness.generate(budget)
@@ -904,27 +1076,35 @@ def test_web_cannot_create_an_extra_model_allowance_for_a_revision() -> None:
     assert len(harness.requests) == 4 and len(harness.tools.nutrition_requests) == 1
 
 
-def test_nested_usage_rechecks_the_reserved_recipe_calls_token_headroom() -> None:
+def test_nested_usage_does_not_exhaust_recipe_token_headroom() -> None:
     harness = WebHarness()
     budget = ExecutionBudget(uuid4())
     budget.web_allowed = True
-    budget.output_tokens = POLICY.total_output_tokens - POLICY.output_tokens_per_call
+    budget.output_tokens = 60000
     budget.model(specialist=True)
-    with pytest.raises(OrchestratorError) as caught:
-        harness.generate(budget)
-    assert caught.value.code == OrchestratorFailure.BUDGET_EXHAUSTED
-    assert len(harness.requests) == 1 and not harness.tools.nutrition_requests
+    assert harness.generate(budget).recipe is not None
+    assert len(harness.requests) == 2 and harness.tools.nutrition_requests
 
 
-def test_web_input_is_preflighted_before_a_search() -> None:
+def test_large_provider_usage_does_not_invalidate_a_grounded_recipe() -> None:
+    harness = CombinedHarness()
+    harness.combined["usage"].update(input_tokens=100000, output_tokens=20000, total_tokens=120000)
+    budget = ExecutionBudget(uuid4())
+    budget.web_allowed = True
+    budget.model(specialist=True)
+    result = harness.generate(budget)
+    assert result.recipe is not None
+    assert result.usage.input_tokens == 100000 and result.usage.output_tokens == 20000
+    assert all("max_output_tokens" not in json.loads(item.content) for item in harness.requests)
+
+
+def test_web_input_is_not_rejected_by_a_cumulative_token_count() -> None:
     harness = WebHarness()
     budget = ExecutionBudget(uuid4())
     budget.web_allowed = True
-    budget.input_tokens = POLICY.total_input_tokens - 1
-    with pytest.raises(FoundryGatewayError) as caught:
-        harness.generate(budget)
-    assert caught.value.code == FoundryFailure.REJECTED
-    assert not harness.requests
+    budget.input_tokens = 320000
+    assert harness.generate(budget).recipe is not None
+    assert len(harness.requests) == 2
 
 
 def test_strict_routing_contract_requires_a_query_only_for_web() -> None:

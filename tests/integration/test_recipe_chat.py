@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import httpx2
 import pytest
+import test_web_grounding as web_fixtures
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sous_chef.adapters import foundry_gateway
@@ -249,6 +250,95 @@ def test_chat_persists_attributed_calories_during_usda_outage(
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
         assert send(client, conversation).json() == response.json()
         assert len(recipe_transport.requests) == 4
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "invalid_json",
+        "incomplete",
+        "invented_source",
+        "above_old_output_limit",
+        "partial",
+        "empty",
+        "high_usage",
+    ],
+)
+def test_optional_calorie_failure_preserves_completed_chat_and_verified_usda_history(
+    fault: str,
+    combined_settings: Settings,
+    auth_headers: dict[str, str],
+    harness: tuple[Transport, SyntheticCredential],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO", logger="sous_chef.operational")
+    original = web_fixtures.calorie_response
+
+    def calorie_result(payload: dict[str, Any], *, combined: bool = False) -> dict[str, Any]:
+        response = original(payload, combined=combined)
+        content = response["output"][-1]["content"][0]
+        output = json.loads(content["text"])
+        if fault == "invalid_json":
+            content["text"] = "private invalid calorie content"
+            return response
+        if fault == "incomplete":
+            response["status"] = "incomplete"
+        elif fault == "invented_source":
+            output["calorieEstimates"][0]["reference"] = "https://invented.example.invalid"
+        elif fault == "above_old_output_limit":
+            response["usage"]["input_tokens"] = 160001
+            response["usage"]["output_tokens"] = 20000
+        elif fault in {"partial", "empty"}:
+            output["calorieEstimates"] = output["calorieEstimates"][
+                : 1 if fault == "partial" else 0
+            ]
+        elif fault == "high_usage":
+            response["usage"]["output_tokens"] = 6500
+        content["text"] = json.dumps(output)
+        return response
+
+    monkeypatch.setattr(web_fixtures, "calorie_response", calorie_result)
+    transport = CombinedHarness(use_web=False)
+    monkeypatch.setattr(foundry_gateway, "_project_client", transport.factory)
+    settings = combined_settings.model_copy(
+        update={"usda_mcp_env": {"TEST_USDA_MODE": SecretStr("fail_carrot")}}
+    )
+    with TestClient(create_app(settings), headers=auth_headers) as client:
+        onboard(client)
+        conversation = create(client)
+        response = send(client, conversation)
+        assert response.status_code == 200, response.text
+        turn = response.json()["data"]
+        assert turn["status"] == "completed"
+        nutrition = turn["recipe"]["nutrition"]
+        assert {item["ingredientLineId"] for item in nutrition["mappings"]} == {"rice"}
+        expected = (
+            {"rice", "carrot", "oil"}
+            if fault in {"high_usage", "above_old_output_limit"}
+            else {"rice", "carrot"}
+            if fault == "partial"
+            else {"rice"}
+        )
+        assert {item["ingredientLineId"] for item in nutrition["ingredientCalories"]} == expected
+        energy = next(item for item in nutrition["coverage"] if item["name"] == "energy")
+        assert set(energy["coveredIngredientLineIds"]) == expected
+        assert set(energy["unknownIngredientLineIds"]) == {"rice", "carrot", "oil"} - expected
+        assert energy["status"] == (
+            "known" if fault in {"high_usage", "above_old_output_limit"} else "partial"
+        )
+        assert all(
+            item["reference"] != "https://invented.example.invalid"
+            for item in nutrition["ingredientCalories"]
+        )
+        if fault not in {"high_usage", "above_old_output_limit"}:
+            assert "calorie_fallback_unavailable" in caplog.text
+        assert "private invalid calorie content" not in caplog.text
+        assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
+        assert send(client, conversation).json() == response.json()
+        assert len(transport.requests) == 4
+        fallback = json.loads(transport.requests[2].content)
+        assert "max_output_tokens" not in fallback
 
 
 @pytest.mark.parametrize("use_web", [False, True])

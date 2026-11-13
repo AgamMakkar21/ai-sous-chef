@@ -12,9 +12,9 @@ from sous_chef.adapters.cosmos import CosmosRepository
 from sous_chef.domain.authorization import AuthenticatedUser
 from sous_chef.domain.context import (
     CONTEXT_FRAMING_TOKENS,
+    MAX_CONTEXT_CHARACTERS,
     MAX_CONTEXT_EXCHANGES,
     MAX_CONTEXT_LEARNED,
-    MAX_CONTEXT_TOKENS,
     MIN_LEARNED_CONFIDENCE,
     MIN_LEARNED_COOKED_SUPPORT,
     ContextExchange,
@@ -58,10 +58,11 @@ def context_tokens(context: RequestContext) -> int:
 
 
 def bound_context(context: RequestContext, *, max_tokens: int | None = None) -> RequestContext:
-    limit = MAX_CONTEXT_TOKENS if max_tokens is None else min(max_tokens, MAX_CONTEXT_TOKENS)
-    if limit < 1:
+    if max_tokens is not None and max_tokens < 1:
         raise ValueError("Context token limit must be positive.")
-    while context_tokens(context) > limit:
+    while len(context.prompt) > MAX_CONTEXT_CHARACTERS or (
+        max_tokens is not None and context_tokens(context) > max_tokens
+    ):
         if context.history:
             context = context.model_copy(update={"history": context.history[1:]})
         elif context.learned_preferences:

@@ -24,6 +24,7 @@ from openai import (
     APIStatusError,
     APITimeoutError,
     AsyncOpenAI,
+    omit,
 )
 from openai.types.responses import Response
 from opentelemetry import trace
@@ -39,7 +40,6 @@ from sous_chef.domain.foundry import (
     FoundryResult,
 )
 from sous_chef.domain.orchestrator import (
-    POLICY,
     CoordinationRequest,
     CoordinationStep,
     OpaqueReasoning,
@@ -64,7 +64,7 @@ from sous_chef.domain.recipes import (
     WebGrounding,
     WebGroundingRequest,
 )
-from sous_chef.recipe_definition import RecipePhase, build_recipe_definition, recipe_knowledge_tool
+from sous_chef.recipe_definition import RecipePhase
 from sous_chef.settings import ConfigurationError, Settings
 from sous_chef.telemetry import ErrorCategory, Event, operational_event, trace_id
 from sous_chef.tracing import Operation, foundry_trace_headers, model_usage, observed
@@ -79,7 +79,7 @@ def validate_recipe_mcp_envelopes(
     listings: Sequence[str],
     calls: Sequence[str],
     *,
-    max_tool_result_tokens: int,
+    max_tool_result_tokens: int | None = None,
 ) -> None:
     if sum(map(len, (*listings, *calls))) > MAX_MCP_ENVELOPE_CHARACTERS:
         raise ValueError("Recipe MCP response exceeds the runtime envelope budget.")
@@ -330,30 +330,6 @@ class FoundryGateway:
                 )
             try:
                 async with asyncio.timeout(self._settings.foundry_invocation_timeout_seconds):
-                    if coordination is not None:
-                        self._check_coordination_input(coordination)
-                    elif isinstance(request, WebGroundingRequest):
-                        self._check_web_input(request)
-                    elif isinstance(request, RecipeGenerationRequest):
-                        self._check_recipe_input(
-                            request,
-                            body=self._combined_recipe_body(request)
-                            if isinstance(request, CombinedRecipeGenerationRequest)
-                            else self._grounded_recipe_body()
-                            if isinstance(request, GroundedRecipeGenerationRequest)
-                            else None,
-                            reserved_tool_tokens=RecipeKnowledgeConfig.from_settings(
-                                self._settings
-                            ).service_output_tokens
-                            + (
-                                POLICY.max_tool_result_tokens
-                                if isinstance(request, CombinedRecipeGenerationRequest)
-                                and request.web_query is not None
-                                else 0
-                            )
-                            if isinstance(request, GroundedRecipeGenerationRequest)
-                            else 0,
-                        )
                     async with self._factory(self._settings) as client:
                         body: dict[str, object] = {
                             "agent_reference": {
@@ -376,7 +352,9 @@ class FoundryGateway:
                             body.update(self._recipe_body())
                         response = await client.responses.create(
                             input=request.prompt,
-                            max_output_tokens=request.max_output_tokens,
+                            max_output_tokens=request.max_output_tokens
+                            if request.max_output_tokens is not None
+                            else omit,
                             extra_body=body,
                             extra_headers={
                                 "X-Client-Request-Id": str(request.operation_id),
@@ -423,31 +401,6 @@ class FoundryGateway:
             "include": ["web_search_call.action.sources"],
         }
 
-    def _check_web_input(self, request: WebGroundingRequest) -> None:
-        from sous_chef.services.context import _encoding
-
-        combined = (
-            isinstance(request, CalorieGroundingRequest)
-            and self._settings.foundry_recipe_nutrition_mode == "combined"
-        )
-        knowledge = RecipeKnowledgeConfig.from_settings(self._settings) if combined else None
-        definition = build_recipe_definition(
-            "budget-model",
-            "budget-policy",
-            phase=RecipePhase.COMBINED if combined else RecipePhase.WEB,
-            knowledge_tool=recipe_knowledge_tool(knowledge.mcp_endpoint, knowledge.connection_name)
-            if knowledge is not None
-            else None,
-        )
-        serialized = (
-            request.prompt
-            + json.dumps(definition.as_dict())
-            + json.dumps(FoundryGateway._web_body())
-        )
-        tokens = len(_encoding().encode(serialized, disallowed_special=())) + 64
-        if tokens > request.max_input_tokens:
-            raise FoundryGatewayError(FoundryFailure.REJECTED, request)
-
     @staticmethod
     def _web_result(
         request: FoundryRequest, response: Response
@@ -483,7 +436,7 @@ class FoundryGateway:
         if (
             draft.claims
             or len(ids) != len(set(ids))
-            or set(ids) != set(request.ingredient_line_ids)
+            or not set(ids) <= set(request.ingredient_line_ids)
         ):
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
         return draft.calorie_estimates, usage
@@ -492,7 +445,6 @@ class FoundryGateway:
     def _web_evidence(
         request: FoundryRequest, response: Response, *, combined: bool = False
     ) -> tuple[WebDraft, dict[str, str], TokenUsage]:
-        from sous_chef.services.context import _encoding
 
         assert isinstance(request, WebGroundingRequest)
         calls = [item for item in response.output if item.type == "web_search_call"]
@@ -523,15 +475,12 @@ class FoundryGateway:
                 validate_recipe_mcp_envelopes(
                     [item.model_dump_json() for item in listings],
                     [],
-                    max_tool_result_tokens=POLICY.max_tool_result_tokens,
                 )
             usage = response.usage
             action = call.action
             message = messages[0]
             if (
                 usage is None
-                or usage.input_tokens > request.max_input_tokens
-                or usage.output_tokens > request.max_output_tokens
                 or call.status
                 not in (
                     {"completed", "failed"}
@@ -555,15 +504,17 @@ class FoundryGateway:
                 or message.status != "completed"
                 or len(message.content) != 1
                 or message.content[0].type != "output_text"
-                or len(message.content[0].annotations) > 10
-                or len(response.output_text) > 16000
-                or len(action.sources or []) > 20
+                or len(message.content[0].annotations)
+                > (30 if isinstance(request, CalorieGroundingRequest) else 10)
+                or len(response.output_text)
+                > (65536 if isinstance(request, CalorieGroundingRequest) else 16000)
+                or len(action.sources or [])
+                > (30 if isinstance(request, CalorieGroundingRequest) else 20)
             ):
                 raise ValueError
             raw_evidence = call.model_dump_json() + message.model_dump_json()
-            if (
-                len(_encoding().encode(raw_evidence, disallowed_special=()))
-                > POLICY.max_tool_result_tokens
+            if len(raw_evidence) > (
+                131072 if isinstance(request, CalorieGroundingRequest) else 65536
             ):
                 raise ValueError
             if combined:
@@ -616,47 +567,6 @@ class FoundryGateway:
         body["include"] = ["web_search_call.action.sources"]
         return body
 
-    def _check_recipe_input(
-        self,
-        request: RecipeGenerationRequest,
-        *,
-        body: dict[str, object] | None = None,
-        reserved_tool_tokens: int = 0,
-    ) -> None:
-        from sous_chef.services.context import _encoding
-
-        phase = (
-            RecipePhase.COMBINED
-            if isinstance(request, CombinedRecipeGenerationRequest)
-            else RecipePhase.RETRIEVAL
-            if isinstance(request, GroundedRecipeGenerationRequest)
-            else RecipePhase.GENERATION
-        )
-        knowledge = (
-            RecipeKnowledgeConfig.from_settings(self._settings)
-            if phase in (RecipePhase.RETRIEVAL, RecipePhase.COMBINED)
-            else None
-        )
-        assert self._settings.foundry_recipe_nutrition_deployment is not None
-        definition = build_recipe_definition(
-            self._settings.foundry_recipe_nutrition_deployment,
-            "budget-policy",
-            phase=phase,
-            knowledge_tool=recipe_knowledge_tool(knowledge.mcp_endpoint, knowledge.connection_name)
-            if knowledge is not None
-            else None,
-        )
-        encoding = _encoding()
-        serialized = (
-            json.dumps(definition.as_dict())
-            + request.prompt
-            + json.dumps(FoundryGateway._recipe_body() if body is None else body)
-        )
-        tokens = len(encoding.encode(serialized, disallowed_special=())) + 64 + reserved_tool_tokens
-        tool_tokens = len(encoding.encode(request.grounding_json, disallowed_special=()))
-        if tokens > request.max_input_tokens or tool_tokens > POLICY.max_tool_result_tokens:
-            raise FoundryGatewayError(FoundryFailure.REJECTED, request)
-
     @staticmethod
     def _recipe_result(
         request: FoundryRequest,
@@ -670,8 +580,6 @@ class FoundryGateway:
             actions = [item for item in response.output if item.type != "reasoning"]
             if (
                 usage is None
-                or usage.input_tokens > request.max_input_tokens
-                or usage.output_tokens > request.max_output_tokens
                 or len(actions) != 1
                 or actions[0].type != "message"
                 or actions[0].status != "completed"
@@ -752,10 +660,7 @@ class FoundryGateway:
             validate_recipe_mcp_envelopes(
                 [item.model_dump_json() for item in listings],
                 [item.model_dump_json() for item in calls],
-                max_tool_result_tokens=max(
-                    POLICY.max_tool_result_tokens,
-                    knowledge.mcp_max_context_tokens,
-                ),
+                max_tool_result_tokens=knowledge.mcp_max_context_tokens,
             )
         except ValueError:
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request) from None
@@ -805,8 +710,6 @@ class FoundryGateway:
         request: FoundryRequest,
         response: Response,
     ) -> tuple[RecipeDraft, RecipeGrounding, WebGrounding | None, TokenUsage]:
-        from sous_chef.services.context import _encoding
-
         assert isinstance(request, CombinedRecipeGenerationRequest)
         try:
             combined, grounding, usage = self._grounded_recipe_result(request, response)
@@ -856,10 +759,7 @@ class FoundryGateway:
                     + json.dumps([claim.model_dump() for claim in combined.web_claims])
                     + "".join(annotation.model_dump_json() for annotation in content.annotations)
                 )
-                if (
-                    len(_encoding().encode(raw, disallowed_special=()))
-                    > POLICY.max_tool_result_tokens
-                ):
+                if len(raw) > MAX_MCP_ENVELOPE_CHARACTERS:
                     raise ValueError
                 if urls:
                     web = WebGrounding(
@@ -871,20 +771,6 @@ class FoundryGateway:
             return draft, grounding, web, usage
         except ValueError:
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request) from None
-
-    @staticmethod
-    def _check_coordination_input(request: CoordinationRequest) -> None:
-        from sous_chef.orchestrator_definition import ORCHESTRATOR_INSTRUCTIONS
-        from sous_chef.services.context import _encoding
-
-        body = FoundryGateway._coordination_body(request)
-        body.setdefault("input", request.request.prompt)
-        serialized = ORCHESTRATOR_INSTRUCTIONS + json.dumps(body, ensure_ascii=False)
-        encoding = _encoding()
-        tokens = len(encoding.encode(serialized, disallowed_special=())) + 64
-        tool_tokens = len(encoding.encode(request.tool_output or "", disallowed_special=()))
-        if tokens > request.max_input_tokens or tool_tokens > POLICY.max_tool_result_tokens:
-            raise FoundryGatewayError(FoundryFailure.REJECTED, request.request)
 
     @staticmethod
     def _coordination_body(request: CoordinationRequest) -> dict[str, object]:

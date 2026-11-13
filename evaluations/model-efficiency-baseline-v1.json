@@ -1,17 +1,17 @@
 {
   "before": {
     "version": "asc58-model-efficiency-v1",
-    "measured_at": "2026-11-13T20:43:55.983684+00:00",
+    "measured_at": "2026-11-13T23:09:49.243823+00:00",
     "versions": {
-      "git_commit": "7b83f9ac89d06828aa35e73655e3107e11b8f074",
-      "git_worktree_dirty": true,
-      "source_tree_sha256": "62f0be243080aaf94e8183374416d90f50997b027385aecbee291f302d3c30f9",
+      "git_commit": "35315b357a77701d185a7c4ae04295a434043eb7",
+      "git_worktree_dirty": false,
+      "source_tree_sha256": "4caa02049f4beda4460fd237a7e54617dc8aa03373fae76830b82f78589d50dc",
       "prompt_sha256": {
-        "orchestrator_definition.py": "473ee903c2ab4f68937f0905e125c6d80c01179ab103b25092255a52de40a575",
+        "orchestrator_definition.py": "37d383e607a1161f4fb64e1e3d54df686d4fe465796a5954a622f8663cda660d",
         "recipe_definition.py": "9a47a481d75636c548463c9b7cfa4cdc70740064d2e91116afef97fba8aa6213"
       },
       "policy_versions": {
-        "orchestrator": 5,
+        "orchestrator": 6,
         "recipe": 8
       },
       "sdk": {
@@ -23,7 +23,7 @@
         "foundry_iq": "production validated MCP retrieval envelope",
         "usda": "production USDA MCP adapter and deterministic serving aggregation",
         "web_iq": "production minimized public-query policy and native citations",
-        "implementation_sha256": "62f0be243080aaf94e8183374416d90f50997b027385aecbee291f302d3c30f9"
+        "implementation_sha256": "4caa02049f4beda4460fd237a7e54617dc8aa03373fae76830b82f78589d50dc"
       },
       "python": "3.12.10",
       "platform": "Windows-11-10.0.26300-SP0",
@@ -39,7 +39,7 @@
     },
     "budgets": {
       "orchestrator": {
-        "version": 5,
+        "version": 6,
         "max_model_calls": 4,
         "max_calorie_fallback_calls": 1,
         "max_specialist_calls": 2,
@@ -47,14 +47,11 @@
         "max_tool_calls": 8,
         "max_web_calls": 1,
         "web_deadline_seconds": 10,
-        "max_tool_result_tokens": 4000,
-        "deadline_seconds": 60,
-        "max_input_tokens": 16000,
-        "total_input_tokens": 32000,
-        "total_output_tokens": 6000,
-        "output_tokens_per_call": 1500
+        "calorie_deadline_seconds": 30,
+        "deadline_seconds": 60
       },
-      "context_tokens_including_framing": 11000,
+      "context_transport_characters": 131072,
+      "context_tokens_including_framing": null,
       "history_exchanges": 10,
       "learned_entries": 20,
       "retrieval_max_results_default": 3,
@@ -70,9 +67,9 @@
         "semantic_input_sha256": "381371dc31ad61a9eda0b228d9f76e902e876160dd7aef5cf356c132a216fef1",
         "local_context_preparation_ms": {
           "samples": 101,
-          "p50": 0.38690000656060874,
-          "p95": 0.8392000017920509,
-          "p99": 1.2196000025141984
+          "p50": 0.02439999661874026,
+          "p95": 0.059300000430084765,
+          "p99": 0.14560000272467732
         }
       },
       "pantry-40": {
@@ -81,9 +78,9 @@
         "semantic_input_sha256": "05b37397d38f1bc898d8061293bd2c8c8e654fea762367c9e292a1e9751b0488",
         "local_context_preparation_ms": {
           "samples": 101,
-          "p50": 3.7447000067913905,
-          "p95": 5.967500008409843,
-          "p99": 8.875200001057237
+          "p50": 0.2364999963901937,
+          "p95": 0.2845999988494441,
+          "p99": 0.6136000010883436
         }
       },
       "pantry-100": {
@@ -92,9 +89,9 @@
         "semantic_input_sha256": "bffe83e20904554ac005a2799cc7cf28ec0ed56bdc41e76dc03c661b5337b160",
         "local_context_preparation_ms": {
           "samples": 101,
-          "p50": 8.058699997491203,
-          "p95": 9.596000003512017,
-          "p99": 20.861400000285357
+          "p50": 0.6556000007549301,
+          "p95": 2.108800006681122,
+          "p99": 2.4855000083334744
         }
       },
       "history-10": {
@@ -103,9 +100,9 @@
         "semantic_input_sha256": "b7aeaa22a3a38fc6aaf028792b3a0db330cbb1fe9259ad74c21811002b4b01b5",
         "local_context_preparation_ms": {
           "samples": 101,
-          "p50": 0.6591000128537416,
-          "p95": 1.3722000003326684,
-          "p99": 1.7041999963112175
+          "p50": 0.035899996873922646,
+          "p95": 0.15400000847876072,
+          "p99": 0.8749999979045242
         }
       }
     },
@@ -267,7 +264,7 @@
       {
         "case_id": "normal-no-web",
         "model": "gpt-5.4",
-        "visible_input_tokens": 440
+        "visible_input_tokens": 445
       },
       {
         "case_id": "normal-no-web",
@@ -282,7 +279,7 @@
       {
         "case_id": "insufficient-groceries",
         "model": "gpt-5.4",
-        "visible_input_tokens": 346
+        "visible_input_tokens": 351
       },
       {
         "case_id": "insufficient-groceries",
@@ -302,7 +299,7 @@
       {
         "case_id": "missing-nutrition",
         "model": "gpt-5.4",
-        "visible_input_tokens": 473
+        "visible_input_tokens": 478
       },
       {
         "case_id": "missing-nutrition",
@@ -317,7 +314,7 @@
       {
         "case_id": "nutrition-timeout",
         "model": "gpt-5.4",
-        "visible_input_tokens": 431
+        "visible_input_tokens": 436
       },
       {
         "case_id": "conflicting-taste-nutrition",
@@ -327,7 +324,7 @@
       {
         "case_id": "conflicting-taste-nutrition",
         "model": "gpt-5.4",
-        "visible_input_tokens": 509
+        "visible_input_tokens": 514
       },
       {
         "case_id": "conflicting-taste-nutrition",
@@ -342,7 +339,7 @@
       {
         "case_id": "current-public-information",
         "model": "gpt-5.4",
-        "visible_input_tokens": 500
+        "visible_input_tokens": 505
       },
       {
         "case_id": "current-public-information",
@@ -357,7 +354,7 @@
       {
         "case_id": "creative-within-constraints",
         "model": "gpt-5.4",
-        "visible_input_tokens": 494
+        "visible_input_tokens": 499
       },
       {
         "case_id": "creative-within-constraints",
@@ -377,7 +374,7 @@
       ]
     },
     "cost": {
-      "estimated_visible_input_reference_usd": 0.01104325,
+      "estimated_visible_input_reference_usd": 0.01113075,
       "scope": "Only request.prompt text; excludes instructions, schemas, tool results, reasoning, output, caching and tool charges. Local tokens are not provider usage.",
       "actual_cloud_spend_usd": 0,
       "azure_full_request_estimated_usd": null,
@@ -390,17 +387,17 @@
   },
   "after": {
     "version": "asc58-model-efficiency-v1",
-    "measured_at": "2026-11-13T20:51:27.086500+00:00",
+    "measured_at": "2026-11-13T23:10:04.391080+00:00",
     "versions": {
-      "git_commit": "7b83f9ac89d06828aa35e73655e3107e11b8f074",
+      "git_commit": "ffce268b2bc1179f843090577a71ffb65a59966a",
       "git_worktree_dirty": true,
-      "source_tree_sha256": "88e9253f59b62700f555163021f81d68ba2e8c3e1dc355e27624d883a9972537",
+      "source_tree_sha256": "370a48a8ecc6b423fb23ec71df92e56f915abfe6f58280ee1809b2fab7f0f5dd",
       "prompt_sha256": {
-        "orchestrator_definition.py": "473ee903c2ab4f68937f0905e125c6d80c01179ab103b25092255a52de40a575",
+        "orchestrator_definition.py": "37d383e607a1161f4fb64e1e3d54df686d4fe465796a5954a622f8663cda660d",
         "recipe_definition.py": "9a47a481d75636c548463c9b7cfa4cdc70740064d2e91116afef97fba8aa6213"
       },
       "policy_versions": {
-        "orchestrator": 5,
+        "orchestrator": 6,
         "recipe": 8
       },
       "sdk": {
@@ -412,7 +409,7 @@
         "foundry_iq": "production validated MCP retrieval envelope",
         "usda": "production USDA MCP adapter and deterministic serving aggregation",
         "web_iq": "production minimized public-query policy and native citations",
-        "implementation_sha256": "88e9253f59b62700f555163021f81d68ba2e8c3e1dc355e27624d883a9972537"
+        "implementation_sha256": "370a48a8ecc6b423fb23ec71df92e56f915abfe6f58280ee1809b2fab7f0f5dd"
       },
       "python": "3.12.10",
       "platform": "Windows-11-10.0.26300-SP0",
@@ -428,7 +425,7 @@
     },
     "budgets": {
       "orchestrator": {
-        "version": 5,
+        "version": 6,
         "max_model_calls": 4,
         "max_calorie_fallback_calls": 1,
         "max_specialist_calls": 2,
@@ -436,14 +433,11 @@
         "max_tool_calls": 8,
         "max_web_calls": 1,
         "web_deadline_seconds": 10,
-        "max_tool_result_tokens": 4000,
-        "deadline_seconds": 60,
-        "max_input_tokens": 16000,
-        "total_input_tokens": 32000,
-        "total_output_tokens": 6000,
-        "output_tokens_per_call": 1500
+        "calorie_deadline_seconds": 30,
+        "deadline_seconds": 60
       },
-      "context_tokens_including_framing": 11000,
+      "context_transport_characters": 131072,
+      "context_tokens_including_framing": null,
       "history_exchanges": 10,
       "learned_entries": 20,
       "retrieval_max_results_default": 3,
@@ -459,9 +453,9 @@
         "semantic_input_sha256": "381371dc31ad61a9eda0b228d9f76e902e876160dd7aef5cf356c132a216fef1",
         "local_context_preparation_ms": {
           "samples": 101,
-          "p50": 0.2609000075608492,
-          "p95": 0.5875000060768798,
-          "p99": 0.9103999909712002
+          "p50": 0.014800010831095278,
+          "p95": 0.016700010746717453,
+          "p99": 0.030800001695752144
         }
       },
       "pantry-40": {
@@ -470,9 +464,9 @@
         "semantic_input_sha256": "05b37397d38f1bc898d8061293bd2c8c8e654fea762367c9e292a1e9751b0488",
         "local_context_preparation_ms": {
           "samples": 101,
-          "p50": 2.482600000803359,
-          "p95": 3.9495000091847032,
-          "p99": 4.815099993720651
+          "p50": 0.11320000339765102,
+          "p95": 0.15069999790284783,
+          "p99": 0.26390000130049884
         }
       },
       "pantry-100": {
@@ -481,9 +475,9 @@
         "semantic_input_sha256": "bffe83e20904554ac005a2799cc7cf28ec0ed56bdc41e76dc03c661b5337b160",
         "local_context_preparation_ms": {
           "samples": 101,
-          "p50": 5.643900003633462,
-          "p95": 6.930000003194436,
-          "p99": 7.581999991089106
+          "p50": 0.2721999917412177,
+          "p95": 0.3400000132387504,
+          "p99": 1.015800007735379
         }
       },
       "history-10": {
@@ -492,9 +486,9 @@
         "semantic_input_sha256": "b7aeaa22a3a38fc6aaf028792b3a0db330cbb1fe9259ad74c21811002b4b01b5",
         "local_context_preparation_ms": {
           "samples": 101,
-          "p50": 0.7261999999172986,
-          "p95": 1.2408000038703904,
-          "p99": 1.633800013223663
+          "p50": 0.027700007194653153,
+          "p95": 0.030000010156072676,
+          "p99": 0.11350000568199903
         }
       }
     },
@@ -656,7 +650,7 @@
       {
         "case_id": "normal-no-web",
         "model": "gpt-5.4",
-        "visible_input_tokens": 380
+        "visible_input_tokens": 385
       },
       {
         "case_id": "normal-no-web",
@@ -671,7 +665,7 @@
       {
         "case_id": "insufficient-groceries",
         "model": "gpt-5.4",
-        "visible_input_tokens": 326
+        "visible_input_tokens": 331
       },
       {
         "case_id": "insufficient-groceries",
@@ -691,7 +685,7 @@
       {
         "case_id": "missing-nutrition",
         "model": "gpt-5.4",
-        "visible_input_tokens": 413
+        "visible_input_tokens": 418
       },
       {
         "case_id": "missing-nutrition",
@@ -706,7 +700,7 @@
       {
         "case_id": "nutrition-timeout",
         "model": "gpt-5.4",
-        "visible_input_tokens": 371
+        "visible_input_tokens": 376
       },
       {
         "case_id": "conflicting-taste-nutrition",
@@ -716,7 +710,7 @@
       {
         "case_id": "conflicting-taste-nutrition",
         "model": "gpt-5.4",
-        "visible_input_tokens": 449
+        "visible_input_tokens": 454
       },
       {
         "case_id": "conflicting-taste-nutrition",
@@ -731,7 +725,7 @@
       {
         "case_id": "current-public-information",
         "model": "gpt-5.4",
-        "visible_input_tokens": 440
+        "visible_input_tokens": 445
       },
       {
         "case_id": "current-public-information",
@@ -746,7 +740,7 @@
       {
         "case_id": "creative-within-constraints",
         "model": "gpt-5.4",
-        "visible_input_tokens": 434
+        "visible_input_tokens": 439
       },
       {
         "case_id": "creative-within-constraints",
@@ -766,7 +760,7 @@
       ]
     },
     "cost": {
-      "estimated_visible_input_reference_usd": 0.00952325,
+      "estimated_visible_input_reference_usd": 0.00961075,
       "scope": "Only request.prompt text; excludes instructions, schemas, tool results, reasoning, output, caching and tool charges. Local tokens are not provider usage.",
       "actual_cloud_spend_usd": 0,
       "azure_full_request_estimated_usd": null,
@@ -797,7 +791,7 @@
         "percent_saved": 33.917396745932415
       }
     },
-    "estimated_visible_input_reference_usd_saved": 0.0015199999999999988,
+    "estimated_visible_input_reference_usd_saved": 0.0015200000000000005,
     "latency_scope": "Local context preparation only; noisy observations, not a live SLO."
   }
 }

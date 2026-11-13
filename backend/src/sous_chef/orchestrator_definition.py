@@ -1,8 +1,15 @@
 """Source-controlled New Foundry prompt definition; no portal-only instructions."""
 
-from azure.ai.projects.models import FunctionTool, PromptAgentDefinition, RaiConfig
+from azure.ai.projects.models import (
+    AgentVersionDetails,
+    FunctionTool,
+    PromptAgentDefinition,
+    RaiConfig,
+)
 
 from sous_chef.domain.orchestrator import POLICY, SpecialistArguments
+from sous_chef.recipe_definition import definition_fingerprint
+from sous_chef.settings import ConfigurationError
 
 ORCHESTRATOR_MODEL = "gpt-5.4-mini"
 ORCHESTRATOR_INSTRUCTIONS = """
@@ -28,13 +35,29 @@ which constraint to change; do not invent a feasible cooking time.
 Do not ask again for already supplied profile information.
 
 Your ONLY function is recipe_specialist. Pass concise cooking requirements,
-the effective time budget, use_web and web_query. Prefer the user's context,
+the effective time budget, use_web, web_query and quantity_ingredients. Prefer the user's context,
 curated Foundry IQ recipes and USDA for ordinary recipes and nutrition amounts.
 Set use_web=true only for explicitly current external information such as recalls,
 seasonal information or recent food news; then supply one short public web_query.
 Use only necessary public topic words from the current request, never profile,
 allergy/medical status, inventory lists, history, identifiers, contact details,
 URLs or personal phrasing. Otherwise use_web=false and web_query=null.
+Interpret ingredient amounts semantically from the full current request, including
+different wording, punctuation, languages and input formats; do not rely on a list
+of quantity phrases. Set quantity_ingredients to the public ingredient names whose
+user-supplied amounts are vague, missing or unconvertible and would benefit from
+cited comparable-recipe amounts. Preserve their identity and food form, including
+unfamiliar ingredients. Return [] when no such lookup is needed: composing a new
+recipe without specified amounts does not by itself require a quantity lookup,
+and an unknown pantry stock amount is not an unknown recipe portion.
+Only include actual food names from the current request or requested revision,
+never surrounding prose, personal identifiers, profile or allergy information.
+Do not invent measured quantities, conversions or nutrient values. The specialist
+returns typed ingredient quantities/units; uncertainty stays explicit.
+The backend builds a minimized quantity query from these names without parsing
+the user's phrasing. Quantity lookup does not require use_web=true; that flag
+remains reserved for current public information. At most one ordinary web search
+is available, so prioritize explicitly requested current information if both apply.
 The backend attaches the original complete safety/context
 snapshot; never replace it with a lossy summary. Recipe + Nutrition owns Foundry IQ
 recipe retrieval, USDA nutrition, and conditional Web IQ. No direct Cosmos access,
@@ -42,11 +65,12 @@ arbitrary function, code execution, external URL fetch, or alternative model.
 
 There are at most four model invocations for the whole operation, two specialist
 invocations (initial plus ONE revision), eight total tool calls including retries,
-one Web IQ call, and a 60-second deadline. There are at most 16,000 input tokens
-per model invocation, 32,000 cumulative input and 6,000 cumulative output tokens,
-including reasoning. These limits are enforced by the backend, not your discretion.
-The backend may reserve ONE additional model/web invocation and up to 1,500 output
-tokens solely to estimate missing calories after USDA enrichment fails. This
+one Web IQ call, and a 60-second deadline. The backend tracks token usage for
+observability, not application-imposed input/output ceilings; the provider's
+model context/output limits still apply.
+The backend may reserve ONE additional model/web invocation solely to estimate
+missing calories after USDA enrichment fails. It may use up to 30 seconds of
+the remaining deadline, leaving final-answer headroom within the same operation. This
 does not authorize another specialist revision, an autonomous search or a retry.
 Conditional Web IQ uses one additional identity-bound model invocation within
 these same limits, not an extra allowance. It may leave no budget for a revision.
@@ -109,3 +133,37 @@ def build_orchestrator_definition(
         tools=[specialist_tool()],
         rai_config=RaiConfig(rai_policy_name=rai_policy_id),
     )
+
+
+def orchestrator_source_metadata(definition: PromptAgentDefinition) -> dict[str, str]:
+    return {
+        "asc_policy_version": str(POLICY.version),
+        "asc_model": ORCHESTRATOR_MODEL,
+        "asc_definition_sha256": definition_fingerprint(definition),
+    }
+
+
+def verify_orchestrator_source(source: AgentVersionDetails) -> None:
+    definition = source.definition
+    if (
+        not isinstance(definition, PromptAgentDefinition)
+        or not isinstance(definition.model, str)
+        or not definition.model.strip()
+        or definition.rai_config is None
+        or not isinstance(definition.rai_config.rai_policy_name, str)
+        or not definition.rai_config.rai_policy_name.strip()
+        or source.status != "active"
+        or source.draft is not False
+    ):
+        raise ConfigurationError("The Orchestrator requires an active reviewed prompt source.")
+    expected = build_orchestrator_definition(
+        definition.model, definition.rai_config.rai_policy_name
+    )
+    if definition.as_dict() != expected.as_dict() or any(
+        (source.metadata or {}).get(key) != value
+        for key, value in orchestrator_source_metadata(expected).items()
+    ):
+        raise ConfigurationError(
+            "The Orchestrator source is incompatible with this backend. "
+            "Publish and pin the current reviewed Orchestrator policy before deployment."
+        )

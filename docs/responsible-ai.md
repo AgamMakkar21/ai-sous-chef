@@ -52,7 +52,7 @@ manifest, provision Azure resources, or authorize production.
 | Retrieved recipes and MCP output | Pinned Search connection, exact backend query, source revision/URL validation, bounded evidence, deterministic ingredient and final cooking gates |
 | Web results | One conditional public-topic search; no profile/history/IDs in the query, native HTTPS citations, no backend URL fetching |
 | Learned/feedback context | Current owned evidence and explicit-over-learned precedence; free-form candidate prose is not an instruction or hard restriction |
-| Tool names and arguments | Role-specific allowlists, strict schemas, shared call/time/token budgets; no Cosmos/SQL, shell, arbitrary URL or general-purpose tool dispatch |
+| Tool names and arguments | Role-specific allowlists, strict schemas, shared call/time budgets and token accounting; no Cosmos/SQL, shell, arbitrary URL or general-purpose tool dispatch |
 
 The production feedback reader/worker remains separate ASC-49 work. This ticket
 does not claim coverage of an unimplemented feedback API or add a new ingestion
@@ -66,7 +66,7 @@ overrides and unsupported operations. Retrieval arguments must equal the origina
 backend query, not a model-selected replacement.
 
 MCP discovery plus call envelopes, including descriptions, schemas, arguments and
-output, must fit 65,536 characters and the 4,000-token tool-result ceiling.
+output, must fit 65,536 characters; token counts do not reject valid evidence.
 Only one discovery result and one retrieval call are accepted. Advertised tools
 do not grant capabilities: the request's `allowed_tools` and returned call checks
 still permit only `knowledge_base_retrieve`. Existing result-count, 16,000-character

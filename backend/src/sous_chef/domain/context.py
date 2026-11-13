@@ -17,7 +17,7 @@ from sous_chef.domain.groceries import GroceryRow
 from sous_chef.domain.profiles import ExplicitPreferences, PreferenceText
 from sous_chef.domain.recipes import StructuredRecipe
 
-MAX_CONTEXT_TOKENS = 11_000
+MAX_CONTEXT_CHARACTERS = 131_072
 MAX_CONTEXT_EXCHANGES = 10
 MAX_CONTEXT_LEARNED = 20
 MIN_LEARNED_COOKED_SUPPORT = 2

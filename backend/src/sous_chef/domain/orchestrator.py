@@ -14,7 +14,7 @@ from sous_chef.domain.recipes import StructuredRecipe
 
 @dataclass(frozen=True)
 class OrchestratorPolicy:
-    version: int = 5
+    version: int = 6
     max_model_calls: int = 4
     max_calorie_fallback_calls: int = 1
     max_specialist_calls: int = 2
@@ -22,12 +22,8 @@ class OrchestratorPolicy:
     max_tool_calls: int = 8
     max_web_calls: int = 1
     web_deadline_seconds: float = 10
-    max_tool_result_tokens: int = 4_000
+    calorie_deadline_seconds: float = 30
     deadline_seconds: int = 60
-    max_input_tokens: int = 16_000
-    total_input_tokens: int = 32_000
-    total_output_tokens: int = 6_000
-    output_tokens_per_call: int = 1_500
 
 
 POLICY = OrchestratorPolicy()
@@ -59,6 +55,12 @@ class SpecialistArguments(CoordinationModel):
     requirements: ShortText = Field(repr=False)
     time_budget_minutes: int = Field(ge=1, le=240)
     use_web: bool
+    quantity_ingredients: tuple[
+        Annotated[
+            str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=100)
+        ],
+        ...,
+    ] = Field(default=(), strict=False, max_length=30, repr=False)
     web_query: (
         Annotated[
             str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=240)
@@ -108,7 +110,7 @@ class CoordinationPrompt(FoundryRequest):
 
 class CoordinationRequest(CoordinationModel):
     request: CoordinationPrompt = Field(repr=False)
-    max_input_tokens: int = Field(default=POLICY.max_input_tokens, ge=1, le=POLICY.max_input_tokens)
+    max_input_tokens: int | None = Field(default=None, ge=1)
     previous_call: SpecialistCall | None = Field(default=None, repr=False)
     tool_output: str | None = Field(default=None, max_length=16000, repr=False)
 
@@ -194,15 +196,15 @@ class Coordinator(Protocol):
 
 
 class SpecialistBudget(Protocol):
-    def model_allowance(self) -> tuple[int, int]:
-        """Check token headroom for a reserved call after any nested invocation."""
+    def model_allowance(self, *, calorie_fallback: bool = False) -> tuple[None, None]:
+        """Check the deadline and reservation; leave token limits to the provider."""
         ...
 
-    def model(self) -> None:
+    def model(self, *, calorie_fallback: bool = False) -> None:
         """Reserve any additional model invocation before executing it."""
         ...
 
-    def usage(self, usage: TokenUsage) -> None:
+    def usage(self, usage: TokenUsage, *, calorie_fallback: bool = False) -> None:
         """Account for an additional invocation without double-counting returned usage."""
         ...
 
@@ -219,8 +221,8 @@ class RecipeSpecialist(Protocol):
         *,
         operation_id: UUID,
         budget: SpecialistBudget,
-        max_input_tokens: int,
-        max_output_tokens: int,
+        max_input_tokens: int | None,
+        max_output_tokens: int | None,
         deadline: float,
     ) -> SpecialistResult:
         """Use the pinned managed specialist, with no autonomous/unaccounted nested calls.

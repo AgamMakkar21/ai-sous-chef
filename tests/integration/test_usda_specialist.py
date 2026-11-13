@@ -5,11 +5,18 @@ import copy
 import json
 from pathlib import Path
 from time import monotonic
+from uuid import uuid4
 
 import pytest
 from sous_chef.adapters.foundry_gateway import FoundryGateway
 from sous_chef.domain.foundry import FoundryFailure, FoundryGatewayError
-from sous_chef.domain.recipes import NutritionRequest, RecipeGrounding, StructuredRecipe
+from sous_chef.domain.recipes import (
+    CalorieEstimate,
+    NutritionRequest,
+    RecipeGrounding,
+    StructuredRecipe,
+)
+from sous_chef.services.calorie_estimates import calorie_request, with_calorie_estimates
 from sous_chef.services.nutrition import UsdaNutritionTool
 from sous_chef.services.recipe_specialist import RecipeSpecialistService
 from sous_chef.telemetry import configure_safe_telemetry
@@ -105,7 +112,7 @@ def test_generic_cut_words_do_not_hide_chicken_nutrition_or_invent_piece_weights
     assert request.ingredients[0].name == name
 
 
-def test_preparation_names_and_household_units_cover_a_nineteen_ingredient_recipe() -> None:
+def test_large_recipe_fills_calories_without_substituting_foods_or_inventing_weights() -> None:
     foods = (
         ("shrimp, raw, peeled and deveined", 200, "g"),
         ("tofu, firm, drained and cubed", 150, "g"),
@@ -138,27 +145,60 @@ def test_preparation_names_and_household_units_cover_a_nineteen_ingredient_recip
         }
     )
     evidence = asyncio.run(api_tool().lookup(request, deadline=monotonic() + 10))
-    assert evidence.status == "known"
-    assert len(evidence.sources) == len(evidence.mappings) == 19
-    assert not evidence.unknown_components
-    assert all(item.status == "known" for item in evidence.coverage)
-    assert [item.weight_grams for item in evidence.mappings][2:6] == [185, 28, 100, 6]
-    assert evidence.mappings[-1].weight_grams == 16  # Wedges, not two whole limes.
-    assert evidence.mappings[-1].conversion_basis is not None
-    assert evidence.mappings[-1].conversion_basis.startswith("Estimated 8 wedges per fruit")
-    energy = next(item.amount for item in evidence.nutrients if item.name == "energy")
-    assert 650 < energy < 900
+    assert evidence.status == "partial"
+    assert {item.ingredient_line_id for item in evidence.mappings} == {
+        "food0",
+        "food1",
+        "food4",
+        "food8",
+        "food10",
+        "food11",
+        "food13",
+        "food16",
+    }
+    assert len(evidence.sources) == len(evidence.mappings) == 8
+    assert evidence.mappings[4].weight_grams == 15
+    assert evidence.mappings[4].conversion_basis is not None
+    assert evidence.mappings[4].conversion_basis.startswith("USDA portion:")
     assert all(item.approximate_match and item.food_description for item in evidence.mappings)
-    assert evidence.mappings[9].conversion_basis is not None
-    assert "density estimate" in evidence.mappings[9].conversion_basis
+    fallback = calorie_request(
+        request, evidence, operation_id=uuid4(), max_input_tokens=16000, max_output_tokens=1500
+    )
+    assert fallback is not None
+    missing = {item.ingredient_line_id for item in evidence.unknown_components}
+    assert set(fallback.ingredient_line_ids) == missing
+    assert [item["name"] for item in json.loads(fallback.prompt)["ingredients"]] == [
+        line.name for line in request.ingredients if line.line_id in missing
+    ]
+    merged = with_calorie_estimates(
+        evidence,
+        tuple(
+            CalorieEstimate(
+                ingredient_line_id=line_id,
+                amount=20,
+                source="ai_knowledge",
+                reference=None,
+                basis="Synthetic calorie estimate for this recipe quantity, not a USDA mapping.",
+            )
+            for line_id in fallback.ingredient_line_ids
+        ),
+    )
+    energy = next(item for item in merged.coverage if item.name == "energy")
+    assert energy.status == "known" and len(energy.covered_ingredient_line_ids) == 19
+    assert merged.mappings == evidence.mappings and merged.sources == evidence.sources
+    assert all("energy" not in item.unknown_nutrients for item in merged.unknown_components)
 
 
 @pytest.mark.parametrize(
     ("name", "grams", "energy"),
-    [("jasmine rice dry", 185, 675.25), ("white long grain rice cooked", 158, 205.4)],
+    [
+        ("jasmine rice dry", None, None),
+        ("white long grain rice raw", 185, 675.25),
+        ("white long grain rice cooked", 158, 205.4),
+    ],
 )
 def test_dry_and_cooked_rice_keep_different_source_forms_and_portion_weights(
-    name: str, grams: int, energy: float
+    name: str, grams: int | None, energy: float | None
 ) -> None:
     request = NutritionRequest.model_validate(
         {
@@ -168,6 +208,11 @@ def test_dry_and_cooked_rice_keep_different_source_forms_and_portion_weights(
         }
     )
     evidence = asyncio.run(api_tool().lookup(request, deadline=monotonic() + 10))
+    if grams is None:
+        assert evidence.status == "unavailable"
+        assert evidence.unknown_components[0].reason == "food_unavailable"
+        assert not evidence.mappings
+        return
     assert evidence.status == "known"
     assert evidence.mappings[0].weight_grams == grams
     assert evidence.nutrients[0].amount == energy
@@ -352,8 +397,14 @@ def test_malformed_usda_or_fallback_evidence_is_not_accepted(mode: str, model_ca
         grounding,
         UsdaNutritionTool(config(mode, timeout=1)),
     )
-    with pytest.raises(FoundryGatewayError) as caught:
-        run(service)
-    # This fixture repeats recipe JSON for fallback, which is not valid calorie evidence.
-    assert caught.value.code == FoundryFailure.INVALID_RESULT
+    if mode == "malformed":
+        with pytest.raises(FoundryGatewayError) as caught:
+            run(service)
+        assert caught.value.code == FoundryFailure.INVALID_RESULT
+    else:
+        # This fixture repeats recipe JSON for fallback, not valid calorie evidence.
+        recipe = run(service).recipe
+        assert recipe is not None and recipe.nutrition.status == "unavailable"
+        assert not recipe.nutrition.nutrients and not recipe.nutrition.ingredient_calories
+        assert not recipe.nutrition.sources and not recipe.nutrition.mappings
     assert len(model.requests) == model_calls
