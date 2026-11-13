@@ -1,0 +1,117 @@
+{
+  "version": "asc57-preference-learning-v1",
+  "data_classification": "synthetic-only",
+  "now": "2026-11-10T00:00:00Z",
+  "cases": [
+    {
+      "id": "repeated-citrus",
+      "heldout_likes": true,
+      "extractions": 3,
+      "expected_evidence": ["a:1:support", "b:1:support", "c:1:support"],
+      "steps": [
+        {"history": "a", "note": "Loved the lime.", "signal": "support", "day": 1, "support": 1, "opposition": 0, "confidence": 0.6666666666666666, "included": false},
+        {"history": "b", "note": "Loved the lime again.", "signal": "support", "day": 2, "support": 2, "opposition": 0, "confidence": 0.75, "included": true},
+        {"history": "c", "note": "Lime is still a favorite.", "signal": "support", "day": 3, "support": 3, "opposition": 0, "confidence": 0.8, "included": true}
+      ]
+    },
+    {
+      "id": "single-citrus",
+      "heldout_likes": true,
+      "extractions": 1,
+      "expected_evidence": ["a:1:support"],
+      "steps": [
+        {"history": "a", "note": "Loved the lime.", "signal": "support", "day": 1, "support": 1, "opposition": 0, "confidence": 0.6666666666666666, "included": false}
+      ]
+    },
+    {
+      "id": "ambiguous-note",
+      "heldout_likes": null,
+      "extractions": 1,
+      "expected_evidence": [],
+      "steps": [
+        {"history": "a", "note": "Interesting dinner. Not sure what I liked.", "signal": "none", "day": 1, "support": 0, "opposition": 0, "confidence": null, "included": false}
+      ]
+    },
+    {
+      "id": "contradictory-feedback",
+      "heldout_likes": false,
+      "extractions": 4,
+      "expected_evidence": ["a:1:support", "b:1:support", "c:1:oppose", "d:1:oppose"],
+      "steps": [
+        {"history": "a", "note": "Loved the lime.", "signal": "support", "day": 1, "support": 1, "opposition": 0, "confidence": 0.6666666666666666, "included": false},
+        {"history": "b", "note": "Loved the lime again.", "signal": "support", "day": 2, "support": 2, "opposition": 0, "confidence": 0.75, "included": true},
+        {"history": "c", "note": "I did not like the lime.", "signal": "oppose", "day": 3, "support": 2, "opposition": 1, "confidence": 0.6, "included": false},
+        {"history": "d", "note": "Too much lime for me again.", "signal": "oppose", "day": 4, "support": 2, "opposition": 2, "confidence": 0.5, "included": false}
+      ]
+    },
+    {
+      "id": "revised-feedback",
+      "heldout_likes": false,
+      "extractions": 3,
+      "expected_evidence": ["a:2:oppose", "b:1:support"],
+      "steps": [
+        {"history": "a", "note": "Loved the lime.", "signal": "support", "day": 1, "support": 1, "opposition": 0, "confidence": 0.6666666666666666, "included": false},
+        {"history": "b", "note": "Loved the lime again.", "signal": "support", "day": 2, "support": 2, "opposition": 0, "confidence": 0.75, "included": true},
+        {"history": "a", "revision": 2, "note": "Correction: I did not like the lime.", "signal": "oppose", "day": 3, "support": 1, "opposition": 1, "confidence": 0.5, "included": false}
+      ]
+    },
+    {
+      "id": "duplicate-events",
+      "heldout_likes": true,
+      "extractions": 2,
+      "expected_evidence": ["a:1:support", "b:1:support"],
+      "steps": [
+        {"history": "a", "note": "Loved the lime.", "signal": "support", "day": 1, "support": 1, "opposition": 0, "confidence": 0.6666666666666666, "included": false},
+        {"history": "a", "note": "Loved the lime.", "signal": "support", "day": 1, "support": 1, "opposition": 0, "confidence": 0.6666666666666666, "included": false},
+        {"history": "a", "note": "Loved the lime.", "signal": "support", "day": 1, "support": 1, "opposition": 0, "confidence": 0.6666666666666666, "included": false},
+        {"history": "b", "note": "Loved the lime again.", "signal": "support", "day": 2, "support": 2, "opposition": 0, "confidence": 0.75, "included": true}
+      ]
+    },
+    {
+      "id": "out-of-order",
+      "heldout_likes": true,
+      "extractions": 2,
+      "expected_evidence": ["a:2:support", "b:1:support"],
+      "steps": [
+        {"history": "a", "revision": 2, "note": "Correction: loved the lime.", "signal": "support", "day": 2, "support": 1, "opposition": 0, "confidence": 0.6666666666666666, "included": false},
+        {"history": "b", "note": "Loved the lime again.", "signal": "support", "day": 3, "support": 2, "opposition": 0, "confidence": 0.75, "included": true},
+        {"history": "a", "note": "Did not like the lime.", "signal": "oppose", "day": 1, "support": 2, "opposition": 0, "confidence": 0.75, "included": true}
+      ]
+    },
+    {
+      "id": "explicit-allergy",
+      "value": "milk",
+      "heldout_likes": null,
+      "final_explicit": {"allergies": ["milk"]},
+      "extractions": 2,
+      "expected_evidence": ["a:1:support", "b:1:support"],
+      "steps": [
+        {"history": "a", "note": "Loved the milk.", "signal": "support", "day": 1, "support": 1, "opposition": 0, "confidence": 0.6666666666666666, "included": false},
+        {"history": "b", "note": "Loved the milk again.", "signal": "support", "day": 2, "support": 2, "opposition": 0, "confidence": 0.75, "included": false}
+      ]
+    },
+    {
+      "id": "explicit-restriction",
+      "value": "chicken",
+      "heldout_likes": null,
+      "final_explicit": {"dietaryRestrictions": ["vegetarian"]},
+      "extractions": 2,
+      "expected_evidence": ["a:1:support", "b:1:support"],
+      "steps": [
+        {"history": "a", "note": "Loved the chicken.", "signal": "support", "day": 1, "support": 1, "opposition": 0, "confidence": 0.6666666666666666, "included": false},
+        {"history": "b", "note": "Loved the chicken again.", "signal": "support", "day": 2, "support": 2, "opposition": 0, "confidence": 0.75, "included": false}
+      ]
+    },
+    {
+      "id": "explicit-dislike",
+      "heldout_likes": null,
+      "final_explicit": {"dislikes": ["lime"]},
+      "extractions": 2,
+      "expected_evidence": ["a:1:support", "b:1:support"],
+      "steps": [
+        {"history": "a", "note": "Loved the lime.", "signal": "support", "day": 1, "support": 1, "opposition": 0, "confidence": 0.6666666666666666, "included": false},
+        {"history": "b", "note": "Loved the lime again.", "signal": "support", "day": 2, "support": 2, "opposition": 0, "confidence": 0.75, "included": false}
+      ]
+    }
+  ]
+}
