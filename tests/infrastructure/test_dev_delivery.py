@@ -12,7 +12,7 @@ from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.error import HTTPError
 
 from scripts import deploy_dev as delivery
@@ -48,7 +48,7 @@ ENABLED_MANIFEST = {
 
 
 class DeliveryTests(unittest.TestCase):
-    def test_combined_manifest_pins_one_specialist_and_release_keeps_both_tools(self) -> None:
+    def test_combined_release_keeps_both_tools_and_isolated_calorie_phase(self) -> None:
         from azure.ai.projects.models import AgentVersionDetails
         from sous_chef.recipe_definition import (
             RecipePhase,
@@ -76,8 +76,8 @@ class DeliveryTests(unittest.TestCase):
                 self.assertEqual(agents["recipe_nutrition"]["mode"], "combined")
                 data["agents"]["recipe_nutrition"]["web_version"] = "5"
                 (root / "deploy" / "agents.dev.json").write_text(json.dumps(data))
-                with self.assertRaises(delivery.DeliveryError):
-                    delivery.manifest()
+                agents = delivery.manifest()
+                self.assertEqual(agents["recipe_nutrition"]["web_version"], "5")
         combined = build_recipe_definition(
             "recipe-model",
             "approved-policy",
@@ -87,6 +87,7 @@ class DeliveryTests(unittest.TestCase):
                 "fixture-mcp",
             ),
         )
+        web = build_recipe_definition("recipe-model", "approved-policy", phase=RecipePhase.WEB)
         project = MagicMock()
         project.agents.get.side_effect = [
             SimpleNamespace(
@@ -125,10 +126,21 @@ class DeliveryTests(unittest.TestCase):
                     "metadata": recipe_source_metadata(combined, RecipePhase.COMBINED),
                 }
             ),
+            AgentVersionDetails(
+                {
+                    "name": "recipe-nutrition",
+                    "version": "5",
+                    "status": "active",
+                    "draft": False,
+                    "definition": web.as_dict(),
+                    "metadata": recipe_source_metadata(web, RecipePhase.WEB),
+                }
+            ),
         ]
         project.agents.create_version.side_effect = [
             SimpleNamespace(version="8"),
             SimpleNamespace(version="9"),
+            SimpleNamespace(version="10"),
         ]
         with patch.dict(os.environ, ENV):
             pins = delivery.release_agents(
@@ -136,12 +148,15 @@ class DeliveryTests(unittest.TestCase):
                 agents,
                 "11111111-1111-1111-1111-111111111111",
             )
-        self.assertEqual(project.agents.get_version.call_count, 2)
-        self.assertEqual(project.agents.create_version.call_count, 2)
+        self.assertEqual(project.agents.get_version.call_count, 3)
+        self.assertEqual(project.agents.create_version.call_count, 3)
         self.assertEqual(pins["ASC_FOUNDRY_RECIPE_NUTRITION_MODE"], "combined")
         self.assertEqual(pins["ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION"], "9")
-        self.assertNotIn("ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION", pins)
-        self.assertEqual(project.agents.create_version.call_args.kwargs["definition"], combined)
+        self.assertEqual(pins["ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION"], "10")
+        published = project.agents.create_version.call_args_list
+        self.assertEqual(published[1].kwargs["definition"], combined)
+        self.assertEqual(published[2].kwargs["definition"], web)
+        self.assertEqual(published[2].kwargs["metadata"]["asc_recipe_phase"], "web")
         validate_runtime(
             pins
             | {
@@ -196,6 +211,7 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn("cancel-in-progress: false", workflow)
         self.assertNotIn("id-token", workflow.split("\n  deploy:")[0])
         self.assertIn("python scripts/deploy_dev.py smoke", workflow)
+        self.assertIn("python -m scripts.release check-dev-ci", workflow.split("\n  deploy:")[0])
 
     def test_workflow_variables_are_unique_and_available_to_deployment(self) -> None:
         workflow = (ROOT / ".github/workflows/deploy-dev.yml").read_text()
@@ -983,6 +999,7 @@ class DeliveryTests(unittest.TestCase):
             "unready",
             "wrong_flag",
             "missing_flag",
+            "chat_failed",
         ):
             opener = MagicMock()
             opener.open.side_effect = [
@@ -1009,7 +1026,7 @@ class DeliveryTests(unittest.TestCase):
                             if mode == "missing_flag"
                             else {
                                 "ASC_AGENTS_ENABLED": "true"
-                                if mode in {"agents_enabled", "wrong_flag"}
+                                if mode in {"agents_enabled", "wrong_flag", "chat_failed"}
                                 else "false"
                             },
                         ),
@@ -1017,17 +1034,37 @@ class DeliveryTests(unittest.TestCase):
                     patch.object(
                         delivery,
                         "manifest",
-                        return_value=ENABLED_MANIFEST["agents"] if mode == "agents_enabled" else {},
+                        return_value=ENABLED_MANIFEST["agents"]
+                        if mode in {"agents_enabled", "chat_failed"}
+                        else {},
                     ),
+                    patch.object(
+                        delivery,
+                        "chat_smoke",
+                        new_callable=AsyncMock,
+                        side_effect=delivery.DeliveryError("Live chat failed.")
+                        if mode == "chat_failed"
+                        else None,
+                    ) as chat,
                     patch("urllib.request.build_opener", return_value=opener),
-                    patch("scripts.deploy_dev.time.monotonic", side_effect=[0, 0, 301]),
-                    patch("scripts.deploy_dev.time.sleep"),
+                    patch.object(
+                        delivery,
+                        "time",
+                        SimpleNamespace(
+                            monotonic=MagicMock(side_effect=[0, 0, 301]),
+                            sleep=MagicMock(),
+                        ),
+                    ),
                 ):
                     if mode in {"ok", "agents_enabled"}:
                         delivery.smoke()
                     else:
                         with self.assertRaises(delivery.DeliveryError):
                             delivery.smoke()
+                    if mode in {"agents_enabled", "chat_failed"}:
+                        chat.assert_awaited_once()
+                    else:
+                        chat.assert_not_awaited()
 
     def test_federation_and_grants_are_scoped_to_dev_app_and_project(self) -> None:
         compiler = os.environ.get("BICEP_CLI")

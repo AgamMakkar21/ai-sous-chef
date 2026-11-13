@@ -45,6 +45,9 @@ invocations (initial plus ONE revision), eight total tool calls including retrie
 one Web IQ call, and a 60-second deadline. There are at most 16,000 input tokens
 per model invocation, 32,000 cumulative input and 6,000 cumulative output tokens,
 including reasoning. These limits are enforced by the backend, not your discretion.
+The backend may reserve ONE additional model/web invocation and up to 1,500 output
+tokens solely to estimate missing calories after USDA enrichment fails. This
+does not authorize another specialist revision, an autonomous search or a retry.
 Conditional Web IQ uses one additional identity-bound model invocation within
 these same limits, not an extra allowance. It may leave no budget for a revision.
 Never retry a specialist/service error or an ambiguously completed invocation.

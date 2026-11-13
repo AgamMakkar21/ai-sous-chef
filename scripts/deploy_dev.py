@@ -1,5 +1,6 @@
 """Dev publishing and shared delivery guards. No passwords or resource provisioning."""
 
+import asyncio
 import io
 import json
 import os
@@ -178,7 +179,12 @@ def manifest() -> dict[str, dict[str, str]]:
     for role in ROLES:
         target = agents[role]
         version_fields = (
-            ("version",)
+            ("version", "web_version")
+            if role == "recipe_nutrition"
+            and data["schema_version"] == 4
+            and isinstance(target, dict)
+            and "web_version" in target
+            else ("version",)
             if role == "orchestrator" or data["schema_version"] == 4
             else ("version", "retrieval_version", "web_version")
         )
@@ -382,10 +388,8 @@ def release_agents(
         identities.append(
             AgentIdentity(AgentRole(role), pin["name"], instance.principal_id, instance.client_id)
         )
-        version_fields = (
-            ("version",)
-            if role == "orchestrator" or pin.get("mode") == "combined"
-            else ("version", "retrieval_version", "web_version")
+        version_fields = tuple(
+            field for field in ("version", "retrieval_version", "web_version") if field in pin
         )
         for field in version_fields:
             source = project.agents.get_version(pin["name"], pin[field])
@@ -405,7 +409,7 @@ def release_agents(
                     "retrieval_version": RecipePhase.RETRIEVAL,
                     "web_version": RecipePhase.WEB,
                 }[field]
-                if pin.get("mode") == "combined":
+                if pin.get("mode") == "combined" and field == "version":
                     phase = RecipePhase.COMBINED
                 tool = None
                 if phase in (RecipePhase.RETRIEVAL, RecipePhase.COMBINED):
@@ -666,15 +670,103 @@ def smoke(
                         ) from None
                 else:
                     raise DeliveryError("Anonymous access unexpectedly succeeded.")
-            with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
-                summary.write(
-                    "Health, commit, anonymous-auth rejection and dependency checks passed.\n"
-                )
-            print(f"{environment} deployment smoke checks passed.")
-            return
+            break
         except (HTTPError, URLError, TimeoutError, DeliveryError):
             time.sleep(10)
-    raise DeliveryError(f"{environment} smoke failed at {last_failure} after five minutes.")
+    else:
+        raise DeliveryError(f"{environment} smoke failed at {last_failure} after five minutes.")
+    if enabled:
+        asyncio.run(chat_smoke(settings))
+    with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
+        summary.write("Health, commit, anonymous-auth rejection and dependency checks passed.\n")
+        if enabled:
+            summary.write(
+                "Synthetic Orchestrator -> Recipe + Nutrition -> USDA check passed "
+                "using deployed pins and the delivery identity. "
+                "This is not signed-in UI or app-identity acceptance.\n"
+            )
+    print(f"{environment} deployment smoke checks passed.")
+
+
+async def chat_smoke(deployed: dict[str, str]) -> None:
+    """Exercise live release dependencies without reading/writing consumer documents."""
+    from sous_chef.adapters.foundry_gateway import FoundryGateway
+    from sous_chef.domain.context import RequestContext
+    from sous_chef.domain.foundry import FoundryGatewayError
+    from sous_chef.domain.orchestrator import OrchestratorError
+    from sous_chef.domain.profiles import ExplicitPreferences
+    from sous_chef.services.nutrition import UsdaNutritionTool
+    from sous_chef.services.orchestrator import OrchestratorService
+    from sous_chef.services.recipe_specialist import RecipeSpecialistService
+    from sous_chef.settings import ConfigurationError, Settings
+
+    configuration: dict[str, Any] = {
+        name: deployed[f"ASC_{name.upper()}"]
+        for name in Settings.model_fields
+        if (
+            name.startswith(("foundry_", "cosmos_"))
+            or name in {"app_workload_principal_id", "usda_enabled", "usda_api_key"}
+        )
+        and f"ASC_{name.upper()}" in deployed
+    }
+    try:
+        # Explicit CLI credentials for the delivery runner, never impersonate the app identity.
+        settings = Settings(
+            _env_file=None, environment="local", adapter_mode="live", **configuration
+        )
+        if not settings.usda_enabled:
+            raise DeliveryError("Agent-enabled chat requires USDA nutrition to be enabled.")
+        nutrition = UsdaNutritionTool.from_settings(settings)
+        gateway = FoundryGateway(settings)
+        specialist = RecipeSpecialistService(
+            gateway,
+            None,
+            nutrition,
+            combined=settings.foundry_recipe_nutrition_mode == "combined",
+        )
+        context = RequestContext(
+            explicit_preferences=ExplicitPreferences.model_validate(
+                {
+                    "allergies": ["peanut"],
+                    "dietaryRestrictions": [],
+                    "likes": [],
+                    "dislikes": [],
+                    "preferredCuisines": [],
+                    "spicePreference": "mild",
+                    "cookingSkill": "beginner",
+                    "typicalTimeBudgetMinutes": 30,
+                    "nutritionGoals": [],
+                }
+            ),
+            groceries=(),
+            omitted_grocery_count=0,
+            history=(),
+            learned_preferences=(),
+            current_request=(
+                "Make a simple chicken, white rice and carrot dinner for two in 30 minutes. "
+                "Use 200 g raw chicken breast, 100 g dry white rice, 100 g raw carrots "
+                "and 10 g olive oil. Give all ingredient quantities in grams."
+            ),
+        )
+        async with asyncio.timeout(90), nutrition.lifespan():
+            result = await OrchestratorService(gateway, specialist).run(context)
+        if (
+            result.status != "candidate"
+            or result.recipe is None
+            or result.recipe.nutrition.status != "known"
+            or not result.recipe.nutrition.mappings
+            or {
+                item.ingredient_line_id
+                for item in result.recipe.nutrition.ingredient_calories
+                if item.source == "usda_mcp"
+            }
+            != {line.line_id for line in result.recipe.ingredients}
+        ):
+            raise DeliveryError("Live chat did not produce a recipe with USDA-backed nutrition.")
+    except (ConfigurationError, FoundryGatewayError, OrchestratorError, TimeoutError):
+        raise DeliveryError(
+            "Live chat dependency check failed; inspect safe operational logs."
+        ) from None
 
 
 def _worker_host_mismatches(config: dict[str, Any]) -> list[str]:

@@ -270,8 +270,8 @@ def test_complete_search_is_only_truncated_when_candidates_were_omitted(count: i
         (403, "authentication"),
         (404, "no_results"),
         (429, "throttled"),
-        (500, "unavailable"),
-        (302, "unavailable"),
+        (302, "rejected"),
+        (400, "rejected"),
     ],
 )
 def test_provider_failures_are_safe_and_never_retried(status: int, code: str) -> None:
@@ -293,6 +293,59 @@ def test_provider_failures_are_safe_and_never_retried(status: int, code: str) ->
             if status == 429:
                 with pytest.raises(FdcError, match="throttled"):
                     await api.search("carrots")
+
+    asyncio.run(check())
+    assert calls == 1
+
+
+@pytest.mark.parametrize("failure", [500, 502, 503, 504, "timeout", "connection"])
+@pytest.mark.parametrize("recovers", [False, True])
+def test_transient_read_failures_are_retried_with_a_fixed_bound(
+    failure: int | str, recovers: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    calls: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if recovers and len(calls) == 3:
+            return httpx.Response(200, json={"foods": [FOOD], "totalHits": 1})
+        if failure == "timeout":
+            raise httpx.ReadTimeout("private-key", request=request)
+        if failure == "connection":
+            raise httpx.ConnectError("private-provider-details", request=request)
+        assert isinstance(failure, int)
+        return httpx.Response(failure, text="private-provider-details")
+
+    async def check() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            api = FoodDataCentral(client, SecretStr("synthetic-private-key"))
+            if recovers:
+                assert (await api.search("chicken")).foods[0].fdc_id == "1234567"
+            else:
+                with pytest.raises(FdcError) as caught:
+                    await api.search("chicken")
+                assert caught.value.code == ("timeout" if failure == "timeout" else "unavailable")
+
+    asyncio.run(check())
+    assert len(calls) == 3
+    assert all(call.content == calls[0].content for call in calls)
+    assert "private" not in caplog.text
+
+
+def test_cancellation_stops_transient_retries() -> None:
+    calls = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(503)
+
+    async def check() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            api = FoodDataCentral(client, SecretStr("synthetic-key"))
+            with pytest.raises(TimeoutError):
+                async with asyncio.timeout(0.01):
+                    await api.search("chicken")
 
     asyncio.run(check())
     assert calls == 1

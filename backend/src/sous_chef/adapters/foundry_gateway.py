@@ -48,6 +48,8 @@ from sous_chef.domain.orchestrator import (
     TokenUsage,
 )
 from sous_chef.domain.recipes import (
+    CalorieEstimate,
+    CalorieGroundingRequest,
     CombinedRecipeDraft,
     CombinedRecipeGenerationRequest,
     GroundedRecipeGenerationRequest,
@@ -190,6 +192,11 @@ class FoundryGateway:
             RecipePhase.GENERATION: self._targets[AgentRole.RECIPE_NUTRITION],
             RecipePhase.COMBINED: self._targets[AgentRole.RECIPE_NUTRITION],
         }
+        if settings.foundry_recipe_nutrition_web_agent_version is not None:
+            self._recipe_targets[RecipePhase.WEB] = AgentTarget(
+                settings.foundry_recipe_nutrition_agent_name,
+                settings.foundry_recipe_nutrition_web_agent_version,
+            )
         if settings.foundry_recipe_nutrition_mode == "phased":
             assert settings.foundry_recipe_nutrition_retrieval_agent_version is not None
             assert settings.foundry_recipe_nutrition_web_agent_version is not None
@@ -264,6 +271,17 @@ class FoundryGateway:
         self._require_recipe_mode("phased")
         self._require_agent_pins()
         return await self._execute(request, self._web_result)
+
+    async def estimate_calories(
+        self, request: CalorieGroundingRequest
+    ) -> tuple[tuple[CalorieEstimate, ...], TokenUsage]:
+        self._require_agent_pins()
+        if RecipePhase.WEB not in self._recipe_targets:
+            raise ConfigurationError(
+                "Calorie fallback requires a reviewed WEB phase pin in "
+                "ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION."
+            )
+        return await self._execute(request, self._calorie_result)
 
     @observed(Operation.FOUNDRY)
     async def _execute(
@@ -435,6 +453,43 @@ class FoundryGateway:
     def _web_result(
         request: FoundryRequest, response: Response
     ) -> tuple[WebGrounding | None, TokenUsage]:
+        draft, native, usage = FoundryGateway._web_evidence(request, response)
+        assert isinstance(request, WebGroundingRequest)
+        if draft.calorie_estimates:
+            raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
+        if not draft.claims:
+            if request.allow_empty:
+                return None, usage
+            raise FoundryGatewayError(FoundryFailure.NO_RESULTS, request)
+        urls = tuple(dict.fromkeys(claim.source_url for claim in draft.claims))
+        return (
+            WebGrounding(
+                claims=draft.claims,
+                citations=tuple(WebCitation(url=url, title=native[url]) for url in urls),
+                retrieved_at=datetime.now(UTC),
+            ),
+            usage,
+        )
+
+    @staticmethod
+    def _calorie_result(
+        request: FoundryRequest, response: Response
+    ) -> tuple[tuple[CalorieEstimate, ...], TokenUsage]:
+        assert isinstance(request, CalorieGroundingRequest)
+        draft, _, usage = FoundryGateway._web_evidence(request, response)
+        ids = [item.ingredient_line_id for item in draft.calorie_estimates]
+        if (
+            draft.claims
+            or len(ids) != len(set(ids))
+            or set(ids) != set(request.ingredient_line_ids)
+        ):
+            raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
+        return draft.calorie_estimates, usage
+
+    @staticmethod
+    def _web_evidence(
+        request: FoundryRequest, response: Response
+    ) -> tuple[WebDraft, dict[str, str], TokenUsage]:
         from sous_chef.services.context import _encoding
 
         assert isinstance(request, WebGroundingRequest)
@@ -450,7 +505,7 @@ class FoundryGateway:
         ):
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
         call = calls[0]
-        if call.status == "failed":
+        if call.status == "failed" and not isinstance(request, CalorieGroundingRequest):
             raise FoundryGatewayError(FoundryFailure.UNAVAILABLE, request)
         try:
             usage = response.usage
@@ -460,16 +515,31 @@ class FoundryGateway:
                 usage is None
                 or usage.input_tokens > request.max_input_tokens
                 or usage.output_tokens > request.max_output_tokens
-                or call.status != "completed"
+                or call.status
+                not in (
+                    {"completed", "failed"}
+                    if isinstance(request, CalorieGroundingRequest)
+                    else {"completed"}
+                )
                 or action.type != "search"
                 or (action.queries if action.queries is not None else [action.query])
-                != [request.prompt]
-                or action.query not in (None, request.prompt)
+                != [
+                    request.query
+                    if isinstance(request, CalorieGroundingRequest)
+                    else request.prompt
+                ]
+                or action.query
+                not in (
+                    None,
+                    request.query
+                    if isinstance(request, CalorieGroundingRequest)
+                    else request.prompt,
+                )
                 or message.status != "completed"
                 or len(message.content) != 1
                 or message.content[0].type != "output_text"
                 or len(message.content[0].annotations) > 10
-                or len(response.output_text) > 6000
+                or len(response.output_text) > 16000
                 or len(action.sources or []) > 20
             ):
                 raise ValueError
@@ -493,26 +563,17 @@ class FoundryGateway:
                     raise ValueError
                 native[annotation.url] = annotation.title
             urls = tuple(dict.fromkeys(claim.source_url for claim in draft.claims))
-            if not set(urls) <= searched & native.keys():
-                raise ValueError
-            if not draft.claims:
-                if request.allow_empty:
-                    return None, TokenUsage(
-                        input_tokens=usage.input_tokens, output_tokens=usage.output_tokens
-                    )
-                raise FoundryGatewayError(FoundryFailure.NO_RESULTS, request)
-            grounding = WebGrounding(
-                claims=draft.claims,
-                citations=tuple(WebCitation(url=url, title=native[url]) for url in urls),
-                retrieved_at=datetime.now(UTC),
-            )
-            if (
-                len(_encoding().encode(grounding.model_dump_json(), disallowed_special=()))
-                > POLICY.max_tool_result_tokens
+            references = {
+                item.reference for item in draft.calorie_estimates if item.source == "web_iq"
+            }
+            if not (set(urls) | references) <= searched & native.keys() or (
+                call.status == "failed" and (urls or references)
             ):
                 raise ValueError
-            return grounding, TokenUsage(
-                input_tokens=usage.input_tokens, output_tokens=usage.output_tokens
+            return (
+                draft,
+                native,
+                TokenUsage(input_tokens=usage.input_tokens, output_tokens=usage.output_tokens),
             )
         except ValueError:
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request) from None

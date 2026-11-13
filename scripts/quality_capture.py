@@ -24,6 +24,8 @@ from sous_chef.domain.orchestrator import (
     TokenUsage,
 )
 from sous_chef.domain.recipes import (
+    CalorieEstimate,
+    CalorieGroundingRequest,
     CombinedRecipeGenerationRequest,
     GroundedRecipeGenerationRequest,
     NutritionEvidence,
@@ -115,6 +117,10 @@ class Observation(EvidenceModel):
 
 
 class Gateway(Protocol):
+    async def estimate_calories(
+        self, request: CalorieGroundingRequest
+    ) -> tuple[tuple[CalorieEstimate, ...], TokenUsage]: ...
+
     async def coordinate(self, request: CoordinationRequest) -> CoordinationStep: ...
 
     async def generate_recipe(
@@ -137,6 +143,21 @@ class Gateway(Protocol):
 class ObservedGateway:
     def __init__(self, gateway: Gateway, trace: Trace) -> None:
         self.gateway, self.trace = gateway, trace
+
+    async def estimate_calories(
+        self, request: CalorieGroundingRequest
+    ) -> tuple[tuple[CalorieEstimate, ...], TokenUsage]:
+        event = ToolEvent(name="web_iq")
+        self.trace.tools.append(event)
+        self.trace.model_attempts += 1
+        try:
+            result = await self.gateway.estimate_calories(request)
+        except BaseException:
+            event.status = "error"
+            raise
+        event.status = "completed"
+        self.trace.usage.append(result[1])
+        return result
 
     async def coordinate(self, request: CoordinationRequest) -> CoordinationStep:
         self.trace.model_attempts += 1
@@ -248,6 +269,11 @@ class ReplayGateway:
         self.fixture = json.loads(
             (ROOT / "tests" / "fixtures" / "recipe-specialist.json").read_text(encoding="utf-8")
         )
+
+    async def estimate_calories(
+        self, request: CalorieGroundingRequest
+    ) -> tuple[tuple[CalorieEstimate, ...], TokenUsage]:
+        raise AssertionError("This quality replay has no calorie fallback fixture.")
 
     async def coordinate(self, request: CoordinationRequest) -> CoordinationStep:
         usage = TokenUsage(input_tokens=100, output_tokens=50)

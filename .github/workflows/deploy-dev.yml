@@ -19,14 +19,17 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
       - name: Require merged, peer-reviewed PR for this commit
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: python scripts/deploy_dev.py reviewed
+      - name: Require all six PR checks before any deployment
+        run: python -m scripts.release check-dev-ci
 
   deploy:
     name: Deploy App Service, agents and feedback host
@@ -83,7 +86,7 @@ jobs:
       - name: Deploy exact commit and reviewed release configuration
         id: release
         run: python scripts/deploy_dev.py deploy
-      - name: Check deployed commit, authentication and dependencies
+      - name: Check deployed commit, authentication and live recipe nutrition
         run: python scripts/deploy_dev.py smoke
       - name: Deploy feedback host from the same reviewed commit
         run: python scripts/deploy_dev.py worker-deploy

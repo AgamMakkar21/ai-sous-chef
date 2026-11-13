@@ -111,8 +111,8 @@ class LiveReadinessProbe:
                                             knowledge.connection_name,
                                         ),
                                     )
-                                    continue
-                                verify_recipe_source(source, RecipePhase.GENERATION)
+                                else:
+                                    verify_recipe_source(source, RecipePhase.GENERATION)
                                 for phase, pin in (
                                     (
                                         RecipePhase.RETRIEVAL,
@@ -123,6 +123,16 @@ class LiveReadinessProbe:
                                         settings.foundry_recipe_nutrition_web_agent_version,
                                     ),
                                 ):
+                                    if (
+                                        phase == RecipePhase.RETRIEVAL
+                                        and settings.foundry_recipe_nutrition_mode == "combined"
+                                    ):
+                                        continue
+                                    if (
+                                        pin is None
+                                        and settings.foundry_recipe_nutrition_mode == "combined"
+                                    ):
+                                        continue
                                     assert pin is not None
                                     phase_source = await project.agents.get_version(name, pin)
                                     if phase_source.name != name or phase_source.version != pin:

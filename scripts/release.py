@@ -180,14 +180,9 @@ def run_proof(run_id: int, workflow: str, commit: str | None = None) -> dict[str
     return cast(dict[str, Any], run)
 
 
-def seal() -> None:
+def check_dev_ci() -> tuple[dict[str, Any], dict[str, Any]]:
     delivery.dev_event()
     commit = delivery.commit()
-    require(
-        delivery.command("git", "rev-parse", "HEAD").strip() == commit
-        and delivery.current_dev_commit() == commit,
-        "Seal only the current, reviewed dev checkout after all deployment smoke checks.",
-    )
     pr = merged_pr(commit, "dev")
     runs = github(
         f"actions/workflows/ci.yml/runs?head_sha={sha(pr['head']['sha'])}"
@@ -200,6 +195,18 @@ def seal() -> None:
         CHECKS <= {job["name"] for job in jobs if job["conclusion"] == "success"},
         "All six PR checks must pass before publishing a promotable dev artifact.",
     )
+    return ci, pr
+
+
+def seal() -> None:
+    delivery.dev_event()
+    commit = delivery.commit()
+    require(
+        delivery.command("git", "rev-parse", "HEAD").strip() == commit
+        and delivery.current_dev_commit() == commit,
+        "Seal only the current, reviewed dev checkout after all deployment smoke checks.",
+    )
+    ci, pr = check_dev_ci()
     directory = Path(os.environ["ASC_RELEASE_DIRECTORY"])
     policy = read_json(ROOT / "deploy" / "compatibility.json")
     compatibility(policy)
@@ -304,6 +311,8 @@ def validate_runtime(pins: dict[str, Any]) -> None:
     mode = pins.get(mode_key)
     if mode == "combined":
         agent_keys.add(mode_key)
+        if "ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION" in pins:
+            agent_keys.add("ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION")
     elif mode == "phased":
         agent_keys |= {mode_key, *phase_keys}
     elif mode is not None:
@@ -318,15 +327,20 @@ def validate_runtime(pins: dict[str, Any]) -> None:
     identities = [pins["ASC_APP_WORKLOAD_PRINCIPAL_ID"].lower()]
     names = []
     if pins["ASC_AGENTS_ENABLED"] == "true":
-        if mode == "phased":
-            versions = [pins.get(field, "") for field in phase_keys]
+        if mode == "phased" or "ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION" in pins:
+            selected_phase_keys = (
+                phase_keys
+                if mode == "phased"
+                else {"ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION"}
+            )
+            versions = [pins.get(field, "") for field in selected_phase_keys]
             versions.append(pins.get("ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION", ""))
             require(
                 all(
                     isinstance(version, str) and re.fullmatch(r"[1-9][0-9]{0,9}", version)
                     for version in versions
                 )
-                and len(set(versions)) == 3,
+                and len(set(versions)) == len(versions),
                 "Runtime specialist phase versions must be explicit and distinct.",
             )
         for role in delivery.ROLES:
@@ -851,6 +865,7 @@ def rehearse() -> None:
 def main() -> int:
     actions = {
         "check-pr": check_pr,
+        "check-dev-ci": check_dev_ci,
         "seal": seal,
         "verify": lambda: production(False),
         "deploy": lambda: production(True),
@@ -858,7 +873,9 @@ def main() -> int:
     }
     try:
         action = sys.argv[1] if len(sys.argv) == 2 else ""
-        require(action in actions, "Choose check-pr, seal, verify, deploy or rehearse.")
+        require(
+            action in actions, "Choose check-pr, check-dev-ci, seal, verify, deploy or rehearse."
+        )
         actions[action]()
     except (
         delivery.DeliveryError,

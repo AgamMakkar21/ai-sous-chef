@@ -227,6 +227,31 @@ class NutrientCoverage(RecipeModel):
         return self
 
 
+class IngredientCalories(RecipeModel):
+    """Calories for this ingredient's entire recipe quantity, not per 100 g."""
+
+    ingredient_line_id: LineId
+    amount: float = Field(ge=0, le=10_000_000)
+    source: Literal["usda_mcp", "web_iq", "ai_knowledge"]
+    reference: str | None = Field(default=None, min_length=1, max_length=500, repr=False)
+    basis: str = Field(min_length=1, max_length=500, pattern=r"\S", repr=False)
+
+    @model_validator(mode="after")
+    def attribution(self) -> Self:
+        if self.source == "ai_knowledge":
+            if self.reference is not None:
+                raise ValueError("AI knowledge estimates must not invent a citation.")
+        else:
+            if self.reference is None:
+                raise ValueError("USDA and web calories require a source reference.")
+            WebClaim(text=self.basis, source_url=self.reference)
+        return self
+
+
+class CalorieEstimate(IngredientCalories):
+    source: Literal["web_iq", "ai_knowledge"]
+
+
 class NutritionUnknownComponent(RecipeModel):
     ingredient_line_id: LineId
     reason: Literal[
@@ -236,6 +261,7 @@ class NutritionUnknownComponent(RecipeModel):
         "food_unavailable",
         "lookup_limit",
         "missing_nutrients",
+        "service_unavailable",
     ]
     unknown_nutrients: tuple[NutrientName, ...] = Field(
         default=NUTRIENT_NAMES, min_length=1, max_length=6
@@ -261,12 +287,14 @@ class NutritionEvidence(RecipeModel):
     notice: Literal["Informational estimate, not medical advice."] = NUTRITION_NOTICE
     coverage: tuple[NutrientCoverage, ...] = Field(default=(), max_length=6)
     unknown_components: tuple[NutritionUnknownComponent, ...] = Field(default=(), max_length=30)
+    ingredient_calories: tuple[IngredientCalories, ...] = Field(default=(), max_length=30)
 
     @model_validator(mode="after")
     def evidence_state(self) -> Self:
         source_ids = {source.source_id for source in self.sources}
         mapping_ids = [mapping.ingredient_line_id for mapping in self.mappings]
         nutrients = [nutrient.name for nutrient in self.nutrients]
+        calorie_ids = {item.ingredient_line_id for item in self.ingredient_calories}
         if (
             len(source_ids) != len(self.sources)
             or len(mapping_ids) != len(set(mapping_ids))
@@ -274,13 +302,31 @@ class NutritionEvidence(RecipeModel):
             or any(source.kind != "usda" for source in self.sources)
             or any(mapping.source_id not in source_ids for mapping in self.mappings)
             or source_ids != {mapping.source_id for mapping in self.mappings}
+            or len(calorie_ids) != len(self.ingredient_calories)
         ):
             raise ValueError("Nutrition requires unique USDA sources and ingredient mappings.")
         if self.status == "unavailable":
-            if self.nutrients or self.mappings or self.sources:
+            if self.nutrients or self.mappings or self.sources or self.ingredient_calories:
                 raise ValueError("Unavailable nutrition must not contain invented amounts.")
-        elif not self.nutrients or not self.mappings or not self.sources:
+        elif not self.nutrients or not (self.mappings or self.ingredient_calories):
             raise ValueError("Known or partial nutrition requires attributed tool evidence.")
+        for item in self.ingredient_calories:
+            mapping = next(
+                (row for row in self.mappings if row.ingredient_line_id == item.ingredient_line_id),
+                None,
+            )
+            if item.source == "usda_mcp" and (
+                mapping is None
+                or item.reference
+                != next(
+                    source.reference
+                    for source in self.sources
+                    if source.source_id == mapping.source_id
+                )
+            ):
+                raise ValueError(
+                    "USDA calories must reference the ingredient's actual USDA mapping."
+                )
         if self.coverage:
             names = {item.name for item in self.coverage}
             line_ids = set(
@@ -309,7 +355,19 @@ class NutritionEvidence(RecipeModel):
             )
             if (
                 len(names) != 6
-                or covered_ids != set(mapping_ids)
+                or covered_ids != set(mapping_ids) | calorie_ids
+                or any(
+                    not set(item.covered_ingredient_line_ids) <= set(mapping_ids)
+                    for item in self.coverage
+                    if item.name != "energy"
+                )
+                or (
+                    bool(self.ingredient_calories)
+                    and next(
+                        item for item in self.coverage if item.name == "energy"
+                    ).covered_ingredient_line_ids
+                    != tuple(item.ingredient_line_id for item in self.ingredient_calories)
+                )
                 or any(
                     set(item.covered_ingredient_line_ids + item.unknown_ingredient_line_ids)
                     != line_ids
@@ -325,8 +383,21 @@ class NutritionEvidence(RecipeModel):
                 raise ValueError(
                     "Nutrition coverage must account for every ingredient and nutrient."
                 )
+            if self.ingredient_calories:
+                energy_coverage = next(item for item in self.coverage if item.name == "energy")
+                energy = next(item for item in self.nutrients if item.name == "energy")
+                total = sum(item.amount for item in self.ingredient_calories)
+                expected = total / self.servings if self.serving_basis == "per_serving" else total
+                if (
+                    energy_coverage.whole_recipe_amount is None
+                    or abs(energy_coverage.whole_recipe_amount - total) > 0.011
+                    or abs(energy.amount - expected) > 0.011
+                ):
+                    raise ValueError("Calorie totals must match the ingredient-level evidence.")
         elif self.unknown_components:
             raise ValueError("Unknown components require detailed nutrient coverage.")
+        elif self.ingredient_calories:
+            raise ValueError("Ingredient calories require nutrient coverage.")
         return self
 
 
@@ -354,6 +425,7 @@ class WebClaim(RecipeModel):
 
 class WebDraft(RecipeModel):
     claims: tuple[WebClaim, ...] = Field(max_length=3, repr=False)
+    calorie_estimates: tuple[CalorieEstimate, ...] = Field(default=(), max_length=30, repr=False)
 
 
 class CombinedRecipeDraft(RecipeDraft):
@@ -416,6 +488,11 @@ class StructuredRecipe(RecipeDraft):
                 coverage.covered_ingredient_line_ids + coverage.unknown_ingredient_line_ids
             ) != set(ingredients):
                 raise ValueError("Nutrition coverage must match the generated recipe.")
+        if any(
+            item.ingredient_line_id not in ingredients
+            for item in self.nutrition.ingredient_calories
+        ):
+            raise ValueError("Ingredient calories must reference the generated recipe.")
         for mapping in self.nutrition.mappings:
             line = ingredients.get(mapping.ingredient_line_id)
             if line is None or line.quantity != mapping.quantity or line.unit != mapping.unit:
@@ -482,7 +559,18 @@ class WebGroundingRequest(FoundryRequest):
     allow_empty: bool = False
 
 
+class CalorieGroundingRequest(WebGroundingRequest):
+    prompt: str = Field(min_length=1, max_length=12000, pattern=r"\S", repr=False)
+    query: str = Field(min_length=1, max_length=240, pattern=r"\S", repr=False)
+    ingredient_line_ids: tuple[LineId, ...] = Field(min_length=1, max_length=30)
+    max_input_tokens: int = Field(default=4000, ge=1, le=6000)
+
+
 class RecipeGenerator(Protocol):
+    async def estimate_calories(
+        self, request: CalorieGroundingRequest
+    ) -> tuple[tuple[CalorieEstimate, ...], TokenUsage]: ...
+
     async def ground_web(
         self, request: WebGroundingRequest
     ) -> tuple[WebGrounding | None, TokenUsage]: ...

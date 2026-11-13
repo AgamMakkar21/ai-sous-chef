@@ -22,7 +22,7 @@ from sous_chef.domain.orchestrator import (
     SpecialistResult,
 )
 from sous_chef.domain.recipe_safety import UNABLE
-from sous_chef.domain.recipes import StructuredRecipe
+from sous_chef.domain.recipes import CalorieGroundingRequest, StructuredRecipe
 from sous_chef.orchestrator_definition import specialist_tool
 from sous_chef.services import orchestrator, recipe_specialist
 from sous_chef.services.orchestrator import ExecutionBudget, OrchestratorService
@@ -68,6 +68,83 @@ def web_response() -> dict[str, Any]:
         },
         message,
     )
+
+
+def calorie_response(payload: dict[str, Any]) -> dict[str, Any]:
+    request = json.loads(payload["input"])
+    response = web_response()
+    response["output"][0]["action"]["query"] = request["query"]
+    response["output"][1]["content"][0]["text"] = json.dumps(
+        {
+            "claims": [],
+            "calorieEstimates": [
+                {
+                    "ingredientLineId": item["ingredientLineId"],
+                    "amount": 100,
+                    "source": "web_iq" if index == 0 else "ai_knowledge",
+                    "reference": URL if index == 0 else None,
+                    "basis": "Synthetic fixture portion estimate, not actual nutrition data.",
+                }
+                for index, item in enumerate(request["ingredients"])
+            ],
+        }
+    )
+    return response
+
+
+@pytest.mark.parametrize(
+    "fault", ["none", "missing_citation", "invented_source", "invented_id", "ai_citation", "failed"]
+)
+def test_calorie_fallback_validates_native_web_sources_and_distinguishes_ai_knowledge(
+    fault: str,
+) -> None:
+    prompt = json.dumps(
+        {
+            "purpose": "calorie_fallback",
+            "query": "rice calories kcal per 100 g",
+            "ingredients": [
+                {"ingredientLineId": "rice", "name": "rice", "quantity": 100, "unit": "g"}
+            ],
+        }
+    )
+    request = CalorieGroundingRequest(
+        role=AgentRole.RECIPE_NUTRITION,
+        prompt=prompt,
+        query="rice calories kcal per 100 g",
+        ingredient_line_ids=("rice",),
+    )
+    response = calorie_response({"input": prompt})
+    call, message = response["output"]
+    content = message["content"][0]
+    draft = json.loads(content["text"])
+    if fault == "missing_citation":
+        content["annotations"] = []
+    elif fault == "invented_source":
+        draft["calorieEstimates"][0]["reference"] = "https://invented.example.invalid"
+    elif fault == "invented_id":
+        draft["calorieEstimates"][0]["ingredientLineId"] = "not-requested"
+    elif fault == "ai_citation":
+        draft["calorieEstimates"][0]["source"] = "ai_knowledge"
+    elif fault == "failed":
+        call["status"] = "failed"
+        call["action"]["sources"] = []
+        content["annotations"] = []
+        draft["calorieEstimates"][0].update(source="ai_knowledge", reference=None)
+    content["text"] = json.dumps(draft)
+    transport = Harness(body=response)
+    gateway = FoundryGateway(configuration(), client_factory=transport.factory)
+    if fault in {"none", "failed"}:
+        estimates, _ = asyncio.run(gateway.estimate_calories(request))
+        assert estimates[0].source == ("web_iq" if fault == "none" else "ai_knowledge")
+    else:
+        with pytest.raises(FoundryGatewayError) as caught:
+            asyncio.run(gateway.estimate_calories(request))
+        assert caught.value.code == FoundryFailure.INVALID_RESULT
+    assert len(transport.requests) == 1
+    payload = json.loads(transport.requests[0].content)
+    assert payload["agent_reference"]["version"] == "5"
+    assert payload["store"] is False and payload["max_tool_calls"] == 1
+    assert not {"model", "tools", "text", "instructions"} & payload.keys()
 
 
 class WebHarness(Harness):
@@ -118,7 +195,11 @@ class WebHarness(Harness):
         payload = json.loads(request.content)
         kind = self.request_kind(payload)
         if kind == "web_search":
-            self.body = self.web
+            self.body = (
+                calorie_response(payload)
+                if payload["input"].startswith('{"purpose":"calorie_fallback"')
+                else self.web
+            )
         elif kind == "mcp":
             self.body = self.recipe
         elif isinstance(payload["input"], str) or self.revision:
@@ -162,7 +243,7 @@ class CombinedHarness(WebHarness):
                 foundry_recipe_nutrition_mode="combined",
                 foundry_recipe_nutrition_agent_version="4",
                 foundry_recipe_nutrition_retrieval_agent_version=None,
-                foundry_recipe_nutrition_web_agent_version=None,
+                foundry_recipe_nutrition_web_agent_version="5",
             ),
             client_factory=self.factory,
         )
@@ -187,6 +268,8 @@ class CombinedHarness(WebHarness):
 
     @staticmethod
     def request_kind(payload: dict[str, Any]) -> str:
+        if payload["agent_reference"]["version"] == "5":
+            return "web_search"
         return (
             "function"
             if payload["agent_reference"]["name"] == configuration().foundry_orchestrator_agent_name
@@ -195,7 +278,9 @@ class CombinedHarness(WebHarness):
 
     async def handle(self, request: httpx2.Request) -> httpx2.Response:
         payload = json.loads(request.content)
-        if self.request_kind(payload) == "combined":
+        if self.request_kind(payload) == "web_search":
+            self.body = calorie_response(payload)
+        elif self.request_kind(payload) == "combined":
             self.body = self.combined
         elif isinstance(payload["input"], str):
             self.body = body(function_output(arguments=self.arguments.model_dump_json()))
@@ -285,7 +370,8 @@ def test_empty_quantity_search_keeps_phased_recipe_and_explicit_missing_quantity
         component.ingredient_line_id == "rice" and component.reason == "missing_quantity"
         for component in recipe.nutrition.unknown_components
     )
-    assert len(harness.requests) == 2  # One web phase, one recipe phase; no retry.
+    assert len(harness.requests) == 3  # Public quantity search, recipe, calorie fallback.
+    assert any(item.source != "usda_mcp" for item in recipe.nutrition.ingredient_calories)
 
 
 @pytest.mark.parametrize("use_web", [False, True])

@@ -91,6 +91,13 @@ add cloud credentials to validation jobs or run untrusted PR code in a privilege
 deployment workflow. [Reviewed dev deployment](dev-delivery.md) runs separately
 on `dev` pushes, verifies a current peer-reviewed merge, and acquires OIDC
 credentials only in its environment-bound deployment job.
+It now checks the successful exact-head six-job PR run before any deployment,
+not only when sealing a release afterward. This fail-closed deployment guard
+does not replace branch protection: repository owners must still enforce the
+required checks and peer review to prevent broken changes from being merged.
+The existing test job covers transient USDA failures through the real stdio MCP
+server and chat persistence, including idempotent resends. Agent-enabled delivery
+also requires a live synthetic recipe with USDA-backed nutrition.
 
 ## Owner: enable required checks after a successful run
 

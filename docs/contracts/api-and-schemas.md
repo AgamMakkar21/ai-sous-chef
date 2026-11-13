@@ -332,16 +332,28 @@ references, not an unbounded retrieved document.
 Nutrition includes serving basis, nutrient amount/unit, USDA food/source/version
 references, mapped ingredient amounts, and `status: known/partial/unavailable`.
 Known portions of a partial result are labeled partial, not a complete total.
-Missing data is not zero, and no value is generated from model memory.
+Missing data is not zero. Recipe calories prefer USDA MCP; missing ingredient
+calories may use explicitly labeled Web IQ or AI knowledge estimates.
+The standalone ingredient lookup remains USDA-only.
 All nutrition responses carry `isEstimate: true` and the
 `"Informational estimate, not medical advice."` notice.
 New calculations include per-nutrient `coverage` with whole-recipe known
 amounts (nullable), covered/unknown ingredient line IDs and individual statuses;
 `unknownComponents` identifies the missing quantity/unit, unsupported conversion,
-unmatched food, lookup limit or missing source nutrients. `mappings.weightGrams`
+unmatched food, lookup limit, missing source nutrients or `service_unavailable`.
+Recipe `ingredientCalories` records the whole-recipe ingredient `amount` in kcal,
+its `source` (`usda_mcp`, `web_iq`, `ai_knowledge`), a `basis` explaining quantity
+assumptions/arithmetic, and `reference`. USDA references must match a real mapping;
+Web IQ references must have actual searched/native URL citations; AI knowledge
+requires `reference: null`. Fallback entries never create USDA mappings or
+fill other missing nutrients. Their sum determines energy coverage and the
+displayed per-serving calorie estimate. Stored snapshots may omit this field.
+`mappings.weightGrams`
 records supported mass conversions. Per-serving amounts and whole-recipe
 amounts use decimal arithmetic and independent two-decimal round-half-up after
-aggregation; changing servings divides the unrounded whole-recipe amounts.
+aggregation; changing servings divides the unrounded whole-recipe amounts for
+USDA calculations. Mixed-source calorie totals are rounded to two decimals after
+adding the per-ingredient estimates, then divided by servings and rounded for display.
 See [serving calculation and uncertainty rules](../recipe-specialist.md#usda-nutrition-asc-32).
 
 ## 6. State and revision invariants

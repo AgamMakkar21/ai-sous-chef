@@ -118,6 +118,44 @@ def evidence() -> dict[str, Any]:
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_predeployment_gate_rejects_missing_failed_or_stale_ci_evidence(self) -> None:
+        for fault in ("none", "missing_run", "missing_check", "failed", "stale"):
+            proposal = pr(evidence())
+            proposal["head"]["sha"] = HEAD
+            jobs = [{"name": check, "conclusion": "success"} for check in release.CHECKS]
+            if fault == "missing_check":
+                jobs.pop()
+            elif fault == "failed":
+                jobs[0]["conclusion"] = "failure"
+            run = {
+                "id": 102,
+                "status": "completed",
+                "conclusion": "success",
+                "path": ".github/workflows/ci.yml",
+                "head_sha": SOURCE if fault == "stale" else HEAD,
+            }
+            with (
+                self.subTest(fault=fault),
+                patch.dict(os.environ, ENV | {"GITHUB_REF": "refs/heads/dev"}),
+                patch.object(release, "merged_pr", return_value=proposal),
+                patch.object(
+                    release,
+                    "github",
+                    side_effect=[
+                        {"workflow_runs": [] if fault == "missing_run" else [{"id": 102}]},
+                        run,
+                        {"jobs": jobs},
+                    ],
+                ),
+                patch.object(delivery, "az") as azure,
+            ):
+                if fault == "none":
+                    self.assertEqual(release.check_dev_ci(), (run, proposal))
+                else:
+                    with self.assertRaises(delivery.DeliveryError):
+                        release.check_dev_ci()
+                azure.assert_not_called()
+
     def test_feature_fork_and_stale_evidence_cannot_bypass_main(self) -> None:
         original = pr(evidence())
         variants = []

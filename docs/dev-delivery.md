@@ -4,6 +4,51 @@
 `.github/workflows/deploy-dev.yml`. It publishes the Python source and exact,
 versioned New Foundry prompt-agent configuration to **existing dev resources**
 when agents are explicitly enabled in the reviewed release manifest.
+Before acquiring Azure credentials or changing the running app, delivery now
+requires all six PR quality jobs to have succeeded for the merged PR's exact
+reviewed head. The same guard is reused when sealing the release. A missing,
+failed, incomplete or stale CI run blocks deployment, not just artifact retention.
+
+Agent-enabled smoke checks also execute one synthetic Orchestrator -> Recipe +
+Nutrition -> USDA request using the deployed agent pins and protected USDA key.
+They require a structured recipe with known, attributed nutrition; a healthy
+`/ready` response, clarification, unavailable nutrition or failed tool call cannot
+pass. The synthetic request is not retried as a whole and reads/writes no consumer
+documents. It runs under the delivery identity, not the App Service identity,
+so signed-in browser, authentication and workload-specific acceptance remain
+separate requirements. Do not treat this dependency check as an authenticated
+end-to-end UI test.
+
+The version-4 combined manifest can also pin `recipe_nutrition.web_version` for
+the reviewed isolated Web IQ/calorie phase. Delivery verifies and publishes that
+phase alongside the combined source, and records its separate runtime version.
+Missing recipe calories can use explicitly labeled Web IQ/AI estimates, but these
+cannot satisfy release smoke: every ingredient must have USDA MCP calorie evidence.
+
+The November 13 chat failure reached both agents, then failed in USDA lookup
+with `foundry_unavailable`; the old smoke check still passed because it only
+checked health, metadata readiness and rejection of anonymous requests.
+The recorded error does not identify USDA's exact HTTP response or prove that
+a particular PR caused the outage. Read-only probes from the App Service SCM
+diagnostic environment reproduced intermittent USDA HTTP timeouts without MCP:
+four food-detail requests and one search exceeded a five-second socket timeout,
+while four searches succeeded. Later probes of the same carrot/chicken search
+and food-detail endpoints succeeded, including food ID 170393. This demonstrates
+intermittent dependency latency, not permanently missing food records. SCM is a
+separate diagnostic process, not the live application container, and these later
+probes cannot establish the exact cause of the earlier `foundry_unavailable`.
+The application's HTTP timeout is five seconds; its default MCP session budget
+is ten seconds and covers multiple sequential searches/profiles. Both latency
+and accumulated lookup work can therefore exhaust a request's budget.
+Read-only USDA search/profile requests now retry transient connection failures,
+timeouts and HTTP 500/502/503/504 responses at most twice, with short backoff.
+The existing MCP session and chat deadlines still bound total time. Authentication,
+quota, missing-food and malformed-data errors are not retried; quota cooldown
+remains enforced. Persistent failures remain explicit, with no invented nutrition,
+agent replay or weakened allergy validation. Recipe-only transient USDA outages
+retain completed source evidence and use the explicitly attributed calorie
+fallback; they do not fabricate USDA IDs or fill missing non-calorie nutrients.
+
 GitHub can briefly return incomplete merge/review evidence immediately after a
 push. The review gate checks up to six times, waiting five seconds between
 checks (at most 25 seconds of waiting). Every check still requires the exact
