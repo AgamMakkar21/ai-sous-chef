@@ -52,6 +52,10 @@ Cosmos has a separate, opt-in [dev deployment](cosmos.md) for ASC-07; running
 `modules/monitoring.bicep` is the foundation module. Later service issues add their
 own modules and consume the nonsecret resource-ID outputs.
 
+ASC-54 adds a **separate**, opt-in `operations.bicep` deployment for an operational
+workbook and disabled-by-default alerts. It is not called by this foundation or
+the dev deployment workflow. See [operational queries, owner review and runbooks](../docs/operations.md).
+
 | Environment | Configuration | Azure resources |
 | --- | --- | --- |
 | Local | Existing `.env.local.example` and offline adapters | None; do not run a cloud deployment for local |

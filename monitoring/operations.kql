@@ -1,0 +1,70 @@
+let Prices = dynamic(__MODEL_PRICES__);
+let Spans = SpanSource
+    | extend Name = coalesce(tostring(Properties['asc.operation']), Name)
+    | where Name in (
+        'http.request', 'agent.orchestrator', 'agent.recipe_nutrition',
+        'foundry.responses', 'tool.usda', 'tool.usda.search', 'tool.usda.profile',
+        'tool.foundry_iq', 'cosmos.operation', 'learning.process', 'learning.extract',
+        'learning.project', 'evaluation.run')
+    | extend Error = tostring(Properties['error.type']),
+        Input = tolong(Properties['gen_ai.usage.input_tokens']),
+        Output = tolong(Properties['gen_ai.usage.output_tokens']),
+        Model = tostring(Properties['gen_ai.request.model']),
+        LagMs = todouble(Properties['asc.learning.processing_lag_ms']),
+        Throttles = tolong(Properties['asc.cosmos.throttle_count'])
+    | extend Area = case(
+        Name == 'http.request', 'application',
+        Name startswith 'agent.', 'agents',
+        Name startswith 'tool.', 'tools',
+        Name == 'cosmos.operation', 'database',
+        Name startswith 'learning.', 'learning',
+        Name == 'evaluation.run', 'evaluation', 'models'),
+        Failed = case(Name == 'http.request',
+            toint(ResultCode) >= 500,
+            Name == 'evaluation.run',
+            tobool(Properties['asc.evaluation.passed']) == false,
+            Success == false or tostring(Properties['asc.result']) in ('error', 'cancelled'));
+let Health = Spans
+    | summarize Calls = count(), Failures = countif(Failed),
+        P95DurationMs = percentile(DurationMs, 95), LastSeen = max(TimeGenerated)
+        by Area, Name, AppRoleName;
+let Failures = Spans | summarize Value = countif(Failed) by Area;
+let ModelCalls = Spans | where Name in ('foundry.responses', 'learning.extract');
+let Models = ModelCalls
+    | summarize Calls = count(), MissingUsage = countif(isnull(Input) or isnull(Output)),
+        InputSum = sum(Input), OutputSum = sum(Output),
+        P95DurationMs = percentile(DurationMs, 95)
+        by TimeGenerated = bin(TimeGenerated, 15m), Model, AppRoleName
+    | extend InputTokens = iff(MissingUsage == 0, InputSum, long(null)),
+        OutputTokens = iff(MissingUsage == 0, OutputSum, long(null)),
+        InputRate = todouble(Prices[Model].inputUsdPerMillion),
+        OutputRate = todouble(Prices[Model].outputUsdPerMillion)
+    | extend EstimatedUsd = iff(
+        MissingUsage == 0 and isnotnull(InputRate) and isnotnull(OutputRate),
+        (InputTokens * InputRate + OutputTokens * OutputRate) / 1000000.0, real(null))
+    | project-away InputSum, OutputSum, InputRate, OutputRate;
+let Learning = MetricSource
+    | where Name in ('asc.learning.events', 'asc.learning.batch.documents')
+    | summarize Events = sum(Sum) by Name,
+        Event = tostring(Properties['asc.learning.event']),
+        DeliveryState = tostring(Properties['asc.learning.delivery_state']);
+let LearningFailures = MetricSource
+    | where Name == 'asc.learning.batch.documents'
+        and tostring(Properties['asc.learning.delivery_state']) in ('failed', 'invalid', 'quarantined')
+    | summarize Value = sum(Sum);
+let Lag = Spans | where Name == 'learning.process'
+    | summarize Value = max(LagMs), Observations = countif(isnotnull(LagMs));
+let CosmosThrottles = Spans | where Name == 'cosmos.operation'
+    | summarize Value = sum(Throttles);
+let ModelLatency = ModelCalls | summarize Value = percentile(DurationMs, 95);
+let ModelTokens = ModelCalls
+    | summarize MissingUsage = countif(isnull(Input) or isnull(Output)),
+        Calls = count(), Tokens = sum(Input + Output)
+    | project Value = iff(Calls > 0 and MissingUsage == 0, Tokens, long(null));
+let InvalidOutputs = Spans
+    | summarize Value = countif(Error in (
+        'foundry_invalid_result', 'orchestrator_invalid_result',
+        'invalid_recipe_structure', 'extraction_invalid_result'));
+let Evaluation = Spans | where Name == 'evaluation.run'
+    | summarize Value = countif(tobool(Properties['asc.evaluation.passed']) == false)
+        by Suite = tostring(Properties['asc.evaluation.suite']);

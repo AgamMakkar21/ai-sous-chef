@@ -1,0 +1,13 @@
+[
+  {"id":"application-failures","query":"Failures | where Area == 'application'","threshold":5,"runbook":"application"},
+  {"id":"agent-failures","query":"Failures | where Area == 'agents'","threshold":5,"runbook":"agents-and-tools"},
+  {"id":"tool-failures","query":"Failures | where Area == 'tools'","threshold":5,"runbook":"agents-and-tools"},
+  {"id":"learning-failures","query":"LearningFailures","threshold":3,"runbook":"learning"},
+  {"id":"cosmos-failures","query":"Failures | where Area == 'database'","threshold":3,"runbook":"database"},
+  {"id":"processing-lag","query":"Lag","threshold":300000,"runbook":"learning"},
+  {"id":"cosmos-throttles","query":"CosmosThrottles","threshold":3,"runbook":"database"},
+  {"id":"model-latency","query":"ModelLatency","threshold":15000,"runbook":"models"},
+  {"id":"model-tokens","query":"ModelTokens","threshold":100000,"runbook":"models"},
+  {"id":"invalid-outputs","query":"InvalidOutputs","threshold":1,"runbook":"invalid-outputs"},
+  {"id":"evaluation-regression","query":"Evaluation","threshold":1,"runbook":"evaluation"}
+]

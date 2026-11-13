@@ -69,6 +69,7 @@ class Operation(StrEnum):
     LEARNING = "learning.process"
     EXTRACTION = "learning.extract"
     PROJECTION = "learning.project"
+    EVALUATION = "evaluation.run"
 
 
 class Telemetry:
@@ -237,6 +238,7 @@ def operation(
         record_exception=False,
         set_status_on_exception=False,
     ) as span:
+        span.set_attribute("asc.operation", name.value)
         if trace_id.get() is not None:
             span.set_attribute("asc.correlation_id", trace_id.get() or "")
         try:
