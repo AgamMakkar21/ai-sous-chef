@@ -8,6 +8,7 @@ import pytest
 from sous_chef.domain.authorization import AuthenticatedUser, UserDataDeleted
 from sous_chef.domain.feedback import FeedbackRevision
 from sous_chef.services.recipe_lifecycle import _identity
+from sous_chef.telemetry import Event
 
 from worker import function_app as worker
 
@@ -206,9 +207,9 @@ def test_deleted_user_delivery_is_ignored_without_quarantine_or_retry(
         "failed": 0,
         "quarantined": 0,
     }
-    event.assert_any_call(worker.Event.LEARNING_IGNORED)
+    event.assert_any_call(Event.LEARNING_IGNORED)
     assert all(
-        call.args[0] not in {worker.Event.LEARNING_FAILED, worker.Event.LEARNING_BATCH_PENDING}
+        call.args[0] not in {Event.LEARNING_FAILED, Event.LEARNING_BATCH_PENDING}
         for call in event.call_args_list
     )
 
