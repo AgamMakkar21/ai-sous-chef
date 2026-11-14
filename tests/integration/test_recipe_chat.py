@@ -182,6 +182,11 @@ def test_release_chat_check_requires_live_recipe_and_usda_evidence(
                 asyncio.run(delivery.chat_smoke(deployed))
         else:
             asyncio.run(delivery.chat_smoke(deployed))
+            recovery = json.loads(recipe_transport.requests[-1].content)
+            assert recovery["agent_reference"]["version"] == (
+                recipe_settings.foundry_recipe_nutrition_calorie_agent_version
+            )
+            assert json.loads(recovery["input"])["useWeb"] is False
         assert client.call_args.args[0].environment == "dev"
 
 

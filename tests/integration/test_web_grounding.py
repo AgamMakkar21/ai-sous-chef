@@ -514,13 +514,17 @@ class WebHarness(Harness):
                 config.foundry_recipe_nutrition_agent_name,
                 config.foundry_recipe_nutrition_web_agent_version,
             ): "web_search",
+            (
+                config.foundry_recipe_nutrition_agent_name,
+                config.foundry_recipe_nutrition_calorie_agent_version,
+            ): "calorie",
         }
         return kinds[(reference["name"], reference["version"])]
 
     async def handle(self, request: httpx2.Request) -> httpx2.Response:
         payload = json.loads(request.content)
         kind = self.request_kind(payload)
-        if kind == "web_search":
+        if kind in {"web_search", "calorie"}:
             self.body = (
                 calorie_response(payload)
                 if payload["input"].startswith('{"purpose":"calorie_fallback"')
