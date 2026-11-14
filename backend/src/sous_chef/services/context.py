@@ -57,8 +57,12 @@ def context_tokens(context: RequestContext) -> int:
     return len(_encoding().encode(context.prompt, disallowed_special=())) + CONTEXT_FRAMING_TOKENS
 
 
-def bound_context(context: RequestContext) -> RequestContext:
-    while len(context.prompt) > MAX_CONTEXT_CHARACTERS:
+def bound_context(context: RequestContext, *, max_tokens: int | None = None) -> RequestContext:
+    if max_tokens is not None and max_tokens < 1:
+        raise ValueError("Context token limit must be positive.")
+    while len(context.prompt) > MAX_CONTEXT_CHARACTERS or (
+        max_tokens is not None and context_tokens(context) > max_tokens
+    ):
         if context.history:
             context = context.model_copy(update={"history": context.history[1:]})
         elif context.learned_preferences:
@@ -134,8 +138,14 @@ def _eligible(
 
 
 class ContextService:
-    def __init__(self, learned_reader: LearnedPreferenceReader | None = None) -> None:
+    def __init__(
+        self,
+        learned_reader: LearnedPreferenceReader | None = None,
+        *,
+        max_tokens: int | None = None,
+    ) -> None:
         self.learned_reader = learned_reader
+        self.max_tokens = max_tokens
 
     @observed(Operation.CONTEXT)
     async def build(
@@ -219,4 +229,4 @@ class ContextService:
             current_request=content,
             revision=revision,
         )
-        return bound_context(context)
+        return bound_context(context, max_tokens=self.max_tokens)

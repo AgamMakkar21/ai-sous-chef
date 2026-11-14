@@ -122,7 +122,9 @@ class ChatService:
     ) -> None:
         self.settings = settings
         self.executor = executor
-        self.context_service = ContextService(learned_reader)
+        self.context_service = ContextService(
+            learned_reader, max_tokens=settings.context_max_tokens
+        )
 
     @observed(Operation.PERSISTENCE)
     async def _finish(

@@ -16,6 +16,7 @@ from sous_chef.domain.context import (
     ContextPreference,
     LearnedCandidate,
     PreferenceEvidence,
+    RecipeRevisionContext,
     RequestContext,
     ResolvedPreference,
 )
@@ -23,7 +24,7 @@ from sous_chef.domain.cosmos import HistoryQuery
 from sous_chef.domain.groceries import GroceryRow
 from sous_chef.domain.profiles import ExplicitPreferences
 from sous_chef.services import context as contexts
-from sous_chef.services.context import _eligible, bound_context, context_tokens
+from sous_chef.services.context import _eligible, _encoding, bound_context, context_tokens
 from sous_chef.settings import Settings
 from test_chat_api import FakeExecutor, send
 from test_chat_api import chat_api as chat_api
@@ -32,7 +33,8 @@ from test_conversation_api import CHAT, OTHER, OWNER, create, seed_turns
 from test_conversation_api import conversation_settings as conversation_settings
 from test_cosmos_repository import SyntheticCredential, Transport
 from test_cosmos_repository import harness as harness
-from test_profile_api import ME, document, preferences
+from test_profile_api import ME, document, onboard, preferences
+from test_recipe_safety import full_recipe
 
 
 def test_fresh_profile_and_groceries_reach_existing_and_new_conversations(
@@ -155,6 +157,87 @@ def test_transport_character_boundary_keeps_mandatory_context_or_fails(
     monkeypatch.setattr(contexts, "MAX_CONTEXT_CHARACTERS", characters - 1)
     with pytest.raises(ContextLimitExceeded):
         bound_context(context)
+
+
+def test_model_projection_removes_only_audit_metadata_and_keeps_complete_revision() -> None:
+    context = minimal_context().model_copy(
+        update={
+            "groceries": (
+                GroceryRow(
+                    grocery_id=uuid4(),
+                    name="rice",
+                    quantity=2,
+                    unit="cup",
+                    updated_at=datetime.now(UTC),
+                ),
+            ),
+            "history": (ContextExchange(turn_id=uuid4(), user="Rice?", assistant="Yes."),),
+            "learned_preferences": (
+                ContextPreference(
+                    insight_key="rice",
+                    field="likes",
+                    value="rice",
+                    confidence=0.8,
+                    supporting_cooked_count=2,
+                ),
+            ),
+            "revision": RecipeRevisionContext(
+                generated_recipe_id=uuid4(), occasion_id=uuid4(), recipe=full_recipe()
+            ),
+        }
+    )
+    original = context.model_dump(mode="json", by_alias=True)
+    expected = deepcopy(original)
+    del expected["groceries"][0]["updatedAt"]
+    del expected["history"][0]["turnId"]
+    assert json.loads(context.prompt) == expected
+    assert context.model_dump(mode="json", by_alias=True) == original
+    assert len(_encoding().encode(context.prompt, disallowed_special=())) < len(
+        _encoding().encode(context.model_dump_json(by_alias=True), disallowed_special=())
+    )
+    mandatory = context.model_copy(
+        update={
+            "groceries": (),
+            "history": (),
+            "learned_preferences": (),
+            "omitted_grocery_count": 1,
+        }
+    )
+    limit = context_tokens(mandatory)
+    assert bound_context(context, max_tokens=limit) == mandatory
+    with pytest.raises(ContextLimitExceeded):
+        bound_context(context, max_tokens=limit - 1)
+
+
+@pytest.mark.parametrize("max_tokens", [None, 256])
+def test_default_transport_limit_and_opt_in_token_cap_preserve_complete_request(
+    max_tokens: int | None,
+    conversation_settings: Settings,
+    executor: FakeExecutor,
+    auth_headers: dict[str, str],
+) -> None:
+    settings = (
+        conversation_settings
+        if max_tokens is None
+        else conversation_settings.model_copy(update={"context_max_tokens": max_tokens})
+    )
+    content = "\U00020000" * 4000
+    with TestClient(create_app(settings, chat_executor=executor), headers=auth_headers) as client:
+        onboard(client)
+        conversation = create(client)
+        response = send(client, conversation, content=content)
+        if max_tokens is None:
+            assert response.status_code == 200, response.text
+            assert len(executor.calls) == 1
+            assert executor.calls[0].context.current_request == content
+            assert context_tokens(executor.calls[0].context) > 11000
+        else:
+            assert response.status_code == 422
+            assert response.json()["code"] == "context_limit_exceeded"
+            assert executor.calls == []
+        assert send(client, conversation, key=str(uuid4()), content="Dinner").status_code == 200
+        assert len(executor.calls) == (2 if max_tokens is None else 1)
+        assert executor.calls[-1].context.current_request == "Dinner"
 
 
 def test_trimming_keeps_complete_exchanges_then_drops_learned_then_groceries(

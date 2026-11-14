@@ -139,8 +139,14 @@ class RequestContext(ConversationModel):
 
     @property
     def prompt(self) -> str:
-        # Published agent definitions own policy; user-role input contains only data.
-        return self.model_dump_json(by_alias=True)
+        # Published agents own policy; keep backend audit metadata out of repeated model input.
+        return self.model_dump_json(
+            by_alias=True,
+            exclude={
+                "groceries": {"__all__": {"updated_at"}},
+                "history": {"__all__": {"turn_id"}},
+            },
+        )
 
 
 class ContextLimitExceeded(ValueError):

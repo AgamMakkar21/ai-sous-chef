@@ -44,6 +44,18 @@ URL = "https://source.example.invalid/synthetic-advisory"
 CLAIM = "Synthetic fixture advisory; not a real recall."
 
 
+def prompt_context(prompt: str) -> RequestContext:
+    # Reuse backend retrieval helpers with fixture-only values for omitted audit metadata.
+    payload = json.loads(prompt)
+    for grocery in payload["groceries"]:
+        assert "updatedAt" not in grocery
+        grocery["updatedAt"] = "2026-01-01T00:00:00Z"
+    for index, exchange in enumerate(payload["history"]):
+        assert "turnId" not in exchange
+        exchange["turnId"] = str(UUID(int=index + 1, version=4))
+    return RequestContext.model_validate_json(json.dumps(payload))
+
+
 def web_response() -> dict[str, Any]:
     message = response_body()["output"][0]
     message["content"][0].update(
@@ -487,7 +499,7 @@ class CombinedHarness(WebHarness):
     async def handle(self, request: httpx2.Request) -> httpx2.Response:
         payload = json.loads(request.content)
         if self.request_kind(payload) == "function" and isinstance(payload["input"], str):
-            self.data = RequestContext.model_validate_json(payload["input"])
+            self.data = prompt_context(payload["input"])
             self.combined["output"][0]["arguments"] = json.dumps(
                 {"query_variants": [retrieval_query(self.data, self.arguments)]}
             )

@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     cosmos_max_attempts: int = Field(default=3, ge=1, le=5)
     cosmos_page_size: int = Field(default=20, ge=1, le=50)
     chat_retention_days: int | None = Field(default=None, ge=1, le=3650)
+    context_max_tokens: int | None = Field(default=None, ge=256, le=11000)
     pagination_key: SecretStr | None = Field(default=None, repr=False)
     foundry_project_endpoint: HttpUrl | None = Field(default=None, repr=False)
     foundry_project_resource_id: str | None = Field(

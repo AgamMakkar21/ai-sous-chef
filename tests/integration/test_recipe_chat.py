@@ -34,7 +34,7 @@ from test_grounded_specialist import configuration, native_mcp_result
 from test_orchestrator_gateway import body, function_output
 from test_profile_api import document, onboard, preferences
 from test_usda_nutrition import SERVER
-from test_web_grounding import CombinedHarness, WebHarness
+from test_web_grounding import CombinedHarness, WebHarness, prompt_context
 
 from scripts import deploy_dev as delivery
 
@@ -53,7 +53,7 @@ class RecipeChatHarness(WebHarness):
         payload = json.loads(request.content)
         kind = self.request_kind(payload)
         if kind == "function" and isinstance(payload["input"], str):
-            self.data = RequestContext.model_validate_json(payload["input"])
+            self.data = prompt_context(payload["input"])
             self.contexts.append(self.data)
         if kind == "mcp":
             self.recipe["output"][0]["arguments"] = json.dumps(
@@ -402,7 +402,7 @@ def test_combined_app_composition_returns_and_persists_a_grounded_recipe(
         payload = json.loads(request.content)
         kind = transport.request_kind(payload)
         if kind == "function" and isinstance(payload["input"], str):
-            transport.data = RequestContext.model_validate_json(payload["input"])
+            transport.data = prompt_context(payload["input"])
         elif kind == "combined":
             transport.combined["output"][0]["arguments"] = json.dumps(
                 {"query_variants": [retrieval_query(transport.data, transport.arguments)]}
@@ -475,7 +475,7 @@ def test_combined_chat_keeps_known_components_when_broad_search_details_are_miss
         payload = json.loads(request.content)
         kind = transport.request_kind(payload)
         if kind == "function" and isinstance(payload["input"], str):
-            transport.data = RequestContext.model_validate_json(payload["input"])
+            transport.data = prompt_context(payload["input"])
         elif kind == "combined":
             transport.combined["output"][0]["arguments"] = json.dumps(
                 {"query_variants": [retrieval_query(transport.data, transport.arguments)]}
@@ -533,7 +533,7 @@ def test_combined_revision_preserves_context_and_enriches_only_its_current_ingre
         payload = json.loads(request.content)
         kind = transport.request_kind(payload)
         if kind == "function" and isinstance(payload["input"], str):
-            transport.data = RequestContext.model_validate_json(payload["input"])
+            transport.data = prompt_context(payload["input"])
         elif kind == "function":
             feedback = json.loads(payload["input"][-1]["output"])
             assert feedback == {
