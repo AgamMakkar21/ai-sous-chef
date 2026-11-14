@@ -20,32 +20,43 @@ def test_persisted_phase_has_only_its_capabilities_and_strict_output(phase: Reci
     assert source.name == "recipe-agent"
     assert source.metadata["asc_recipe_phase"] == phase.value
     assert source.metadata["asc_policy_version"] == (
-        "10" if phase == RecipePhase.COMBINED else "9" if phase == RecipePhase.WEB else "8"
+        "12"
+        if phase == RecipePhase.COMBINED
+        else "11"
+        if phase == RecipePhase.WEB
+        else "2"
+        if phase == RecipePhase.CALORIE
+        else "8"
     )
     assert definition["text"]["format"]["strict"] is True
     expected_schema = (
         CombinedRecipeOutput
         if phase == RecipePhase.COMBINED
         else WebDraft
-        if phase == RecipePhase.WEB
+        if phase in (RecipePhase.WEB, RecipePhase.CALORIE)
         else RecipeDraft
     )
     schema = definition["text"]["format"]["schema"]
     assert schema == expected_schema.model_json_schema(
-        mode="serialization" if phase == RecipePhase.COMBINED else "validation"
+        mode="serialization"
+        if phase in (RecipePhase.COMBINED, RecipePhase.WEB, RecipePhase.CALORIE)
+        else "validation"
     )
-    if phase == RecipePhase.COMBINED:
+    if phase in (RecipePhase.COMBINED, RecipePhase.WEB, RecipePhase.CALORIE):
         objects = [schema, *schema["$defs"].values()]
         for item in objects:
             if item.get("type") == "object":
                 assert set(item["required"]) == set(item["properties"])
                 assert item["additionalProperties"] is False
-    assert definition["tool_choice"] == ("none" if phase == RecipePhase.GENERATION else "required")
+    assert definition["tool_choice"] == (
+        "none" if phase in (RecipePhase.GENERATION, RecipePhase.CALORIE) else "required"
+    )
     expected_type = {
         RecipePhase.GENERATION: [],
         RecipePhase.RETRIEVAL: ["mcp"],
         RecipePhase.WEB: ["web_search"],
         RecipePhase.COMBINED: ["mcp", "web_search"],
+        RecipePhase.CALORIE: [],
     }[phase]
     assert [tool["type"] for tool in definition["tools"]] == expected_type
     tool = None

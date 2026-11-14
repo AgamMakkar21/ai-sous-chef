@@ -321,31 +321,33 @@ class RecipeSpecialistService:
                         quantity_estimates=recipe_quantity_estimates(draft, grounding, web),
                     )
                     evidence = await self._nutrition.lookup(
-                        nutrition_request, deadline=deadline - POLICY.web_deadline_seconds - 2
+                        nutrition_request, deadline=deadline - POLICY.calorie_deadline_seconds - 2
                     )
-                    fallback = calorie_request(
-                        nutrition_request,
-                        evidence,
-                        operation_id=operation_id,
-                        max_input_tokens=request.max_input_tokens,
-                        max_output_tokens=request.max_output_tokens,
+                    fallback_deadline = min(
+                        deadline - 2, monotonic() + POLICY.calorie_deadline_seconds
                     )
-                    if fallback is not None:
-                        budget.tool(AgentTool.WEB_IQ, calorie_fallback=True)
+                    for use_web in (True, False):
+                        fallback = calorie_request(
+                            nutrition_request,
+                            evidence,
+                            operation_id=operation_id,
+                            max_input_tokens=None,
+                            max_output_tokens=None,
+                            use_web=use_web,
+                        )
+                        if fallback is None:
+                            break
+                        if monotonic() >= fallback_deadline:
+                            operational_event(
+                                Event.CALORIE_FALLBACK_UNAVAILABLE,
+                                category=ErrorCategory.FOUNDRY_TIMEOUT,
+                            )
+                            break
+                        if use_web:
+                            budget.tool(AgentTool.WEB_IQ, calorie_fallback=True)
                         budget.model(calorie_fallback=True)
-                        input_allowance, output_allowance = budget.model_allowance(
-                            calorie_fallback=True
-                        )
-                        fallback = fallback.model_copy(
-                            update={
-                                "max_input_tokens": input_allowance,
-                                "max_output_tokens": output_allowance,
-                            }
-                        )
                         try:
-                            async with asyncio.timeout_at(
-                                min(deadline - 2, monotonic() + POLICY.calorie_deadline_seconds)
-                            ):
+                            async with asyncio.timeout_at(fallback_deadline):
                                 estimates, fallback_usage = await self._generator.estimate_calories(
                                     fallback
                                 )

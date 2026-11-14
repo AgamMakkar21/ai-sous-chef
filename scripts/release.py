@@ -309,6 +309,19 @@ def validate_runtime(pins: dict[str, Any]) -> None:
         "ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION",
     }
     mode = pins.get(mode_key)
+    calorie_key = "ASC_FOUNDRY_RECIPE_NUTRITION_CALORIE_AGENT_VERSION"
+    if calorie_key in pins:
+        agent_keys.add(calorie_key)
+        require(
+            isinstance(pins[calorie_key], str)
+            and re.fullmatch(r"[1-9][0-9]{0,9}", pins[calorie_key]) is not None
+            and pins[calorie_key]
+            not in {
+                pins.get("ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION"),
+                *(pins.get(key) for key in phase_keys),
+            },
+            "Runtime calorie recovery requires a distinct explicit source version.",
+        )
     if mode == "combined":
         agent_keys.add(mode_key)
         if "ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION" in pins:

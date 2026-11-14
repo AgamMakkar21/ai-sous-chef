@@ -315,9 +315,7 @@ def test_optional_calorie_failure_preserves_completed_chat_and_verified_usda_his
         assert {item["ingredientLineId"] for item in nutrition["mappings"]} == {"rice"}
         expected = (
             {"rice", "carrot", "oil"}
-            if fault in {"high_usage", "above_old_output_limit"}
-            else {"rice", "carrot"}
-            if fault == "partial"
+            if fault in {"high_usage", "above_old_output_limit", "partial"}
             else {"rice"}
         )
         assert {item["ingredientLineId"] for item in nutrition["ingredientCalories"]} == expected
@@ -325,7 +323,7 @@ def test_optional_calorie_failure_preserves_completed_chat_and_verified_usda_his
         assert set(energy["coveredIngredientLineIds"]) == expected
         assert set(energy["unknownIngredientLineIds"]) == {"rice", "carrot", "oil"} - expected
         assert energy["status"] == (
-            "known" if fault in {"high_usage", "above_old_output_limit"} else "partial"
+            "known" if fault in {"high_usage", "above_old_output_limit", "partial"} else "partial"
         )
         assert all(
             item["reference"] != "https://invented.example.invalid"
@@ -336,7 +334,9 @@ def test_optional_calorie_failure_preserves_completed_chat_and_verified_usda_his
         assert "private invalid calorie content" not in caplog.text
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
         assert send(client, conversation).json() == response.json()
-        assert len(transport.requests) == 4
+        assert len(transport.requests) == (
+            4 if fault in {"high_usage", "above_old_output_limit"} else 5
+        )
         fallback = json.loads(transport.requests[2].content)
         assert "max_output_tokens" not in fallback
 

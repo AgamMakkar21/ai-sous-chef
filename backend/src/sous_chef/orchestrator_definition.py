@@ -60,19 +60,22 @@ remains reserved for current public information. At most one ordinary web search
 is available, so prioritize explicitly requested current information if both apply.
 The backend attaches the original complete safety/context
 snapshot; never replace it with a lossy summary. Recipe + Nutrition owns Foundry IQ
-recipe retrieval, USDA nutrition, and conditional Web IQ. No direct Cosmos access,
+recipe retrieval, USDA nutrition, and conditional Grounding with Bing. No direct Cosmos access,
 arbitrary function, code execution, external URL fetch, or alternative model.
 
-There are at most four model invocations for the whole operation, two specialist
+There are at most four main model invocations, plus at most two backend-owned
+calorie invocations (web first, then tool-free AI estimates for remaining gaps), two specialist
 invocations (initial plus ONE revision), eight total tool calls including retries,
-one Web IQ call, and a 60-second deadline. The backend tracks token usage for
+one ordinary Bing search plus one calorie search, and a 60-second deadline.
+The backend tracks token usage for
 observability, not application-imposed input/output ceilings; the provider's
 model context/output limits still apply.
-The backend may reserve ONE additional model/web invocation solely to estimate
-missing calories after USDA enrichment fails. It may use up to 30 seconds of
+The backend may reserve ONE calorie workflow: a web-first call followed, only if
+needed, by a tool-free AI-knowledge call for remaining missing ingredients.
+Both calls share up to 30 seconds of
 the remaining deadline, leaving final-answer headroom within the same operation. This
 does not authorize another specialist revision, an autonomous search or a retry.
-Conditional Web IQ uses one additional identity-bound model invocation within
+Conditional Grounding with Bing uses one additional identity-bound model invocation within
 these same limits, not an extra allowance. It may leave no budget for a revision.
 Never retry a specialist/service error or an ambiguously completed invocation.
 

@@ -83,11 +83,15 @@ class DeliveryTests(unittest.TestCase):
         from scripts.release import validate_runtime
 
         data: dict[str, Any] = {
-            "schema_version": 4,
+            "schema_version": 5,
             "agents_enabled": True,
             "agents": {
                 "orchestrator": {"name": "orchestrator", "version": "1"},
-                "recipe_nutrition": {"name": "recipe-nutrition", "version": "4"},
+                "recipe_nutrition": {
+                    "name": "recipe-nutrition",
+                    "version": "4",
+                    "calorie_version": "6",
+                },
             },
         }
         with tempfile.TemporaryDirectory() as directory:
@@ -111,6 +115,9 @@ class DeliveryTests(unittest.TestCase):
             ),
         )
         project = MagicMock()
+        calorie = build_recipe_definition(
+            "recipe-model", "approved-policy", phase=RecipePhase.CALORIE
+        )
         project.agents.get.side_effect = [
             SimpleNamespace(
                 state="enabled",
@@ -136,10 +143,21 @@ class DeliveryTests(unittest.TestCase):
                     "metadata": recipe_source_metadata(combined, RecipePhase.COMBINED),
                 }
             ),
+            AgentVersionDetails(
+                {
+                    "name": "recipe-nutrition",
+                    "version": "6",
+                    "status": "active",
+                    "draft": False,
+                    "definition": calorie.as_dict(),
+                    "metadata": recipe_source_metadata(calorie, RecipePhase.CALORIE),
+                }
+            ),
         ]
         project.agents.create_version.side_effect = [
             SimpleNamespace(version="8"),
             SimpleNamespace(version="9"),
+            SimpleNamespace(version="10"),
         ]
         with patch.dict(os.environ, ENV):
             pins = delivery.release_agents(
@@ -147,10 +165,11 @@ class DeliveryTests(unittest.TestCase):
                 agents,
                 "11111111-1111-1111-1111-111111111111",
             )
-        self.assertEqual(project.agents.get_version.call_count, 2)
-        self.assertEqual(project.agents.create_version.call_count, 2)
+        self.assertEqual(project.agents.get_version.call_count, 3)
+        self.assertEqual(project.agents.create_version.call_count, 3)
         self.assertEqual(pins["ASC_FOUNDRY_RECIPE_NUTRITION_MODE"], "combined")
         self.assertEqual(pins["ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION"], "9")
+        self.assertEqual(pins["ASC_FOUNDRY_RECIPE_NUTRITION_CALORIE_AGENT_VERSION"], "10")
         self.assertNotIn("ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION", pins)
         published = project.agents.create_version.call_args_list
         self.assertEqual(published[1].kwargs["definition"], combined)

@@ -39,7 +39,7 @@ const unknownReasons: Record<string, string> = {
 };
 const calorieSources = {
   usda_mcp: "USDA MCP",
-  web_iq: "Web IQ",
+  web_iq: "Grounding with Bing",
   ai_knowledge: "AI knowledge",
 };
 
@@ -175,8 +175,9 @@ export default function RecipeCard({
           (item) => item.source !== "usda_mcp",
         ) && (
           <p>
-            Some calories use Web IQ or AI knowledge estimates because USDA
-            evidence was unavailable. These are approximate, not USDA-verified.
+            Some calories use Grounding with Bing or AI knowledge estimates
+            because USDA evidence was unavailable. These are approximate, not
+            USDA-verified.
           </p>
         )}
         <dl className="recipe-nutrients">

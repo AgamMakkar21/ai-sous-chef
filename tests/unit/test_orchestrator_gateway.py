@@ -65,6 +65,7 @@ def coordination_settings() -> Settings:
         foundry_orchestrator_agent_principal_id=ORCH[0],
         foundry_recipe_nutrition_agent_principal_id=RECIPE[0],
         app_workload_principal_id=APP,
+        foundry_recipe_nutrition_calorie_agent_version="6",
     )
 
 
@@ -336,7 +337,7 @@ def test_publication_creates_reproducible_source_version_under_existing_identity
             "/providers/Microsoft.CognitiveServices/accounts/synthetic/raiPolicies/asc-responsible-ai-v1"
         )
     }
-    assert invocation.kwargs["metadata"]["asc_policy_version"] == "6"
+    assert invocation.kwargs["metadata"]["asc_policy_version"] == "7"
     client.agents.create.assert_not_called()
     assert config.agents_enabled  # No settings or release manifest mutation.
 

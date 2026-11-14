@@ -193,7 +193,7 @@ test("mixed calorie sources are labeled per ingredient and survive history reloa
   ).toBeVisible();
   await expect(
     card(page).getByRole("link", {
-      name: "Web IQ (opens in a new tab)",
+      name: "Grounding with Bing (opens in a new tab)",
       exact: true,
     }),
   ).toHaveAttribute("href", "https://nutrition.example.invalid/carrot");

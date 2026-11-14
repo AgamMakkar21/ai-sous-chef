@@ -161,21 +161,19 @@ def manifest() -> dict[str, dict[str, str]]:
         not isinstance(data, dict)
         or set(data) != {"schema_version", "agents_enabled", "agents"}
         or type(data.get("schema_version")) is not int
-        or data.get("schema_version") not in (2, 3, 4)
+        or data.get("schema_version") not in (2, 3, 4, 5)
         or type(data.get("agents_enabled")) is not bool
         or not isinstance(data.get("agents"), dict)
     ):
         raise DeliveryError(
-            "Use a version-2, version-3 or version-4 manifest with explicit agents_enabled."
+            "Use a version-2 through version-5 manifest with explicit agents_enabled."
         )
     if data["agents_enabled"] is False:
         if data["agents"]:
             raise DeliveryError("Disabled agent releases must have an empty agents mapping.")
         return {}
-    if data["schema_version"] not in (3, 4):
-        raise DeliveryError(
-            "Enabled releases require version-3 phase pins or version-4 combined pins."
-        )
+    if data["schema_version"] not in (3, 4, 5):
+        raise DeliveryError("Enabled releases require phase pins or combined source pins.")
     if set(data["agents"]) != set(ROLES):
         raise DeliveryError("Enabled agent releases must contain both agent roles.")
     agents = data["agents"]
@@ -185,6 +183,8 @@ def manifest() -> dict[str, dict[str, str]]:
         version_fields = (
             ("version",)
             if role == "orchestrator" or data["schema_version"] == 4
+            else ("version", "calorie_version")
+            if data["schema_version"] == 5
             else ("version", "retrieval_version", "web_version")
         )
         if not isinstance(target, dict) or set(target) != {"name", *version_fields}:
@@ -203,7 +203,7 @@ def manifest() -> dict[str, dict[str, str]]:
         if len({target[field] for field in version_fields}) != len(version_fields):
             raise DeliveryError("Pin different specialist source versions for each phase.")
         validated[role] = {"name": name, **{field: target[field] for field in version_fields}}
-        if role == "recipe_nutrition" and data["schema_version"] == 4:
+        if role == "recipe_nutrition" and data["schema_version"] in (4, 5):
             validated[role]["mode"] = "combined"
     if agents[ROLES[0]]["name"] == agents[ROLES[1]]["name"]:
         raise DeliveryError("The two agents must have different runtime names.")
@@ -389,7 +389,9 @@ def release_agents(
             AgentIdentity(AgentRole(role), pin["name"], instance.principal_id, instance.client_id)
         )
         version_fields = tuple(
-            field for field in ("version", "retrieval_version", "web_version") if field in pin
+            field
+            for field in ("version", "retrieval_version", "web_version", "calorie_version")
+            if field in pin
         )
         for field in version_fields:
             source = project.agents.get_version(pin["name"], pin[field])
@@ -416,6 +418,7 @@ def release_agents(
                     "version": RecipePhase.GENERATION,
                     "retrieval_version": RecipePhase.RETRIEVAL,
                     "web_version": RecipePhase.WEB,
+                    "calorie_version": RecipePhase.CALORIE,
                 }[field]
                 if pin.get("mode") == "combined" and field == "version":
                     phase = RecipePhase.COMBINED
@@ -464,6 +467,7 @@ def release_agents(
             "version": "",
             "retrieval_version": "_RETRIEVAL",
             "web_version": "_WEB",
+            "calorie_version": "_CALORIE",
         }[field]
         settings[f"ASC_FOUNDRY_{role.upper()}{phase_label}_AGENT_VERSION"] = version.version
     for identity in identities:
@@ -708,10 +712,12 @@ async def _release_project_client(settings: "Settings") -> AsyncIterator["AsyncO
 async def chat_smoke(deployed: dict[str, str]) -> None:
     """Exercise live release dependencies without reading/writing consumer documents."""
     from sous_chef.adapters.foundry_gateway import FoundryGateway
+    from sous_chef.domain.agent_identity import AgentRole
     from sous_chef.domain.context import RequestContext
     from sous_chef.domain.foundry import FoundryGatewayError
     from sous_chef.domain.orchestrator import OrchestratorError
     from sous_chef.domain.profiles import ExplicitPreferences
+    from sous_chef.domain.recipes import CalorieGroundingRequest
     from sous_chef.services.nutrition import UsdaNutritionTool
     from sous_chef.services.orchestrator import OrchestratorService
     from sous_chef.services.recipe_specialist import RecipeSpecialistService
@@ -784,6 +790,40 @@ async def chat_smoke(deployed: dict[str, str]) -> None:
             != {line.line_id for line in result.recipe.ingredients}
         ):
             raise DeliveryError("Live chat did not produce a recipe with USDA-backed nutrition.")
+        if settings.foundry_recipe_nutrition_calorie_agent_version is not None:
+            ingredients = [
+                {
+                    "ingredientLineId": line.line_id,
+                    "name": line.name,
+                    "quantity": float(line.quantity) if line.quantity is not None else None,
+                    "unit": line.unit,
+                }
+                for line in result.recipe.ingredients
+            ]
+            query = "calories for the specified ingredient quantities"
+            recovery = CalorieGroundingRequest(
+                role=AgentRole.RECIPE_NUTRITION,
+                prompt=json.dumps(
+                    {
+                        "purpose": "calorie_fallback",
+                        "useWeb": False,
+                        "query": query,
+                        "ingredients": ingredients,
+                    },
+                    separators=(",", ":"),
+                ),
+                query=query,
+                ingredient_line_ids=tuple(line.line_id for line in result.recipe.ingredients),
+                use_web=False,
+            )
+            async with asyncio.timeout(30):
+                estimates, _ = await gateway.estimate_calories(recovery)
+            if {item.ingredient_line_id for item in estimates} != set(
+                recovery.ingredient_line_ids
+            ) or any(
+                item.source != "ai_knowledge" or item.reference is not None for item in estimates
+            ):
+                raise DeliveryError("Live calorie recovery did not produce attributed estimates.")
     except (ConfigurationError, FoundryGatewayError, OrchestratorError, TimeoutError):
         raise DeliveryError(
             "Live chat dependency check failed; inspect safe operational logs."

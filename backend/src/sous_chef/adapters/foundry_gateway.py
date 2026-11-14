@@ -186,6 +186,11 @@ class FoundryGateway:
             RecipePhase.GENERATION: self._targets[AgentRole.RECIPE_NUTRITION],
             RecipePhase.COMBINED: self._targets[AgentRole.RECIPE_NUTRITION],
         }
+        if settings.foundry_recipe_nutrition_calorie_agent_version is not None:
+            self._recipe_targets[RecipePhase.CALORIE] = AgentTarget(
+                settings.foundry_recipe_nutrition_agent_name,
+                settings.foundry_recipe_nutrition_calorie_agent_version,
+            )
         if settings.foundry_recipe_nutrition_mode == "phased":
             assert settings.foundry_recipe_nutrition_retrieval_agent_version is not None
             assert settings.foundry_recipe_nutrition_web_agent_version is not None
@@ -265,6 +270,8 @@ class FoundryGateway:
         self, request: CalorieGroundingRequest
     ) -> tuple[tuple[CalorieEstimate, ...], TokenUsage]:
         self._require_agent_pins()
+        if not request.use_web and RecipePhase.CALORIE not in self._recipe_targets:
+            raise FoundryGatewayError(FoundryFailure.UNAVAILABLE, request)
         return await self._execute(request, self._calorie_result)
 
     @observed(Operation.FOUNDRY)
@@ -275,7 +282,9 @@ class FoundryGateway:
         coordination: CoordinationRequest | None = None,
     ) -> Result:
         target = (
-            self._recipe_targets[RecipePhase.COMBINED]
+            self._recipe_targets[RecipePhase.CALORIE]
+            if isinstance(request, CalorieGroundingRequest) and not request.use_web
+            else self._recipe_targets[RecipePhase.COMBINED]
             if isinstance(request, CombinedRecipeGenerationRequest)
             or (
                 isinstance(request, CalorieGroundingRequest)
@@ -340,6 +349,8 @@ class FoundryGateway:
                         }
                         if coordination is not None:
                             body.update(self._coordination_body(coordination))
+                        elif isinstance(request, CalorieGroundingRequest) and not request.use_web:
+                            body.update(self._recipe_body())
                         elif isinstance(request, WebGroundingRequest):
                             body.update(self._web_body())
                         elif isinstance(request, GroundedRecipeGenerationRequest):
@@ -430,7 +441,7 @@ class FoundryGateway:
         draft, _, usage = self._web_evidence(
             request,
             response,
-            combined=self._settings.foundry_recipe_nutrition_mode == "combined",
+            combined=self._settings.foundry_recipe_nutrition_mode == "combined" and request.use_web,
         )
         ids = [item.ingredient_line_id for item in draft.calorie_estimates]
         if (
@@ -450,18 +461,23 @@ class FoundryGateway:
         calls = [item for item in response.output if item.type == "web_search_call"]
         messages = [item for item in response.output if item.type == "message"]
         listings = [item for item in response.output if item.type == "mcp_list_tools"]
+        use_web = not isinstance(request, CalorieGroundingRequest) or request.use_web
         allowed = {"reasoning", "message", "web_search_call"}
         if combined:
             allowed.add("mcp_list_tools")
         if (
-            len(calls) != 1
+            len(calls) != int(use_web)
             or len(messages) != 1
             or len(listings) > 1
             or any(item.type not in allowed for item in response.output)
         ):
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
-        call = calls[0]
-        if call.status == "failed" and not isinstance(request, CalorieGroundingRequest):
+        call = calls[0] if calls else None
+        if (
+            call is not None
+            and call.status == "failed"
+            and not isinstance(request, CalorieGroundingRequest)
+        ):
             raise FoundryGatewayError(FoundryFailure.UNAVAILABLE, request)
         try:
             if listings:
@@ -477,29 +493,35 @@ class FoundryGateway:
                     [],
                 )
             usage = response.usage
-            action = call.action
+            action = call.action if call is not None else None
             message = messages[0]
             if (
                 usage is None
-                or call.status
-                not in (
-                    {"completed", "failed"}
-                    if isinstance(request, CalorieGroundingRequest)
-                    else {"completed"}
-                )
-                or action.type != "search"
-                or (action.queries if action.queries is not None else [action.query])
-                != [
-                    request.query
-                    if isinstance(request, CalorieGroundingRequest)
-                    else request.prompt
-                ]
-                or action.query
-                not in (
-                    None,
-                    request.query
-                    if isinstance(request, CalorieGroundingRequest)
-                    else request.prompt,
+                or (
+                    call is not None
+                    and (
+                        call.status
+                        not in (
+                            {"completed", "failed"}
+                            if isinstance(request, CalorieGroundingRequest)
+                            else {"completed"}
+                        )
+                        or action is None
+                        or action.type != "search"
+                        or (action.queries if action.queries is not None else [action.query])
+                        != [
+                            request.query
+                            if isinstance(request, CalorieGroundingRequest)
+                            else request.prompt
+                        ]
+                        or action.query
+                        not in (
+                            None,
+                            request.query
+                            if isinstance(request, CalorieGroundingRequest)
+                            else request.prompt,
+                        )
+                    )
                 )
                 or message.status != "completed"
                 or len(message.content) != 1
@@ -508,11 +530,18 @@ class FoundryGateway:
                 > (30 if isinstance(request, CalorieGroundingRequest) else 10)
                 or len(response.output_text)
                 > (65536 if isinstance(request, CalorieGroundingRequest) else 16000)
-                or len(action.sources or [])
-                > (30 if isinstance(request, CalorieGroundingRequest) else 20)
+                or (
+                    action is not None
+                    and action.type == "search"
+                    and len(action.sources or [])
+                    > (30 if isinstance(request, CalorieGroundingRequest) else 20)
+                )
+                or (not use_web and message.content[0].annotations)
             ):
                 raise ValueError
-            raw_evidence = call.model_dump_json() + message.model_dump_json()
+            raw_evidence = (
+                call.model_dump_json() if call is not None else ""
+            ) + message.model_dump_json()
             if len(raw_evidence) > (
                 131072 if isinstance(request, CalorieGroundingRequest) else 65536
             ):
@@ -524,7 +553,11 @@ class FoundryGateway:
                 draft = WebDraft(claims=(), calorie_estimates=output.calorie_estimates)
             else:
                 draft = WebDraft.model_validate_json(response.output_text)
-            searched = {source.url for source in action.sources or []}
+            searched = (
+                {source.url for source in action.sources or []}
+                if action is not None and action.type == "search"
+                else set()
+            )
             native: dict[str, str] = {}
             for annotation in message.content[0].annotations:
                 if (
@@ -541,7 +574,7 @@ class FoundryGateway:
                 item.reference for item in draft.calorie_estimates if item.source == "web_iq"
             }
             if not (set(urls) | references) <= searched & native.keys() or (
-                call.status == "failed" and (urls or references)
+                call is not None and call.status == "failed" and (urls or references)
             ):
                 raise ValueError
             return (
