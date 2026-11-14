@@ -24,7 +24,12 @@ from sous_chef.domain.orchestrator import (
     TokenUsage,
 )
 from sous_chef.domain.recipe_safety import UNABLE
-from sous_chef.domain.recipes import CalorieEstimate, CalorieGroundingRequest, StructuredRecipe
+from sous_chef.domain.recipes import (
+    CalorieEstimate,
+    CalorieGroundingRequest,
+    NutrientGroundingRequest,
+    StructuredRecipe,
+)
 from sous_chef.orchestrator_definition import specialist_tool
 from sous_chef.services import orchestrator, recipe_specialist
 from sous_chef.services.context import _encoding
@@ -121,6 +126,95 @@ def calorie_response(payload: dict[str, Any], *, combined: bool = False) -> dict
         )
         response["usage"]["input_tokens"] = 11304
     return response
+
+
+def nutrient_response(payload: dict[str, Any], *, combined: bool = False) -> dict[str, Any]:
+    request = json.loads(payload["input"])
+    response = web_response()
+    response["output"][0]["action"]["query"] = request["query"]
+    response["output"][1]["content"][0]["text"] = json.dumps(
+        {
+            **({"recipe": None} if combined else {"claims": []}),
+            "calorieEstimates": [],
+            "nutrientEstimates": [
+                {
+                    "ingredientLineId": item["ingredientLineId"],
+                    "nutrients": [
+                        {
+                            "name": name,
+                            "amount": 100 if name == "energy" else 3,
+                            "unit": "kcal"
+                            if name == "energy"
+                            else "mg"
+                            if name == "sodium"
+                            else "g",
+                        }
+                        for name in item["missingNutrients"]
+                    ],
+                    "source": "web_iq",
+                    "reference": URL,
+                    "basis": "Synthetic cited nutrients for the entire specified portion.",
+                }
+                for item in request["ingredients"]
+            ],
+        }
+    )
+    return response
+
+
+@pytest.mark.parametrize(
+    "fault", ["none", "citation", "invented_source", "unrequested", "wrong_unit"]
+)
+def test_nutrient_fallback_requires_native_sources_and_only_requested_gaps(fault: str) -> None:
+    prompt = json.dumps(
+        {
+            "purpose": "nutrition_fallback",
+            "useWeb": True,
+            "query": "protein nutrition for rice",
+            "ingredients": [
+                {
+                    "ingredientLineId": "rice",
+                    "name": "rice",
+                    "quantity": 100,
+                    "unit": "g",
+                    "missingNutrients": ["protein"],
+                }
+            ],
+        }
+    )
+    response = nutrient_response({"input": prompt}, combined=True)
+    content = response["output"][-1]["content"][0]
+    output = json.loads(content["text"])
+    if fault == "citation":
+        content["annotations"] = []
+    elif fault == "invented_source":
+        output["nutrientEstimates"][0]["reference"] = "https://invented.example.invalid"
+    elif fault == "unrequested":
+        output["nutrientEstimates"][0]["nutrients"][0]["name"] = "fat"
+    elif fault == "wrong_unit":
+        output["nutrientEstimates"][0]["nutrients"][0]["unit"] = "mg"
+    content["text"] = json.dumps(output)
+    transport = Harness(body=response)
+    gateway = FoundryGateway(
+        configuration(
+            foundry_recipe_nutrition_mode="combined", foundry_recipe_nutrition_agent_version="4"
+        ),
+        client_factory=transport.factory,
+    )
+    request = NutrientGroundingRequest(
+        role=AgentRole.RECIPE_NUTRITION,
+        prompt=prompt,
+        query="protein nutrition for rice",
+        ingredient_line_ids=("rice",),
+        missing_nutrients={"rice": ("protein",)},
+    )
+    if fault == "none":
+        estimates, _ = asyncio.run(gateway.estimate_nutrients(request))
+        assert estimates[0].nutrients[0].name == "protein"
+    else:
+        with pytest.raises(FoundryGatewayError) as caught:
+            asyncio.run(gateway.estimate_nutrients(request))
+        assert caught.value.code == FoundryFailure.INVALID_RESULT
 
 
 @pytest.mark.parametrize("combined", [False, True])
@@ -328,7 +422,7 @@ def test_calorie_fallback_validates_native_web_sources_and_distinguishes_ai_know
     assert len(transport.requests) == 1
     payload = json.loads(transport.requests[0].content)
     assert payload["agent_reference"]["version"] == ("4" if combined else "5")
-    assert payload["store"] is False and payload["max_tool_calls"] == 1
+    assert payload["store"] is False and payload["max_tool_calls"] == (2 if combined else 1)
     assert not {"model", "tools", "text", "instructions"} & payload.keys()
 
 
@@ -526,7 +620,9 @@ class WebHarness(Harness):
         kind = self.request_kind(payload)
         if kind in {"web_search", "calorie"}:
             self.body = (
-                calorie_response(payload)
+                nutrient_response(payload)
+                if payload["input"].startswith('{"purpose":"nutrition_fallback"')
+                else calorie_response(payload)
                 if payload["input"].startswith('{"purpose":"calorie_fallback"')
                 else self.web
             )
@@ -597,7 +693,7 @@ class CombinedHarness(WebHarness):
     @staticmethod
     def request_kind(payload: dict[str, Any]) -> str:
         if isinstance(payload["input"], str) and payload["input"].startswith(
-            '{"purpose":"calorie_fallback"'
+            ('{"purpose":"calorie_fallback"', '{"purpose":"nutrition_fallback"')
         ):
             return "web_search"
         return (
@@ -614,7 +710,11 @@ class CombinedHarness(WebHarness):
                 {"query_variants": [retrieval_query(self.data, self.arguments)]}
             )
         if self.request_kind(payload) == "web_search":
-            self.body = calorie_response(payload, combined=True)
+            self.body = (
+                nutrient_response(payload, combined=True)
+                if payload["input"].startswith('{"purpose":"nutrition_fallback"')
+                else calorie_response(payload, combined=True)
+            )
         elif self.request_kind(payload) == "combined":
             self.body = copy.deepcopy(self.combined)
             for item in self.body["output"]:
@@ -642,8 +742,8 @@ class CombinedHarness(WebHarness):
         return await Harness.handle(self, request)
 
 
-@pytest.mark.parametrize("fault", ["invalid_json", "unattributed", "partial", "empty"])
-def test_full_orchestration_recovers_missing_calories_without_ingredient_rules(
+@pytest.mark.parametrize("fault", ["none", "invalid_json", "unattributed", "partial", "empty"])
+def test_full_orchestration_requires_web_evidence_for_all_missing_nutrients(
     fault: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     configure_safe_telemetry()
@@ -683,14 +783,15 @@ def test_full_orchestration_recovers_missing_calories_without_ingredient_rules(
         adaptations=[],
     )
     content["text"] = json.dumps(draft)
-    original = calorie_response
+    original = nutrient_response
+    calorie_original = calorie_response
     requests = []
 
     def respond(payload: dict[str, Any], *, combined: bool = False) -> dict[str, Any]:
         data = json.loads(payload["input"])
         requests.append(data)
         response = original(payload, combined=combined)
-        if not data["useWeb"]:
+        if fault == "none":
             return response
         message = response["output"][-1]["content"][0]
         if fault == "invalid_json":
@@ -699,32 +800,37 @@ def test_full_orchestration_recovers_missing_calories_without_ingredient_rules(
             message["annotations"] = []
         else:
             output = json.loads(message["text"])
-            output["calorieEstimates"] = output["calorieEstimates"][
+            output["nutrientEstimates"] = output["nutrientEstimates"][
                 : 1 if fault == "partial" else 0
             ]
             message["text"] = json.dumps(output)
         return response
 
-    monkeypatch.setattr("test_web_grounding.calorie_response", respond)
-    result = asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
-    assert result.status == "candidate" and result.recipe is not None
-    nutrition = result.recipe.nutrition
-    energy = next(item for item in nutrition.coverage if item.name == "energy")
-    assert energy.status == "known" and not energy.unknown_ingredient_line_ids
-    assert {item.ingredient_line_id for item in nutrition.ingredient_calories} == {
-        item["lineId"] for item in ingredients
-    }
-    assert [request["useWeb"] for request in requests] == [True, False]
-    assert len(requests[1]["ingredients"]) == (8 if fault == "partial" else 9)
-    if fault == "partial":
-        assert nutrition.ingredient_calories[0].source == "web_iq"
-        assert "food0" not in {item["ingredientLineId"] for item in requests[1]["ingredients"]}
-    assert all(
-        item.source == "ai_knowledge" and item.reference is None
-        for item in nutrition.ingredient_calories[(1 if fault == "partial" else 0) :]
-    )
-    assert all("energy" not in item.unknown_nutrients for item in nutrition.unknown_components)
-    assert "PRIVATE_CANARY" not in result.recipe.model_dump_json() + caplog.text
+    def recover(payload: dict[str, Any], *, combined: bool = False) -> dict[str, Any]:
+        requests.append(json.loads(payload["input"]))
+        return calorie_original(payload, combined=combined)
+
+    monkeypatch.setattr("test_web_grounding.nutrient_response", respond)
+    monkeypatch.setattr("test_web_grounding.calorie_response", recover)
+    if fault == "none":
+        result = asyncio.run(
+            OrchestratorService(harness.gateway, harness.service).run(harness.data)
+        )
+        assert result.status == "candidate" and result.recipe is not None
+        nutrition = result.recipe.nutrition
+        assert nutrition.status == "known" and not nutrition.unknown_components
+        assert {item.ingredient_line_id for item in nutrition.nutrient_estimates} == {
+            item["lineId"] for item in ingredients
+        }
+        assert all(item.source == "web_iq" for item in nutrition.ingredient_calories)
+        assert [request["useWeb"] for request in requests] == [True]
+    else:
+        with pytest.raises(OrchestratorError) as caught:
+            asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
+        assert caught.value.code == OrchestratorFailure.SPECIALIST_FAILED
+        assert [request["useWeb"] for request in requests] == [True, False]
+        assert len(requests[1]["ingredients"]) == (8 if fault == "partial" else 9)
+    assert "PRIVATE_CANARY" not in caplog.text
 
 
 def test_vague_quantity_uses_one_minimized_native_search_then_real_usda_mcp() -> None:
@@ -783,7 +889,7 @@ def test_vague_quantity_uses_one_minimized_native_search_then_real_usda_mcp() ->
     assert StructuredRecipe.model_validate_json(recipe.model_dump_json(by_alias=True)) == recipe
 
 
-def test_empty_quantity_search_keeps_phased_recipe_and_explicit_missing_quantity() -> None:
+def test_empty_quantity_search_uses_nutrient_fallback_without_changing_quantity() -> None:
     harness = WebHarness(use_web=False)
     harness.data = harness.data.model_copy(
         update={"current_request": "Make dinner with some rice."}
@@ -801,11 +907,9 @@ def test_empty_quantity_search_keeps_phased_recipe_and_explicit_missing_quantity
     recipe = harness.generate().recipe
     assert recipe is not None and recipe.web_grounding is None
     assert recipe.ingredients[0].quantity is None
-    assert any(
-        component.ingredient_line_id == "rice" and component.reason == "missing_quantity"
-        for component in recipe.nutrition.unknown_components
-    )
-    assert len(harness.requests) == 3  # Public quantity search, recipe, calorie fallback.
+    assert recipe.nutrition.status == "known" and not recipe.nutrition.unknown_components
+    assert any(item.ingredient_line_id == "rice" for item in recipe.nutrition.nutrient_estimates)
+    assert len(harness.requests) == 3
     assert any(item.source != "usda_mcp" for item in recipe.nutrition.ingredient_calories)
 
 

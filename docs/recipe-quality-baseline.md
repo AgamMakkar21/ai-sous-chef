@@ -5,6 +5,12 @@ judge scores and human calibration were not measured.** The user authorized
 offline implementation/testing only; no Azure evaluation, deployment or agent
 publication occurred. `quality_passed` remains `false`.
 
+This is a historical result. The current complete-nutrition contract makes the
+`missing-nutrition` scenario a controlled failure if no source-backed fallback
+can fill the gaps; it no longer returns a candidate with unavailable nutrition.
+New captures record USDA-first web nutrient estimates separately and include
+them in the factual provenance and bounded fallback checks.
+
 ## Reproducible evidence
 
 Run `python -m scripts.evaluate_quality --output artifacts\quality-evaluation\offline-v1`

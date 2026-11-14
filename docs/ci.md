@@ -97,7 +97,10 @@ does not replace branch protection: repository owners must still enforce the
 required checks and peer review to prevent broken changes from being merged.
 The existing test job covers transient USDA failures through the real stdio MCP
 server and chat persistence, including idempotent resends. Agent-enabled delivery
-also requires a live synthetic recipe with USDA-backed nutrition.
+also requires a live synthetic recipe with complete attributed nutrition: USDA
+first, then Bing-grounded estimates for any missing nutrients. Every nutrient must
+have evidence, but every ingredient does not need a USDA mapping. The existing
+tool-free recovery is calorie-only and cannot fill missing macros.
 
 ## Owner: enable required checks after a successful run
 

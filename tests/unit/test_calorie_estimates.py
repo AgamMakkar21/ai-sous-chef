@@ -6,8 +6,19 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 from sous_chef.domain.recipe_safety import render_recipe
-from sous_chef.domain.recipes import CalorieEstimate, NutritionEvidence, StructuredRecipe
-from sous_chef.services.calorie_estimates import calorie_request, with_calorie_estimates
+from sous_chef.domain.recipes import (
+    CalorieEstimate,
+    IngredientNutrientEstimate,
+    Nutrient,
+    NutritionEvidence,
+    StructuredRecipe,
+)
+from sous_chef.services.calorie_estimates import (
+    calorie_request,
+    nutrient_request,
+    with_calorie_estimates,
+    with_nutrient_estimates,
+)
 from sous_chef.services.nutrition import UsdaNutritionTool
 from test_recipe_safety import full_recipe
 from test_usda_nutrition import config, ingredient, request
@@ -20,6 +31,53 @@ def partial() -> NutritionEvidence:
     return asyncio.run(
         UsdaNutritionTool(config("fail_carrot")).lookup(payload, deadline=monotonic() + 10)
     )
+
+
+def test_web_fallback_fills_all_missing_nutrients_without_replacing_usda() -> None:
+    evidence = partial()
+    payload = request(ingredient(), ingredient("carrot", 150, line_id="carrot"))
+    fallback = nutrient_request(payload, evidence, operation_id=uuid4())
+    assert fallback is not None
+    assert set(fallback.missing_nutrients) == {"carrot"}
+    assert set(fallback.missing_nutrients["carrot"]) == {item.name for item in evidence.coverage}
+    estimate = IngredientNutrientEstimate(
+        ingredient_line_id="carrot",
+        nutrients=tuple(
+            Nutrient(
+                name=item.name,
+                amount=60 if item.name == "energy" else 3,
+                unit=("kcal" if item.name == "energy" else "mg" if item.name == "sodium" else "g"),
+            )
+            for item in evidence.coverage
+        ),
+        reference="https://source.example.invalid/nutrition",
+        basis="Synthetic cited nutrients for the full 150 g portion.",
+    )
+    merged = with_nutrient_estimates(evidence, (estimate,))
+    assert merged.status == "known"
+    assert not merged.unknown_components
+    assert all(not item.unknown_ingredient_line_ids for item in merged.coverage)
+    assert merged.mappings == evidence.mappings and merged.sources == evidence.sources
+    assert merged.ingredient_calories[0] == evidence.ingredient_calories[0]
+    assert merged.ingredient_calories[1].source == "web_iq"
+    assert {item.name for item in merged.nutrient_estimates[0].nutrients} == {
+        "protein",
+        "carbohydrate",
+        "fat",
+        "fiber",
+        "sodium",
+    }
+    assert next(item.amount for item in merged.nutrients if item.name == "protein") == (
+        next(item.amount for item in evidence.nutrients if item.name == "protein") + 1.5
+    )
+    with pytest.raises(ValueError, match="never replace"):
+        with_nutrient_estimates(
+            evidence, (estimate.model_copy(update={"ingredient_line_id": "rice"}),)
+        )
+    corrupted = merged.model_dump()
+    corrupted["nutrients"][1]["amount"] = 999
+    with pytest.raises(ValidationError, match="totals must include"):
+        NutritionEvidence.model_validate(corrupted)
 
 
 def test_fallback_preserves_usda_values_and_only_fills_missing_calories() -> None:
@@ -53,6 +111,44 @@ def test_fallback_preserves_usda_values_and_only_fills_missing_calories() -> Non
     corrupted = merged.model_dump()
     corrupted["nutrients"][0]["amount"] = 999
     with pytest.raises(ValidationError, match="totals must match"):
+        NutritionEvidence.model_validate(corrupted)
+
+
+@pytest.mark.parametrize("serving_basis", ["per_serving", "whole_recipe"])
+def test_web_only_nutrient_totals_use_the_whole_portion_and_cannot_be_inflated(
+    serving_basis: str,
+) -> None:
+    evidence = asyncio.run(
+        UsdaNutritionTool(config("error")).lookup(
+            request().model_copy(update={"allow_estimates": True}), deadline=monotonic() + 10
+        )
+    ).model_copy(update={"serving_basis": serving_basis})
+    estimate = IngredientNutrientEstimate(
+        ingredient_line_id="rice",
+        nutrients=tuple(
+            Nutrient(
+                name=item.name,
+                amount=100 if item.name == "energy" else 4,
+                unit="kcal" if item.name == "energy" else "mg" if item.name == "sodium" else "g",
+            )
+            for item in evidence.coverage
+        ),
+        reference="https://source.example.invalid/nutrition",
+        basis="Synthetic cited nutrients for the whole 100 g portion.",
+    )
+    merged = with_nutrient_estimates(evidence, (estimate,))
+    assert merged.status == "known" and not merged.mappings
+    assert next(item.amount for item in merged.nutrients if item.name == "protein") == (
+        2 if serving_basis == "per_serving" else 4
+    )
+    corrupted = merged.model_dump()
+    next(item for item in corrupted["coverage"] if item["name"] == "protein")[
+        "whole_recipe_amount"
+    ] = 8
+    next(item for item in corrupted["nutrients"] if item["name"] == "protein")["amount"] = (
+        4 if serving_basis == "per_serving" else 8
+    )
+    with pytest.raises(ValidationError, match="totals must include"):
         NutritionEvidence.model_validate(corrupted)
 
 

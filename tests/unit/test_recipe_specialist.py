@@ -274,10 +274,10 @@ def test_missing_nutrition_is_not_fabricated_or_reported_as_a_complete_total(sta
     else:
         evidence.update(nutrients=[], mappings=[], sources=[])
     tools.evidence = NutritionEvidence.model_validate_json(json.dumps(evidence))
-    result = run(service)
-    assert result.recipe is not None
-    assert result.recipe.nutrition.status == status
-    assert result.recipe.nutrition.nutrients == tools.evidence.nutrients
+    with pytest.raises(FoundryGatewayError) as caught:
+        run(service)
+    assert caught.value.code == FoundryFailure.NO_RESULTS
+    assert tools.evidence.status == status
 
 
 def test_missing_curated_grounding_stops_before_generation() -> None:
@@ -400,20 +400,11 @@ def test_omitted_inventory_and_raw_cooked_aliases_do_not_become_missing_or_avail
 def test_repeated_ingredient_lines_do_not_reuse_the_same_groceries() -> None:
     draft = copy.deepcopy(FIXTURE["draft"])
     draft["ingredients"][1]["name"] = "rice"
-    service, tools, _ = setup(draft)
-    tools.evidence = NutritionEvidence(
-        status="unavailable",
-        serving_basis="per_serving",
-        servings=2,
-        nutrients=(),
-        mappings=(),
-        sources=(),
-    )
-    recipe = run(service).recipe
-    assert recipe is not None
-    assert recipe.ingredients[0].inventory_status == "available"
-    assert recipe.ingredients[1].inventory_status == "missing"
-    assert recipe.shopping_items[0].quantity == Decimal(50)
+    model = RecipeDraft.model_validate_json(json.dumps(draft))
+    ingredients, shopping = _inventory(model.ingredients, cooking_context())
+    assert ingredients[0].inventory_status == "available"
+    assert ingredients[1].inventory_status == "missing"
+    assert shopping[0].quantity == Decimal(50)
 
 
 @pytest.mark.parametrize("name", ["regional spice blend", "unlisted grain", "\u98df\u6750"])

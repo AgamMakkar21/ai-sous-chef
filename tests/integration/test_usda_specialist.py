@@ -402,9 +402,8 @@ def test_malformed_usda_or_fallback_evidence_is_not_accepted(mode: str, model_ca
             run(service)
         assert caught.value.code == FoundryFailure.INVALID_RESULT
     else:
-        # This fixture repeats recipe JSON for fallback, not valid calorie evidence.
-        recipe = run(service).recipe
-        assert recipe is not None and recipe.nutrition.status == "unavailable"
-        assert not recipe.nutrition.nutrients and not recipe.nutrition.ingredient_calories
-        assert not recipe.nutrition.sources and not recipe.nutrition.mappings
+        # Repeated recipe JSON is not source-backed nutrient fallback evidence.
+        with pytest.raises(FoundryGatewayError) as caught:
+            run(service)
+        assert caught.value.code == FoundryFailure.NO_RESULTS
     assert len(model.requests) == model_calls

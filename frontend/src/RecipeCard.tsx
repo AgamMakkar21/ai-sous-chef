@@ -231,6 +231,35 @@ export default function RecipeCard({
             </ul>
           </>
         )}
+        {!!nutrition.nutrientEstimates?.length && (
+          <>
+            <h5>Web nutrition estimates by ingredient (whole recipe)</h5>
+            <p>
+              Missing USDA nutrients were filled using Grounding with Bing.
+              These are source-backed approximations, not USDA-verified.
+            </p>
+            <ul>
+              {nutrition.nutrientEstimates.map((item) => (
+                <li key={item.ingredientLineId}>
+                  {ingredientName(item.ingredientLineId)}:{" "}
+                  {item.nutrients
+                    .map(
+                      (nutrient) =>
+                        `${nutrientLabels[nutrient.name]}: ${nutrient.amount.toLocaleString()} ${nutrient.unit}`,
+                    )
+                    .join(", ")}
+                  {" / "}
+                  <Reference
+                    reference={item.reference}
+                    label="Grounding with Bing"
+                  />
+                  {" / "}
+                  {item.basis}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
         {!!nutrition.coverage?.some(
           (item) => item.unknownIngredientLineIds.length,
         ) && (

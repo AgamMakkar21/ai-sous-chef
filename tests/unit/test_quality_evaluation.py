@@ -9,7 +9,14 @@ from typing import Any, Literal
 
 import pytest
 from pydantic import HttpUrl, ValidationError
-from sous_chef.domain.recipes import RecipeSourceClaim
+from sous_chef.domain.orchestrator import TokenUsage
+from sous_chef.domain.recipes import (
+    IngredientNutrientEstimate,
+    Nutrient,
+    NutrientGroundingRequest,
+    RecipeSourceClaim,
+)
+from sous_chef.services.nutrition import UsdaNutritionTool
 from sous_chef.settings import ConfigurationError, Settings
 
 from scripts import evaluate_quality, quality_capture
@@ -134,9 +141,10 @@ def test_timeout_and_unavailable_nutrition_are_expected_handling_not_available_f
     observations: list[Observation],
 ) -> None:
     missing, timeout = observations[3:5]
-    assert missing.result is not None and missing.result.recipe is not None
-    assert missing.result.recipe.nutrition.status == "unavailable"
-    assert not missing.result.recipe.nutrition.nutrients
+    assert missing.result is None
+    assert missing.error_code == "orchestrator_specialist_failed"
+    assert missing.trace.nutrition[0].status == "unavailable"
+    assert not missing.trace.nutrition[0].nutrients
     assert timeout.result is None
     assert timeout.error_code == "orchestrator_specialist_failed"
     assert [event.name for event in timeout.trace.tools] == ["foundry_iq", "usda"]
@@ -154,6 +162,53 @@ def test_complete_calibrated_results_can_pass(
     assert result["calibration"]["anchors_passed"]
     assert all(value["pass_rate"] == 1 for value in result["quality"].values())
     assert not scored_report(suite, observations, mode="replay")["quality_passed"]
+
+
+def test_quality_capture_accounts_for_attributed_full_nutrient_fallback(
+    suite: Suite, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from test_usda_nutrition import config
+
+    case = suite.cases[0]
+    gateway = quality_capture.ReplayGateway(case)
+
+    async def estimates(
+        request: NutrientGroundingRequest,
+    ) -> tuple[tuple[IngredientNutrientEstimate, ...], TokenUsage]:
+        return (
+            tuple(
+                IngredientNutrientEstimate(
+                    ingredient_line_id=line_id,
+                    nutrients=tuple(
+                        Nutrient(
+                            name=name,
+                            amount=100 if name == "energy" else 2,
+                            unit="kcal" if name == "energy" else "mg" if name == "sodium" else "g",
+                        )
+                        for name in missing
+                    ),
+                    reference="https://nutrition.example.invalid/portion",
+                    basis="Synthetic cited values for the whole ingredient portion.",
+                )
+                for line_id, missing in request.missing_nutrients.items()
+            ),
+            TokenUsage(input_tokens=100, output_tokens=50),
+        )
+
+    monkeypatch.setattr(gateway, "estimate_nutrients", estimates)
+    monkeypatch.setattr(
+        quality_capture,
+        "dependencies",
+        lambda case, settings: (gateway, UsdaNutritionTool(config("fail_carrot"))),
+    )
+    observation = asyncio.run(capture(case, suite.defaults, None))
+    assert observation.result is not None and observation.result.recipe is not None
+    assert observation.result.recipe.nutrition.status == "known"
+    assert observation.trace.fallback_model_attempts == 1
+    assert observation.trace.nutrient_estimates
+    assert all(item.status == "pass" for item in factual_checks(suite, case, observation).values())
+    observation.trace.nutrient_estimates.clear()
+    assert factual_checks(suite, case, observation)["nutrition_provenance"].status == "fail"
 
 
 @pytest.mark.parametrize("failure", ["missing-case", "duplicate-case", "foreign-case"])

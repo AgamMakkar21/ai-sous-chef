@@ -36,6 +36,7 @@ from sous_chef.domain.recipes import (
     CombinedRecipeGenerator,
     DraftIngredient,
     GroundedRecipeGenerationRequest,
+    NutrientGroundingRequest,
     NutritionRequest,
     NutritionTool,
     RecipeGenerationRequest,
@@ -48,7 +49,12 @@ from sous_chef.domain.recipes import (
     StructuredRecipe,
     WebGroundingRequest,
 )
-from sous_chef.services.calorie_estimates import calorie_request, with_calorie_estimates
+from sous_chef.services.calorie_estimates import (
+    calorie_request,
+    nutrient_request,
+    with_calorie_estimates,
+    with_nutrient_estimates,
+)
 from sous_chef.services.quantity_estimates import recipe_quantity_estimates
 from sous_chef.services.recipe_grounding import recipe_knowledge_arguments, retrieval_query
 from sous_chef.services.web_grounding import public_web_query
@@ -327,13 +333,21 @@ class RecipeSpecialistService:
                         deadline - 2, monotonic() + POLICY.calorie_deadline_seconds
                     )
                     for use_web in (True, False):
-                        fallback = calorie_request(
-                            nutrition_request,
-                            evidence,
-                            operation_id=operation_id,
-                            max_input_tokens=None,
-                            max_output_tokens=None,
-                            use_web=use_web,
+                        fallback = (
+                            nutrient_request(
+                                nutrition_request,
+                                evidence,
+                                operation_id=operation_id,
+                            )
+                            if use_web
+                            else calorie_request(
+                                nutrition_request,
+                                evidence,
+                                operation_id=operation_id,
+                                max_input_tokens=None,
+                                max_output_tokens=None,
+                                use_web=use_web,
+                            )
                         )
                         if fallback is None:
                             break
@@ -348,27 +362,32 @@ class RecipeSpecialistService:
                         budget.model(calorie_fallback=True)
                         try:
                             async with asyncio.timeout_at(fallback_deadline):
-                                estimates, fallback_usage = await self._generator.estimate_calories(
-                                    fallback
-                                )
+                                if isinstance(fallback, NutrientGroundingRequest):
+                                    (
+                                        nutrient_estimates,
+                                        fallback_usage,
+                                    ) = await self._generator.estimate_nutrients(fallback)
+                                    merged = with_nutrient_estimates(evidence, nutrient_estimates)
+                                else:
+                                    (
+                                        estimates,
+                                        fallback_usage,
+                                    ) = await self._generator.estimate_calories(fallback)
+                                    merged = with_calorie_estimates(evidence, estimates)
                             budget.usage(fallback_usage, calorie_fallback=True)
-                            if len(estimates) < len(fallback.ingredient_line_ids):
+                            if merged.status != "known":
                                 operational_event(
                                     Event.CALORIE_FALLBACK_UNAVAILABLE,
                                     category=ErrorCategory.FOUNDRY_NO_RESULTS,
                                 )
-                            try:
-                                merged = with_calorie_estimates(evidence, estimates)
-                            except ValueError:
-                                raise FoundryGatewayError(
-                                    FoundryFailure.INVALID_RESULT, fallback
-                                ) from None
                             evidence = merged
-                        except (TimeoutError, FoundryGatewayError) as error:
+                        except (TimeoutError, FoundryGatewayError, ValueError) as error:
                             code = (
                                 error.code
                                 if isinstance(error, FoundryGatewayError)
                                 else FoundryFailure.TIMEOUT
+                                if isinstance(error, TimeoutError)
+                                else FoundryFailure.INVALID_RESULT
                             )
                             if code not in {
                                 FoundryFailure.TIMEOUT,
@@ -383,6 +402,8 @@ class RecipeSpecialistService:
                                 Event.CALORIE_FALLBACK_UNAVAILABLE,
                                 category=ErrorCategory(code.value),
                             )
+                    if evidence.status != "known":
+                        raise FoundryGatewayError(FoundryFailure.NO_RESULTS, request)
                     ingredients, shopping = _inventory(draft.ingredients, context)
                     recipe = StructuredRecipe(
                         **draft.model_dump(exclude={"ingredients"}),
