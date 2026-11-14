@@ -347,10 +347,15 @@ def test_calorie_allowance_does_not_consume_the_final_answers_original_headroom(
     budget.model(calorie_fallback=True)
     assert budget.model_allowance(calorie_fallback=True) == (None, None)
     budget.usage(TokenUsage(input_tokens=16000, output_tokens=8192), calorie_fallback=True)
+    budget.model(calorie_fallback=True)
+    budget.usage(TokenUsage(input_tokens=16000, output_tokens=8192), calorie_fallback=True)
+    with pytest.raises(OrchestratorError):
+        budget.model(calorie_fallback=True)
     budget.model()
     assert budget.model_allowance() == (None, None)
     budget.usage(TokenUsage(input_tokens=16000, output_tokens=1500))
-    assert budget.input_tokens == 48000 and budget.output_tokens == 12692
+    assert budget.input_tokens == 64000 and budget.output_tokens == 20884
+    assert budget.web_calls == 1
     with pytest.raises(OrchestratorError):
         budget.tool("web_iq", calorie_fallback=True)
 

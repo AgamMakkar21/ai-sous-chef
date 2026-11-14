@@ -23,6 +23,7 @@ def calorie_request(
     operation_id: UUID,
     max_input_tokens: int | None,
     max_output_tokens: int | None,
+    use_web: bool = True,
 ) -> CalorieGroundingRequest | None:
     energy = next((item for item in evidence.coverage if item.name == "energy"), None)
     if energy is None:
@@ -53,13 +54,19 @@ def calorie_request(
         role=AgentRole.RECIPE_NUTRITION,
         operation_id=operation_id,
         prompt=json.dumps(
-            {"purpose": "calorie_fallback", "query": query, "ingredients": ingredients},
+            {
+                "purpose": "calorie_fallback",
+                "useWeb": use_web,
+                "query": query,
+                "ingredients": ingredients,
+            },
             separators=(",", ":"),
         ),
         query=query,
         ingredient_line_ids=tuple(str(item["ingredientLineId"]) for item in ingredients),
         max_input_tokens=max_input_tokens,
         max_output_tokens=max_output_tokens,
+        use_web=use_web,
     )
 
 

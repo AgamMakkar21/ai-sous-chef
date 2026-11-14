@@ -55,6 +55,7 @@ class ExecutionBudget:
         self.tool_calls = 0
         self.web_calls = 0
         self.calorie_fallback_calls = 0
+        self.calorie_model_calls = 0
         self.input_tokens = 0
         self.output_tokens = 0
         self.web_allowed = False
@@ -64,7 +65,12 @@ class ExecutionBudget:
 
     def model(self, *, specialist: bool = False, calorie_fallback: bool = False) -> None:
         self.model_allowance(calorie_fallback=calorie_fallback)
-        if self.model_calls >= POLICY.max_model_calls + self.calorie_fallback_calls:
+        if (
+            self.model_calls
+            >= POLICY.max_model_calls + POLICY.max_calorie_model_calls * self.calorie_fallback_calls
+            or calorie_fallback
+            and self.calorie_model_calls >= POLICY.max_calorie_model_calls
+        ):
             self.fail()
         if specialist:
             if self.specialist_calls >= POLICY.max_specialist_calls:
@@ -75,6 +81,8 @@ class ExecutionBudget:
             self.tool_calls += 1
             self.specialist_calls += 1
         self.model_calls += 1
+        if calorie_fallback:
+            self.calorie_model_calls += 1
 
     def model_allowance(self, *, calorie_fallback: bool = False) -> tuple[None, None]:
         self._check_deadline()

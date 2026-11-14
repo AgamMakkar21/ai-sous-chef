@@ -134,7 +134,7 @@ def render_recipe(recipe: StructuredRecipe) -> str:
     )
     if any(item.source != "usda_mcp" for item in recipe.nutrition.ingredient_calories):
         energy = next(item for item in recipe.nutrition.nutrients if item.name == "energy")
-        labels = {"web_iq": "Web IQ", "ai_knowledge": "AI knowledge"}
+        labels = {"web_iq": "Grounding with Bing", "ai_knowledge": "AI knowledge"}
         sources = " / ".join(
             labels[source]
             for source in labels

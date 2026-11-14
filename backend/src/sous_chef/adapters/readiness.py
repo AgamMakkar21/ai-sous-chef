@@ -122,8 +122,15 @@ class LiveReadinessProbe:
                                         RecipePhase.WEB,
                                         settings.foundry_recipe_nutrition_web_agent_version,
                                     ),
+                                    (
+                                        RecipePhase.CALORIE,
+                                        settings.foundry_recipe_nutrition_calorie_agent_version,
+                                    ),
                                 ):
-                                    if settings.foundry_recipe_nutrition_mode == "combined":
+                                    if (
+                                        settings.foundry_recipe_nutrition_mode == "combined"
+                                        and phase != RecipePhase.CALORIE
+                                    ) or (phase == RecipePhase.CALORIE and pin is None):
                                         continue
                                     assert pin is not None
                                     phase_source = await project.agents.get_version(name, pin)

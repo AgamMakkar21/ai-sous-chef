@@ -568,6 +568,7 @@ class CalorieGroundingRequest(WebGroundingRequest):
     prompt: str = Field(min_length=1, max_length=12000, pattern=r"\S", repr=False)
     query: str = Field(min_length=1, max_length=240, pattern=r"\S", repr=False)
     ingredient_line_ids: tuple[LineId, ...] = Field(min_length=1, max_length=30)
+    use_web: bool = True
 
 
 class RecipeGenerator(Protocol):

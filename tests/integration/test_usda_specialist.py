@@ -388,7 +388,7 @@ def test_recipe_uses_only_readonly_source_nutrition_with_exact_mappings(
     assert "99901" not in caplog.text and "rice" not in caplog.text
 
 
-@pytest.mark.parametrize(("mode", "model_calls"), [("malformed", 1), ("timeout", 2)])
+@pytest.mark.parametrize(("mode", "model_calls"), [("malformed", 1), ("timeout", 3)])
 def test_malformed_usda_or_fallback_evidence_is_not_accepted(mode: str, model_calls: int) -> None:
     _, grounding, model = setup()
     gateway = FoundryGateway(coordination_settings(), client_factory=model.factory)

@@ -87,6 +87,8 @@ def web_response() -> dict[str, Any]:
 
 def calorie_response(payload: dict[str, Any], *, combined: bool = False) -> dict[str, Any]:
     request = json.loads(payload["input"])
+    use_web = request.get("useWeb", True)
+    combined = combined and use_web
     response = web_response()
     response["output"][0]["action"]["query"] = request["query"]
     response["output"][1]["content"][0]["text"] = json.dumps(
@@ -96,14 +98,17 @@ def calorie_response(payload: dict[str, Any], *, combined: bool = False) -> dict
                 {
                     "ingredientLineId": item["ingredientLineId"],
                     "amount": 100,
-                    "source": "web_iq" if index == 0 else "ai_knowledge",
-                    "reference": URL if index == 0 else None,
+                    "source": "web_iq" if use_web and index == 0 else "ai_knowledge",
+                    "reference": URL if use_web and index == 0 else None,
                     "basis": "Synthetic fixture portion estimate, not actual nutrition data.",
                 }
                 for index, item in enumerate(request["ingredients"])
             ],
         }
     )
+    if not use_web:
+        response["output"] = response["output"][1:]
+        response["output"][0]["content"][0]["annotations"] = []
     if combined:
         response["output"].insert(
             0,
@@ -116,6 +121,107 @@ def calorie_response(payload: dict[str, Any], *, combined: bool = False) -> dict
         )
         response["usage"]["input_tokens"] = 11304
     return response
+
+
+@pytest.mark.parametrize("combined", [False, True])
+@pytest.mark.parametrize("fault", ["none", "search", "citation", "web_source"])
+def test_knowledge_recovery_requires_tool_free_explicit_ai_attribution(
+    combined: bool, fault: str
+) -> None:
+    prompt = json.dumps(
+        {
+            "purpose": "calorie_fallback",
+            "useWeb": False,
+            "query": "calories for an unfamiliar ingredient",
+            "ingredients": [{"ingredientLineId": "food", "name": "unfamiliar ingredient"}],
+        }
+    )
+    response = calorie_response({"input": prompt}, combined=combined)
+    content = response["output"][-1]["content"][0]
+    if fault == "search":
+        response["output"].insert(0, web_response()["output"][0])
+    elif fault == "citation":
+        content["annotations"] = web_response()["output"][1]["content"][0]["annotations"]
+    elif fault == "web_source":
+        data = json.loads(content["text"])
+        data["calorieEstimates"][0].update(source="web_iq", reference=URL)
+        content["text"] = json.dumps(data)
+    transport = Harness(body=response)
+    gateway = FoundryGateway(
+        configuration(
+            foundry_recipe_nutrition_mode="combined" if combined else "phased",
+            foundry_recipe_nutrition_agent_version="4" if combined else "3",
+            **(
+                {
+                    "foundry_recipe_nutrition_retrieval_agent_version": None,
+                    "foundry_recipe_nutrition_web_agent_version": None,
+                }
+                if combined
+                else {}
+            ),
+        ),
+        client_factory=transport.factory,
+    )
+    request = CalorieGroundingRequest(
+        role=AgentRole.RECIPE_NUTRITION,
+        prompt=prompt,
+        query="calories for an unfamiliar ingredient",
+        ingredient_line_ids=("food",),
+        use_web=False,
+    )
+    if fault == "none":
+        estimates, _ = asyncio.run(gateway.estimate_calories(request))
+        assert estimates[0].source == "ai_knowledge" and estimates[0].reference is None
+        assert json.loads(transport.requests[0].content)["agent_reference"]["version"] == "6"
+    else:
+        with pytest.raises(FoundryGatewayError) as caught:
+            asyncio.run(gateway.estimate_calories(request))
+        assert caught.value.code == FoundryFailure.INVALID_RESULT
+
+
+@pytest.mark.parametrize("fault", ["none", "invalid_json", "missing_ingredient"])
+def test_release_smoke_requires_complete_tool_free_recovery(
+    fault: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sous_chef.services.nutrition import UsdaNutritionTool
+    from test_usda_nutrition import config
+
+    from scripts import deploy_dev
+
+    harness = CombinedHarness(use_web=False)
+    monkeypatch.setattr(deploy_dev, "_release_project_client", harness.factory)
+    monkeypatch.setattr(
+        UsdaNutritionTool, "from_settings", lambda settings: UsdaNutritionTool(config())
+    )
+    settings = configuration(
+        foundry_recipe_nutrition_mode="combined",
+        foundry_recipe_nutrition_agent_version="4",
+    )
+    deployed = {
+        f"ASC_{name.upper()}": str(value).lower() if isinstance(value, bool) else str(value)
+        for name, value in settings.model_dump().items()
+        if value is not None
+    } | {"ASC_USDA_ENABLED": "true"}
+    original = calorie_response
+
+    def recovery_response(payload: dict[str, Any], *, combined: bool = False) -> dict[str, Any]:
+        response = original(payload, combined=combined)
+        content = response["output"][-1]["content"][0]
+        if fault == "invalid_json":
+            content["text"] = "invalid recovery"
+        elif fault == "missing_ingredient":
+            result = json.loads(content["text"])
+            result["calorieEstimates"] = result["calorieEstimates"][:-1]
+            content["text"] = json.dumps(result)
+        return response
+
+    monkeypatch.setitem(globals(), "calorie_response", recovery_response)
+    if fault == "none":
+        asyncio.run(deploy_dev.chat_smoke(deployed))
+    else:
+        with pytest.raises(deploy_dev.DeliveryError):
+            asyncio.run(deploy_dev.chat_smoke(deployed))
+    assert json.loads(harness.requests[-1].content)["agent_reference"]["version"] == "6"
 
 
 @pytest.mark.parametrize(
@@ -408,13 +514,17 @@ class WebHarness(Harness):
                 config.foundry_recipe_nutrition_agent_name,
                 config.foundry_recipe_nutrition_web_agent_version,
             ): "web_search",
+            (
+                config.foundry_recipe_nutrition_agent_name,
+                config.foundry_recipe_nutrition_calorie_agent_version,
+            ): "calorie",
         }
         return kinds[(reference["name"], reference["version"])]
 
     async def handle(self, request: httpx2.Request) -> httpx2.Response:
         payload = json.loads(request.content)
         kind = self.request_kind(payload)
-        if kind == "web_search":
+        if kind in {"web_search", "calorie"}:
             self.body = (
                 calorie_response(payload)
                 if payload["input"].startswith('{"purpose":"calorie_fallback"')
@@ -530,6 +640,91 @@ class CombinedHarness(WebHarness):
             )
             self.body = body(message)
         return await Harness.handle(self, request)
+
+
+@pytest.mark.parametrize("fault", ["invalid_json", "unattributed", "partial", "empty"])
+def test_full_orchestration_recovers_missing_calories_without_ingredient_rules(
+    fault: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    configure_safe_telemetry()
+    harness = CombinedHarness(use_web=False)
+    harness.service = RecipeSpecialistService(harness.gateway, None, api_tool(), combined=True)
+    harness.data = harness.data.model_copy(
+        update={
+            "explicit_preferences": harness.data.explicit_preferences.model_copy(
+                update={"allergies": ()}
+            )
+        }
+    )
+    content = harness.combined["output"][-1]["content"][0]
+    draft = json.loads(content["text"])
+    ingredients = [
+        {
+            "lineId": f"food{index}",
+            "name": f"unfamiliar regional ingredient {index}",
+            "quantity": index + 1,
+            "unit": "g",
+        }
+        for index in range(9)
+    ]
+    draft.update(
+        title="Regional dinner",
+        ingredients=ingredients,
+        instructions=[
+            {
+                "step": 1,
+                "text": "Combine and cook the declared ingredients.",
+                "ingredientLineIds": [item["lineId"] for item in ingredients],
+            }
+        ],
+        substitutions=[],
+        sourceClaims=[],
+        fitReasons=["Fits the requested time."],
+        adaptations=[],
+    )
+    content["text"] = json.dumps(draft)
+    original = calorie_response
+    requests = []
+
+    def respond(payload: dict[str, Any], *, combined: bool = False) -> dict[str, Any]:
+        data = json.loads(payload["input"])
+        requests.append(data)
+        response = original(payload, combined=combined)
+        if not data["useWeb"]:
+            return response
+        message = response["output"][-1]["content"][0]
+        if fault == "invalid_json":
+            message["text"] = "PRIVATE_CANARY invalid optional calorie JSON"
+        elif fault == "unattributed":
+            message["annotations"] = []
+        else:
+            output = json.loads(message["text"])
+            output["calorieEstimates"] = output["calorieEstimates"][
+                : 1 if fault == "partial" else 0
+            ]
+            message["text"] = json.dumps(output)
+        return response
+
+    monkeypatch.setattr("test_web_grounding.calorie_response", respond)
+    result = asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
+    assert result.status == "candidate" and result.recipe is not None
+    nutrition = result.recipe.nutrition
+    energy = next(item for item in nutrition.coverage if item.name == "energy")
+    assert energy.status == "known" and not energy.unknown_ingredient_line_ids
+    assert {item.ingredient_line_id for item in nutrition.ingredient_calories} == {
+        item["lineId"] for item in ingredients
+    }
+    assert [request["useWeb"] for request in requests] == [True, False]
+    assert len(requests[1]["ingredients"]) == (8 if fault == "partial" else 9)
+    if fault == "partial":
+        assert nutrition.ingredient_calories[0].source == "web_iq"
+        assert "food0" not in {item["ingredientLineId"] for item in requests[1]["ingredients"]}
+    assert all(
+        item.source == "ai_knowledge" and item.reference is None
+        for item in nutrition.ingredient_calories[(1 if fault == "partial" else 0) :]
+    )
+    assert all("energy" not in item.unknown_nutrients for item in nutrition.unknown_components)
+    assert "PRIVATE_CANARY" not in result.recipe.model_dump_json() + caplog.text
 
 
 def test_vague_quantity_uses_one_minimized_native_search_then_real_usda_mcp() -> None:

@@ -53,15 +53,16 @@ The frozen policy in `domain/orchestrator.py` is version 6:
 
 | Limit | Value |
 | --- | --- |
-| Total model invocations | 4, plus at most one optional calorie fallback |
+| Total model invocations | 4 main calls, plus at most 2 optional calorie calls |
 | Specialist invocations | 2: initial plus one revision |
 | Total tool calls, including retries and specialist handoffs | 8 |
-| Web IQ | At most one ordinary search plus one calorie fallback; 10-second search ceiling |
+| Grounding with Bing | At most one ordinary search plus one calorie search; 10-second ordinary search ceiling |
 | Whole-operation deadline | 60 seconds, or the earlier caller deadline |
 | Application input/output token ceilings | None; provider model limits apply |
 
-The one optional calorie fallback does not permit additional revisions or extra
-searches beyond that one fallback. Calorie generation can use up to 30 seconds
+The optional calorie fallback permits one web-first call and one tool-free AI
+recovery for remaining gaps, not additional revisions or another search. Both
+calorie calls share up to 30 seconds
 of the remaining operation time, while preserving two seconds for completion.
 
 `ExecutionBudget` is request-local and shared across both specialist attempts.

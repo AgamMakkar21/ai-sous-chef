@@ -26,8 +26,15 @@ web claims) and no calorie estimates; missing-USDA-calorie tasks return a null
 recipe and attributed estimates through that same version. The legacy `phased` mode uses three versions
 under that same identity: tool-free generation, curated retrieval plus generation,
 and isolated Web IQ.
+The native web tool uses Grounding with Bing Search. `web_iq` remains the legacy
+persisted source identifier; it does not select a separate provider. Missing or
+rejected web-first calorie output can be recovered by one `useWeb=false` request
+through a separately pinned `calorie` source on the same specialist identity.
+This recovery source has no tools and `tool_choice=none`; recipe and web sources
+retain `tool_choice=required`. Recovery requires explicit AI-knowledge attribution.
 The backend selects the phase pin; user input cannot select an agent or version.
-Combined mode pins only `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION`; stale legacy
+Combined mode pins `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION` and
+`ASC_FOUNDRY_RECIPE_NUTRITION_CALORIE_AGENT_VERSION`; stale legacy
 retrieval/web settings are not used. Web queries and citations are validated
 after native execution; this mode does not guarantee pre-search privacy isolation.
 See [combined boundaries](recipe-specialist.md#combined-recipe-agent-with-native-web-search).
@@ -56,6 +63,7 @@ Gateway construction requires `ASC_ADAPTER_MODE=live` and these values:
 | `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION` | Explicit combined version, or tool-free generation version in phased mode |
 | `ASC_FOUNDRY_RECIPE_NUTRITION_RETRIEVAL_AGENT_VERSION` | Required only in phased mode |
 | `ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION` | Required only in phased mode |
+| `ASC_FOUNDRY_RECIPE_NUTRITION_CALORIE_AGENT_VERSION` | Separate tool-free recovery source; required by version-5 combined releases |
 | `ASC_FOUNDRY_INVOCATION_TIMEOUT_SECONDS` | Positive finite total deadline, at most 120 seconds; default 60 |
 | `AZURE_CLIENT_ID` | Required in dev/prod: App Service user-assigned managed identity client ID |
 
@@ -66,7 +74,7 @@ In phased mode the three specialist versions must differ. Live readiness reads a
 and verifies their current source fingerprints, policy/phase metadata, exact
 tool configuration and output schemas without invoking a model.
 Combined readiness instead reads the single specialist pin and verifies its
-policy-6 definition, both tools, combined output schema and fingerprint. Merely
+policy-11 definition, both tools, combined output schema and fingerprint. Merely
 adding web search to a policy-5 retrieval source cannot pass those checks.
 
 ASC-25 additionally exposes `coordinate()` for the Orchestrator's strict

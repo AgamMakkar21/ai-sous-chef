@@ -1,6 +1,6 @@
 # Recipe + Nutrition structured output and grounding (ASC-26 / ASC-30 / ASC-34)
 
-This slice implements the GPT-5.4 specialist's version-10 combined source policy, strict
+This slice implements the GPT-5.4 specialist's version-11 combined source policy, strict
 draft/full-recipe schemas, one-call New Foundry generation, backend enrichment,
 identity-bound Foundry IQ recipe retrieval and conditional Web IQ. It does not activate chat
 or an Azure release, save/cook a recipe, or replace
@@ -49,7 +49,7 @@ response is not proof that private data was never searched. This is intentionall
 different from the isolated web phase; do not describe combined mode as providing
 that phase's pre-search privacy isolation.
 
-Combined source policy 10 has its own exact definition/phase/fingerprint checks.
+Combined source policy 12 has its own exact definition/phase/fingerprint checks.
 Manually attaching web search to an older retrieval version is not sufficient:
 the old instructions/output schema and stale fingerprint metadata do not meet
 this contract. Preserve existing agent identities and versions, and publish a
@@ -332,7 +332,7 @@ recipe portion. Only the classified food names leave the application, not the
 surrounding request, other inventory entries, profile, allergies or history.
 Current public information takes priority if both searches are requested. Existing
 one-search, model-call and deadline limits still apply in combined and phased modes.
-This routing requires the policy-6 Orchestrator source described in
+This routing requires the policy-7 Orchestrator source described in
 [Orchestrator](orchestrator.md#backend-limits-and-candidate-validation).
 
 The backend checks cited curated excerpts and native-cited web claims for an
@@ -500,8 +500,11 @@ standalone ingredient lookup retain the USDA-only contract.
 
 USDA is attempted first. Successful ingredient mappings, calories and other
 nutrients are preserved, including when a later ingredient fails. Missing
-calories trigger at most one additional invocation of the same combined
-Recipe + Nutrition version (or the web phase in legacy phased mode).
+calories trigger a web-first invocation of the same combined Recipe + Nutrition
+version (or the web phase in legacy phased mode). If it is rejected, incomplete,
+empty or only covers some ingredients, the backend makes at most one independent,
+tool-free AI-knowledge invocation for the remaining ingredient lines. This is
+not a repeated search and never replaces accepted USDA or web estimates.
 Only recipe ingredient names and quantities enter that invocation; only the
 backend-built public food/calorie query may enter native web search. Safety
 catalog groups are not nutritionally interchangeable: ingredient names are
@@ -514,21 +517,33 @@ food/qualifier allowlist: unfamiliar ingredients retain their actual names and
 food forms. This does not classify unfamiliar foods as allergen-safe or change
 deterministic recipe safety checks.
 
-The calorie task searches once and does not call recipe MCP. It returns kcal for each missing ingredient's
+The web-first calorie task searches once with Foundry's native `WebSearchTool`,
+which uses [Grounding with Bing Search](https://learn.microsoft.com/azure/ai-foundry/agents/how-to/tools/web-search).
+It does not call recipe MCP. It returns kcal for each missing ingredient's
 entire recipe quantity, not per 100 g or per serving. A `web_iq` entry requires
 an actual searched HTTPS URL with a native citation. If source evidence is
 insufficient or the search tool fails, the model may return `ai_knowledge`
 with no citation and explicit assumptions. It cannot claim `usda_mcp`.
-Web pages about USDA are still Web IQ evidence, not a successful MCP lookup.
+The recovery request has `useWeb=false`. It must return only `ai_knowledge`
+entries with null references, no native citations, and no search or recipe MCP
+calls. A separately pinned immutable `calorie` source on the same specialist
+identity has no tools and `tool_choice=none`. Normal recipe/web sources retain
+`tool_choice=required`; recovery cannot weaken their grounding requirements.
+The backend rejects any unrequested recovery tool call.
+Web pages about USDA are still Bing-grounded web evidence, not a successful MCP lookup.
 The backend sums ingredient calories and scales by servings; the card labels
-each ingredient **USDA MCP**, **Web IQ** or **AI knowledge**, links available
+each ingredient **USDA MCP**, **Grounding with Bing** or **AI knowledge**, links available
 references, and warns that fallback values are approximate and not USDA-verified.
 Missing protein/fat/etc. remain unknown. Unknown quantities remain unchanged in
 the recipe; any calorie-portion assumption appears only in the estimate's basis.
 
-The backend reserves ten seconds for this fallback plus two seconds for final
-completion, within the original request deadline. When time remains, calorie
-generation may use up to 30 seconds; it always leaves the final two seconds
+The persisted `web_iq` source/tool identifiers are retained for compatibility
+with existing recipe history; they identify Bing-grounded web evidence, not a
+separate Web IQ provider.
+
+The backend reserves 30 seconds for calorie fallback plus two seconds for final
+completion, within the original request deadline. Both calorie invocations share
+that single 30-second ceiling; recovery never resets it. Fallback leaves the final two seconds
 and never extends the whole-operation deadline. No application input/output token
 ceiling is imposed or sent to the provider, and high reported usage cannot invalidate
 otherwise valid evidence. This does not permit another revision or search.
@@ -540,16 +555,19 @@ reports missing nutrition honestly; no hardcoded success or fabricated citation
 is substituted. Valid subsets are merged without filling omitted lines or
 turning an empty result into zero calories. Malformed/incomplete responses,
 rejected optional calls and invalid attribution are discarded and logged as
-`calorie_fallback_unavailable`; they cannot discard the already-validated recipe
+`calorie_fallback_unavailable`; a failed web-first invocation still permits the
+independent tool-free recovery. If that also fails, the backend must report the
+remaining gap honestly rather than fabricate an amount. Neither failure discards the already-validated recipe
 or existing USDA values. Authentication/configuration failures remain explicit.
 Transient USDA API failure after successful MCP initialization is logged but
 does not prevent startup; initialization/schema/authentication failures remain
 fail-closed. Live release smoke still requires actual known USDA-backed nutrition.
 
 Activation requires publishing and reading back the reviewed `--phase combined`
-source, then pinning its returned `version` in the version-4 dev manifest.
-Delivery verifies and copies that one specialist definition without changing
-identities; readiness verifies the shared schema and policy fingerprint.
+and `--phase calorie` sources, then pinning their returned versions in the version-5
+dev manifest. Delivery verifies and copies both specialist definitions without changing
+identities; readiness verifies their schemas and policy fingerprints. The live
+release smoke requires both USDA-backed chat and complete tool-free calorie recovery.
 Historical phased releases remain available for rollback.
 No runtime tool/schema override is used.
 
@@ -902,8 +920,8 @@ thermometer template to pass the backend.
 
 The specialist and Orchestrator source instructions describe natural recipe
 output and the remaining profile/integrity checks. Source policy versions are
-Orchestrator **5**, Recipe + Nutrition **8**, combined Recipe + Nutrition **10**,
-and isolated web/calorie **9**. These are
+Orchestrator **7**, Recipe + Nutrition **8**, combined Recipe + Nutrition **11**,
+and isolated web/calorie **10**. These are
 policy versions, **not** Foundry agent-version pins. Existing immutable agents
 do not acquire the new instructions when only backend code changes.
 
@@ -968,9 +986,10 @@ ordinary non-web recipes.
 | --- | --- | --- | --- |
 | `generation` | No tools / `none` | Strict `RecipeDraft` | `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION` |
 | `retrieval` | Only recipe MCP / `required` | Strict `RecipeDraft` | `ASC_FOUNDRY_RECIPE_NUTRITION_RETRIEVAL_AGENT_VERSION` |
-| `web` | Only native Web IQ / `required` | Strict `WebDraft` | `ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION` |
+| `web` | Native Bing search / `required` | Strict `WebDraft` | `ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION` |
+| `calorie` | Tool-free AI calorie recovery / `none` | Strict `WebDraft` | `ASC_FOUNDRY_RECIPE_NUTRITION_CALORIE_AGENT_VERSION` |
 
-These are three immutable versions of the same agent, not three identities.
+These are immutable source versions of the same specialist identity.
 Do not enable all tools on a single source and rely on prompt instructions to
 isolate phases. Pinned Responses calls inherit source configuration; they cannot
 send request-time tool overrides alongside `agent_reference`.
@@ -1007,10 +1026,11 @@ try {
 }
 ```
 
-For the current combined design, use `--phase combined` instead of `retrieval`
-in the command above, then verify that returned version with
+For the current combined design, publish `--phase combined` and `--phase calorie`
+in separate approved runs. Verify the combined version with
 `--phase combined --verify-version <printed-version>`. This keeps both native
-web search and recipe MCP on the same agent.
+web search and recipe MCP on the same agent, with a separate tool-free recovery
+source. Verify the recovery version with `--phase calorie --verify-version <printed-version>`.
 
 For legacy phased releases, repeat as separate approved runs with `--phase web` and `--phase generation`.
 Retain each printed numeric version; publication does not assume the next number.
@@ -1030,7 +1050,8 @@ managed-identity-first. An ambiguous publication error must be inspected before
 retrying. The command changes no app runtime flags or release manifest.
 
 The current `deploy/agents.dev.json` candidate pins read-back-verified combined
-source 44 (policy 10) and Orchestrator source 32 in an enabled schema-version-4 release
+source 49 (policy 12), tool-free calorie source 51 (policy 2), and Orchestrator
+source 39 (policy 7) in an enabled schema-version-5 release
 (schema version 3 remains the legacy phased format). Live adapters and final
 safety are composed by the backend; publishing a source or preparing this manifest
 does not deploy that backend or prove end-to-end UI acceptance. Existing manually
