@@ -693,7 +693,8 @@ def smoke(
         summary.write("Health, commit, anonymous-auth rejection and dependency checks passed.\n")
         if enabled:
             summary.write(
-                "Synthetic Orchestrator -> Recipe + Nutrition -> USDA check passed "
+                "Synthetic Orchestrator -> Recipe + Nutrition check passed "
+                "with USDA-first lookup and source-backed nutrient fallback, "
                 "using deployed pins and the delivery identity. "
                 "This is not signed-in UI or app-identity acceptance.\n"
             )
@@ -717,7 +718,7 @@ async def chat_smoke(deployed: dict[str, str]) -> None:
     from sous_chef.domain.foundry import FoundryGatewayError
     from sous_chef.domain.orchestrator import OrchestratorError
     from sous_chef.domain.profiles import ExplicitPreferences
-    from sous_chef.domain.recipes import CalorieGroundingRequest
+    from sous_chef.domain.recipes import NUTRIENT_NAMES, CalorieGroundingRequest
     from sous_chef.services.nutrition import UsdaNutritionTool
     from sous_chef.services.orchestrator import OrchestratorService
     from sous_chef.services.recipe_specialist import RecipeSpecialistService
@@ -781,15 +782,13 @@ async def chat_smoke(deployed: dict[str, str]) -> None:
             result.status != "candidate"
             or result.recipe is None
             or result.recipe.nutrition.status != "known"
-            or not result.recipe.nutrition.mappings
-            or {
-                item.ingredient_line_id
-                for item in result.recipe.nutrition.ingredient_calories
-                if item.source == "usda_mcp"
-            }
+            or {item.name for item in result.recipe.nutrition.nutrients} != set(NUTRIENT_NAMES)
+            or {item.ingredient_line_id for item in result.recipe.nutrition.ingredient_calories}
             != {line.line_id for line in result.recipe.ingredients}
         ):
-            raise DeliveryError("Live chat did not produce a recipe with USDA-backed nutrition.")
+            raise DeliveryError(
+                "Live chat did not produce complete source-backed nutrition after USDA/web lookup."
+            )
         if settings.foundry_recipe_nutrition_calorie_agent_version is not None:
             ingredients = [
                 {

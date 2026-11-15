@@ -55,6 +55,8 @@ from sous_chef.domain.recipes import (
     CombinedRecipeGenerationRequest,
     CombinedRecipeOutput,
     GroundedRecipeGenerationRequest,
+    IngredientNutrientEstimate,
+    NutrientGroundingRequest,
     RecipeDraft,
     RecipeGenerationRequest,
     RecipeGrounding,
@@ -274,6 +276,12 @@ class FoundryGateway:
             raise FoundryGatewayError(FoundryFailure.UNAVAILABLE, request)
         return await self._execute(request, self._calorie_result)
 
+    async def estimate_nutrients(
+        self, request: NutrientGroundingRequest
+    ) -> tuple[tuple[IngredientNutrientEstimate, ...], TokenUsage]:
+        self._require_agent_pins()
+        return await self._execute(request, self._nutrient_result)
+
     @observed(Operation.FOUNDRY)
     async def _execute(
         self,
@@ -404,10 +412,12 @@ class FoundryGateway:
         finally:
             trace_id.reset(token)
 
-    @staticmethod
-    def _web_body() -> dict[str, object]:
+    def _web_body(self) -> dict[str, object]:
+        # Combined sources need this transport allowance; validation still permits one search.
         return {
-            "max_tool_calls": 1,
+            "max_tool_calls": 2
+            if self._settings.foundry_recipe_nutrition_mode == "combined"
+            else 1,
             "store": False,
             "include": ["web_search_call.action.sources"],
         }
@@ -418,7 +428,7 @@ class FoundryGateway:
     ) -> tuple[WebGrounding | None, TokenUsage]:
         draft, native, usage = FoundryGateway._web_evidence(request, response)
         assert isinstance(request, WebGroundingRequest)
-        if draft.calorie_estimates:
+        if draft.calorie_estimates or draft.nutrient_estimates:
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
         if not draft.claims:
             if request.allow_empty:
@@ -446,11 +456,34 @@ class FoundryGateway:
         ids = [item.ingredient_line_id for item in draft.calorie_estimates]
         if (
             draft.claims
+            or draft.nutrient_estimates
             or len(ids) != len(set(ids))
             or not set(ids) <= set(request.ingredient_line_ids)
         ):
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
         return draft.calorie_estimates, usage
+
+    def _nutrient_result(
+        self, request: FoundryRequest, response: Response
+    ) -> tuple[tuple[IngredientNutrientEstimate, ...], TokenUsage]:
+        assert isinstance(request, NutrientGroundingRequest)
+        draft, _, usage = self._web_evidence(
+            request, response, combined=self._settings.foundry_recipe_nutrition_mode == "combined"
+        )
+        ids = [item.ingredient_line_id for item in draft.nutrient_estimates]
+        if (
+            draft.claims
+            or draft.calorie_estimates
+            or len(ids) != len(set(ids))
+            or not set(ids) <= set(request.ingredient_line_ids)
+            or any(
+                not {nutrient.name for nutrient in item.nutrients}
+                <= set(request.missing_nutrients[item.ingredient_line_id])
+                for item in draft.nutrient_estimates
+            )
+        ):
+            raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
+        return draft.nutrient_estimates, usage
 
     @staticmethod
     def _web_evidence(
@@ -550,7 +583,11 @@ class FoundryGateway:
                 output = CombinedRecipeOutput.model_validate_json(response.output_text)
                 if output.recipe is not None:
                     raise ValueError
-                draft = WebDraft(claims=(), calorie_estimates=output.calorie_estimates)
+                draft = WebDraft(
+                    claims=(),
+                    calorie_estimates=output.calorie_estimates,
+                    nutrient_estimates=output.nutrient_estimates,
+                )
             else:
                 draft = WebDraft.model_validate_json(response.output_text)
             searched = (
@@ -572,7 +609,7 @@ class FoundryGateway:
             urls = tuple(dict.fromkeys(claim.source_url for claim in draft.claims))
             references = {
                 item.reference for item in draft.calorie_estimates if item.source == "web_iq"
-            }
+            } | {item.reference for item in draft.nutrient_estimates}
             if not (set(urls) | references) <= searched & native.keys() or (
                 call is not None and call.status == "failed" and (urls or references)
             ):
@@ -625,8 +662,10 @@ class FoundryGateway:
                 raise ValueError
             if isinstance(request, CombinedRecipeGenerationRequest):
                 if (
-                    set(payload) != {"recipe", "calorieEstimates"}
+                    not {"recipe", "calorieEstimates"} <= set(payload)
+                    or not set(payload) <= {"recipe", "calorieEstimates", "nutrientEstimates"}
                     or payload["calorieEstimates"] != []
+                    or payload.get("nutrientEstimates", []) != []
                     or not isinstance(payload["recipe"], dict)
                 ):
                     raise ValueError

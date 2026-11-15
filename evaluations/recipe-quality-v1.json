@@ -60,7 +60,7 @@
       "id": "missing-nutrition",
       "request": "Make a beginner carrot and rice dinner in 30 minutes. If nutrition data is unavailable, state that instead of inventing amounts.",
       "fault": "missing_nutrition",
-      "expected": ["candidate"],
+      "expected": ["error"],
       "web": "forbidden"
     },
     {

@@ -132,6 +132,66 @@ async function open(page: Page) {
 const card = (page: Page) =>
   page.getByRole("region", { name: "Simple carrot rice", exact: true });
 
+test("Bing fills missing nutrients without requiring USDA mappings for every ingredient", async ({
+  page,
+}) => {
+  const turn = recipeTurn();
+  const recipe = turn.recipe!;
+  const n = recipe.nutrition;
+  const ids = recipe.ingredients.map((item) => item.lineId);
+  n.mappings = n.mappings.slice(0, 1);
+  n.nutrients.find((item) => item.name === "energy")!.amount = 150;
+  n.ingredientCalories = ids.map((id, index) => ({
+    ingredientLineId: id,
+    amount: 100,
+    source: index === 0 ? "usda_mcp" : "web_iq",
+    reference:
+      index === 0
+        ? n.sources[0].reference
+        : "https://nutrition.example.invalid/portion",
+    basis: "Synthetic cited calorie amount for the entire portion.",
+  }));
+  n.coverage = n.nutrients.map((item) => ({
+    name: item.name,
+    status: "known",
+    wholeRecipeAmount: item.amount * recipe.servings,
+    coveredIngredientLineIds: ids,
+    unknownIngredientLineIds: [],
+  }));
+  n.nutrientEstimates = ids.slice(1).map((id) => ({
+    ingredientLineId: id,
+    nutrients: n.nutrients
+      .filter((item) => item.name !== "energy")
+      .map((item) => ({ ...item, amount: item.amount / 3 })),
+    source: "web_iq",
+    reference: "https://nutrition.example.invalid/portion",
+    basis: "Synthetic source-backed nutrients scaled to the whole portion.",
+  }));
+  n.unknownComponents = [];
+  expect(isStructuredRecipe(recipe)).toBe(true);
+  const corrupted = structuredClone(recipe);
+  corrupted.nutrition.nutrientEstimates![0].nutrients.pop();
+  expect(isStructuredRecipe(corrupted)).toBe(false);
+  const wrongTotal = structuredClone(recipe);
+  wrongTotal.nutrition.nutrients.find(
+    (item) => item.name === "protein",
+  )!.amount += 1;
+  expect(isStructuredRecipe(wrongTotal)).toBe(false);
+  await recipeBackend(page, [turn]);
+  await open(page);
+  await expect(
+    card(page).getByRole("heading", {
+      name: "Web nutrition estimates by ingredient (whole recipe)",
+    }),
+  ).toBeVisible();
+  await expect(card(page).getByText(/Incomplete estimate/)).toHaveCount(0);
+  await expect(card(page).getByText(/Partial:/)).toHaveCount(0);
+  await page.reload();
+  await expect(
+    card(page).getByText(/Missing USDA nutrients were filled/),
+  ).toBeVisible();
+});
+
 test("mixed calorie sources are labeled per ingredient and survive history reload", async ({
   page,
 }) => {

@@ -44,6 +44,13 @@ type IngredientCalories = {
   reference: string | null;
   basis: string;
 };
+type IngredientNutrientEstimate = {
+  ingredientLineId: string;
+  nutrients: { name: NutrientName; amount: number; unit: string }[];
+  source: "web_iq";
+  reference: string;
+  basis: string;
+};
 export type StructuredRecipe = {
   schemaVersion: 2;
   title: string;
@@ -88,6 +95,7 @@ export type StructuredRecipe = {
     })[];
     coverage?: Coverage[];
     ingredientCalories?: IngredientCalories[];
+    nutrientEstimates?: IngredientNutrientEstimate[];
     unknownComponents?: {
       ingredientLineId: string;
       reason: string;
@@ -326,6 +334,37 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
   const n = value.nutrition;
   if (!isRecord(n)) return false;
   const calories = n.ingredientCalories ?? [];
+  const nutrientEstimates = n.nutrientEstimates ?? [];
+  if (
+    !list(
+      nutrientEstimates,
+      30,
+      (item): item is IngredientNutrientEstimate =>
+        isRecord(item) &&
+        typeof item.ingredientLineId === "string" &&
+        ids.includes(item.ingredientLineId) &&
+        item.source === "web_iq" &&
+        text(item.reference, 500) &&
+        safeRecipeUrl(item.reference) !== null &&
+        text(item.basis, 500) &&
+        list(
+          item.nutrients,
+          5,
+          (
+            nutrient,
+          ): nutrient is IngredientNutrientEstimate["nutrients"][number] =>
+            isRecord(nutrient) &&
+            nutrientName(nutrient.name) &&
+            nutrient.name !== "energy" &&
+            number(nutrient.amount, 0, 10_000_000) &&
+            nutrient.unit === (nutrient.name === "sodium" ? "mg" : "g"),
+          1,
+        ) &&
+        unique(item.nutrients.map((nutrient) => nutrient.name)),
+    ) ||
+    !unique(nutrientEstimates.map((item) => item.ingredientLineId))
+  )
+    return false;
   if (
     !list(
       calories,
@@ -418,10 +457,15 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
       ? n.nutrients.length +
           n.sources.length +
           n.mappings.length +
-          calories.length !==
+          calories.length +
+          nutrientEstimates.length !==
         0
-      : !n.nutrients.length || (!n.mappings.length && !calories.length)) ||
+      : !n.nutrients.length ||
+        (!n.mappings.length &&
+          !calories.length &&
+          !nutrientEstimates.length)) ||
     (n.status === "known" &&
+      (!Array.isArray(n.coverage) || !n.coverage.length) &&
       !same(
         n.mappings.map((item) => item.ingredientLineId),
         ids,
@@ -493,6 +537,40 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
   const unknown = n.unknownComponents ?? [];
   const mappings = n.mappings;
   const nutritionSources = n.sources;
+  for (const item of details) {
+    const estimates = nutrientEstimates.flatMap((estimate) =>
+      estimate.nutrients
+        .filter((nutrient) => nutrient.name === item.name)
+        .map((nutrient) => ({
+          lineId: estimate.ingredientLineId,
+          amount: nutrient.amount,
+        })),
+    );
+    if (!estimates.length) continue;
+    const total = item.wholeRecipeAmount;
+    const webTotal = estimates.reduce(
+      (sum, estimate) => sum + estimate.amount,
+      0,
+    );
+    const amount = n.nutrients.find(
+      (nutrient) => nutrient.name === item.name,
+    )?.amount;
+    if (
+      total === null ||
+      amount === undefined ||
+      total + 0.011 < webTotal ||
+      (same(
+        item.coveredIngredientLineIds,
+        estimates.map((estimate) => estimate.lineId),
+      ) &&
+        Math.abs(total - webTotal) > 0.011) ||
+      Math.abs(
+        amount -
+          (n.servingBasis === "per_serving" ? total / n.servings : total),
+      ) > 0.011
+    )
+      return false;
+  }
   if (
     !unique(unknown.map((item) => item.ingredientLineId)) ||
     (details.length
@@ -506,6 +584,7 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
             ...new Set([
               ...n.mappings.map((item) => item.ingredientLineId),
               ...calories.map((item) => item.ingredientLineId),
+              ...nutrientEstimates.map((item) => item.ingredientLineId),
             ]),
           ],
         ) ||
@@ -514,8 +593,27 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
             item.name !== "energy" &&
             item.coveredIngredientLineIds.some(
               (id) =>
-                !mappings.some((mapping) => mapping.ingredientLineId === id),
+                !mappings.some((mapping) => mapping.ingredientLineId === id) &&
+                !nutrientEstimates.some(
+                  (estimate) =>
+                    estimate.ingredientLineId === id &&
+                    estimate.nutrients.some(
+                      (nutrient) => nutrient.name === item.name,
+                    ),
+                ),
             ),
+        ) ||
+        nutrientEstimates.some((estimate) =>
+          estimate.nutrients.some(
+            (nutrient) =>
+              !details.some(
+                (item) =>
+                  item.name === nutrient.name &&
+                  item.coveredIngredientLineIds.includes(
+                    estimate.ingredientLineId,
+                  ),
+              ),
+          ),
         ) ||
         !same(
           details.flatMap((item) =>
@@ -527,7 +625,9 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
             ),
           ),
         )
-      : unknown.length > 0 || calories.length > 0) ||
+      : unknown.length > 0 ||
+        calories.length > 0 ||
+        nutrientEstimates.length > 0) ||
     (calories.length > 0 &&
       (!same(
         calories.map((item) => item.ingredientLineId),

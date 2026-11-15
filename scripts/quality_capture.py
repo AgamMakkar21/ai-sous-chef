@@ -28,6 +28,8 @@ from sous_chef.domain.recipes import (
     CalorieGroundingRequest,
     CombinedRecipeGenerationRequest,
     GroundedRecipeGenerationRequest,
+    IngredientNutrientEstimate,
+    NutrientGroundingRequest,
     NutritionEvidence,
     NutritionRequest,
     NutritionTool,
@@ -95,6 +97,7 @@ class ToolEvent(EvidenceModel):
     name: Literal["foundry_iq", "usda", "web_iq"]
     status: Literal["started", "completed", "error"] = "started"
     fault_injected: bool = False
+    nutrition_fallback: bool = False
 
 
 class Trace(EvidenceModel):
@@ -106,6 +109,9 @@ class Trace(EvidenceModel):
     nutrition_requests: list[NutritionRequest] = Field(default_factory=list)
     nutrition: list[NutritionEvidence] = Field(default_factory=list)
     web: list[WebGrounding] = Field(default_factory=list)
+    fallback_model_attempts: int = 0
+    nutrient_estimates: list[IngredientNutrientEstimate] = Field(default_factory=list)
+    calorie_estimates: list[CalorieEstimate] = Field(default_factory=list)
 
 
 class Observation(EvidenceModel):
@@ -117,6 +123,10 @@ class Observation(EvidenceModel):
 
 
 class Gateway(Protocol):
+    async def estimate_nutrients(
+        self, request: NutrientGroundingRequest
+    ) -> tuple[tuple[IngredientNutrientEstimate, ...], TokenUsage]: ...
+
     async def estimate_calories(
         self, request: CalorieGroundingRequest
     ) -> tuple[tuple[CalorieEstimate, ...], TokenUsage]: ...
@@ -144,19 +154,41 @@ class ObservedGateway:
     def __init__(self, gateway: Gateway, trace: Trace) -> None:
         self.gateway, self.trace = gateway, trace
 
-    async def estimate_calories(
-        self, request: CalorieGroundingRequest
-    ) -> tuple[tuple[CalorieEstimate, ...], TokenUsage]:
-        event = ToolEvent(name="web_iq")
+    async def estimate_nutrients(
+        self, request: NutrientGroundingRequest
+    ) -> tuple[tuple[IngredientNutrientEstimate, ...], TokenUsage]:
+        event = ToolEvent(name="web_iq", nutrition_fallback=True)
         self.trace.tools.append(event)
         self.trace.model_attempts += 1
+        self.trace.fallback_model_attempts += 1
         try:
-            result = await self.gateway.estimate_calories(request)
+            result = await self.gateway.estimate_nutrients(request)
         except BaseException:
             event.status = "error"
             raise
         event.status = "completed"
         self.trace.usage.append(result[1])
+        self.trace.nutrient_estimates.extend(result[0])
+        return result
+
+    async def estimate_calories(
+        self, request: CalorieGroundingRequest
+    ) -> tuple[tuple[CalorieEstimate, ...], TokenUsage]:
+        event = ToolEvent(name="web_iq", nutrition_fallback=True) if request.use_web else None
+        if event is not None:
+            self.trace.tools.append(event)
+        self.trace.model_attempts += 1
+        self.trace.fallback_model_attempts += 1
+        try:
+            result = await self.gateway.estimate_calories(request)
+        except BaseException:
+            if event is not None:
+                event.status = "error"
+            raise
+        if event is not None:
+            event.status = "completed"
+        self.trace.usage.append(result[1])
+        self.trace.calorie_estimates.extend(result[0])
         return result
 
     async def coordinate(self, request: CoordinationRequest) -> CoordinationStep:
@@ -274,6 +306,11 @@ class ReplayGateway:
         self, request: CalorieGroundingRequest
     ) -> tuple[tuple[CalorieEstimate, ...], TokenUsage]:
         raise AssertionError("This quality replay has no calorie fallback fixture.")
+
+    async def estimate_nutrients(
+        self, request: NutrientGroundingRequest
+    ) -> tuple[tuple[IngredientNutrientEstimate, ...], TokenUsage]:
+        raise AssertionError("This quality replay has no nutrient fallback fixture.")
 
     async def coordinate(self, request: CoordinationRequest) -> CoordinationStep:
         usage = TokenUsage(input_tokens=100, output_tokens=50)

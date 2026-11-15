@@ -11,6 +11,7 @@ from pydantic import ConfigDict, Field, StrictInt, ValidationError, model_valida
 from sous_chef.domain.context import RequestContext
 from sous_chef.domain.orchestrator import POLICY
 from sous_chef.domain.recipes import DraftIngredient
+from sous_chef.services.calorie_estimates import with_calorie_estimates, with_nutrient_estimates
 from sous_chef.services.recipe_specialist import _inventory
 
 from scripts.quality_capture import METRICS, ROOT, Case, EvidenceModel, Observation
@@ -119,6 +120,10 @@ def factual_checks(suite: Suite, case: Case, observation: Observation) -> dict[s
     status = result.status if result is not None else "error"
     tools = [event.name for event in trace.tools]
     completed = [event.name for event in trace.tools if event.status == "completed"]
+    fallback_tools = [event for event in trace.tools if event.nutrition_fallback]
+    ordinary_web = [
+        event for event in trace.tools if event.name == "web_iq" and not event.nutrition_fallback
+    ]
     expected_timeout = (
         case.fault == "nutrition_timeout"
         and observation.error_code == "orchestrator_specialist_failed"
@@ -128,27 +133,45 @@ def factual_checks(suite: Suite, case: Case, observation: Observation) -> dict[s
         and not trace.nutrition
         and result is None
     )
+    expected_missing = (
+        case.fault == "missing_nutrition"
+        and observation.error_code == "orchestrator_specialist_failed"
+        and tools.count("usda") == 1
+        and trace.tools[-1].status == "completed"
+        and trace.tools[-1].fault_injected
+        and len(trace.nutrition) == 1
+        and trace.nutrition[0].status == "unavailable"
+        and result is None
+    )
     expected_outcome = status in case.expected and (
-        expected_timeout if status == "error" else observation.error_code is None
+        expected_timeout or expected_missing
+        if status == "error"
+        else observation.error_code is None
     )
     checks = {
         "expected_outcome": check(
             expected_outcome, "Match the preregistered response/fault outcome."
         ),
         "bounded_execution": check(
-            trace.model_attempts <= POLICY.max_model_calls
+            trace.model_attempts <= POLICY.max_model_calls + trace.fallback_model_attempts
+            and trace.fallback_model_attempts
+            <= POLICY.max_calorie_model_calls * len(fallback_tools)
+            and len(fallback_tools) <= POLICY.max_calorie_fallback_calls
             and len(trace.specialist_arguments) <= POLICY.max_specialist_calls
-            and len(tools) + len(trace.specialist_arguments) <= POLICY.max_tool_calls
-            and tools.count("web_iq") <= POLICY.max_web_calls,
+            and len(tools) + len(trace.specialist_arguments)
+            <= POLICY.max_tool_calls + len(fallback_tools)
+            and tools.count("web_iq") <= POLICY.max_web_calls + len(fallback_tools),
             "Count observed invocations, including failed attempts.",
         ),
         "necessary_tools": check(
             (not tools if case.id == "unrealistic-time" else True)
             and (
-                "web_iq" not in tools if case.web == "forbidden" else completed.count("web_iq") == 1
+                not ordinary_web
+                if case.web == "forbidden"
+                else sum(event.status == "completed" for event in ordinary_web) == 1
             )
             and ("foundry_iq" in completed and "usda" in completed if recipe is not None else True),
-            "Ordinary cooking must not use Web IQ; current public requests must use it.",
+            "Only current public requests or missing USDA nutrients may invoke Web IQ.",
         ),
         "no_fault_retry": check(
             not expected_timeout
@@ -221,42 +244,39 @@ def factual_checks(suite: Suite, case: Case, observation: Observation) -> dict[s
     )
     received = trace.nutrition[-1] if trace.nutrition else None
     requested = trace.nutrition_requests[-1] if trace.nutrition_requests else None
+    if received is not None:
+        try:
+            received = with_nutrient_estimates(received, tuple(trace.nutrient_estimates))
+            received = with_calorie_estimates(received, tuple(trace.calorie_estimates))
+        except ValueError:
+            received = None
     checks["nutrition_provenance"] = check(
         received is not None
         and recipe.nutrition.model_dump() == received.model_dump()
         and requested is not None
         and requested.ingredients == ingredients
         and requested.servings == recipe.servings,
-        "Nutrition must be the tool's evidence for these ingredients, quantities and servings.",
+        "Nutrition must preserve USDA evidence and merge only observed, attributed gap estimates.",
     )
-    if case.fault == "missing_nutrition":
-        checks["missing_nutrition_handling"] = check(
-            recipe.nutrition.status == "unavailable"
-            and not recipe.nutrition.nutrients
-            and not recipe.nutrition.mappings
-            and not recipe.nutrition.sources,
-            "Unavailable nutrition is explicit, never invented or treated as zero.",
-        )
-    else:
-        checks["nutrition_arithmetic"] = check(
-            len(recipe.nutrition.coverage) == 6
-            and recipe.nutrition.serving_basis == "per_serving"
-            and all(
-                item.whole_recipe_amount is not None
-                and abs(
-                    Decimal(str(nutrient.amount))
-                    - (Decimal(str(item.whole_recipe_amount)) / recipe.servings).quantize(
-                        Decimal("0.01"), rounding=ROUND_HALF_UP
-                    )
+    checks["nutrition_arithmetic"] = check(
+        len(recipe.nutrition.coverage) == 6
+        and recipe.nutrition.serving_basis == "per_serving"
+        and all(
+            item.whole_recipe_amount is not None
+            and abs(
+                Decimal(str(nutrient.amount))
+                - (Decimal(str(item.whole_recipe_amount)) / recipe.servings).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
                 )
-                <= Decimal("0.01")
-                for nutrient in recipe.nutrition.nutrients
-                for item in recipe.nutrition.coverage
-                if item.name == nutrient.name
             )
-            and recipe.nutrition.status == "known",
-            "All six nutrient facts must be available and reconcile whole-recipe/serving amounts.",
+            <= Decimal("0.01")
+            for nutrient in recipe.nutrition.nutrients
+            for item in recipe.nutrition.coverage
+            if item.name == nutrient.name
         )
+        and recipe.nutrition.status == "known",
+        "All six nutrient facts must be available and reconcile whole-recipe/serving amounts.",
+    )
     return checks
 
 
@@ -288,6 +308,18 @@ def rows(suite: Suite, observations: list[Observation]) -> list[dict[str, str]]:
                         if trace is not None
                         else [],
                         "web": [w.model_dump(mode="json", by_alias=True) for w in trace.web]
+                        if trace is not None
+                        else [],
+                        "nutrientEstimates": [
+                            item.model_dump(mode="json", by_alias=True)
+                            for item in trace.nutrient_estimates
+                        ]
+                        if trace is not None
+                        else [],
+                        "calorieEstimates": [
+                            item.model_dump(mode="json", by_alias=True)
+                            for item in trace.calorie_estimates
+                        ]
                         if trace is not None
                         else [],
                     }

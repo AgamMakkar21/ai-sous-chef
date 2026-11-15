@@ -147,6 +147,13 @@ def render_recipe(recipe: StructuredRecipe) -> str:
         )
         if len(text) + len(summary) <= 4000:
             text += summary
+    if recipe.nutrition.nutrient_estimates:
+        summary = (
+            "\n\nMissing USDA nutrients were filled with source-backed Grounding with Bing "
+            "estimates, not USDA-verified; see ingredient nutrient sources."
+        )
+        if len(text) + len(summary) <= 4000:
+            text += summary
     if len(text) > 4000:
         _reject(RecipeSafetyFailure.STRUCTURE)
     return text

@@ -149,14 +149,14 @@ def test_chat_recovers_from_transient_usda_failure_without_replaying_agents(
             mapping["ingredientLineId"] for mapping in turn["recipe"]["nutrition"]["mappings"]
         } >= {"rice", "carrot"}
         calls = len(recipe_transport.requests)
-        assert calls == 4  # The fixture has no olive oil food, so only its calories fall back.
+        assert calls == 4  # The fixture has no olive oil food, so its nutrients need web fallback.
         assert send(client, conversation).json() == response.json()
         assert len(recipe_transport.requests) == calls
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
 
 
 @pytest.mark.parametrize("fails", [False, True])
-def test_release_chat_check_requires_live_recipe_and_usda_evidence(
+def test_release_chat_check_requires_live_recipe_and_attributed_calories(
     fails: bool,
     recipe_settings: Settings,
     recipe_transport: RecipeChatHarness,
@@ -190,9 +190,47 @@ def test_release_chat_check_requires_live_recipe_and_usda_evidence(
         assert client.call_args.args[0].environment == "dev"
 
 
+@pytest.mark.parametrize("mode", ["missing_nutrient", "fail_carrot", "error"])
+def test_release_chat_check_accepts_complete_web_fallback_nutrition(
+    mode: str,
+    recipe_settings: Settings,
+    recipe_transport: RecipeChatHarness,
+) -> None:
+    settings = recipe_settings.model_copy(
+        update={"usda_mcp_env": {"TEST_USDA_MODE": SecretStr(mode)}}
+    )
+    nutrition = UsdaNutritionTool.from_settings(settings)
+    deployed = {
+        f"ASC_{name.upper()}": str(value)
+        for name, value in settings.model_dump().items()
+        if value is not None
+    } | {"ASC_USDA_API_KEY": "synthetic-key", "ASC_ENVIRONMENT": "dev"}
+    with (
+        patch.object(UsdaNutritionTool, "from_settings", return_value=nutrition),
+        patch.object(delivery, "_release_project_client", recipe_transport.factory),
+    ):
+        asyncio.run(delivery.chat_smoke(deployed))
+    calorie_calls = [
+        json.loads(payload["input"])
+        for request in recipe_transport.requests
+        if isinstance((payload := json.loads(request.content))["input"], str)
+        and payload["input"].startswith(
+            ('{"purpose":"calorie_fallback"', '{"purpose":"nutrition_fallback"')
+        )
+    ]
+    assert calorie_calls[-1]["useWeb"] is False
+    if mode in {"fail_carrot", "error"}:
+        assert calorie_calls[0]["useWeb"] is True
+        if mode == "fail_carrot":
+            assert {item["ingredientLineId"] for item in calorie_calls[0]["ingredients"]} == {
+                "carrot",
+                "oil",
+            }
+
+
 @pytest.mark.parametrize("mode", ["error", "throttled", "hang_rice", "fail_carrot"])
 @pytest.mark.parametrize("combined", [False, True])
-def test_chat_persists_attributed_calories_during_usda_outage(
+def test_chat_persists_complete_web_nutrition_during_usda_outage(
     mode: str,
     combined: bool,
     recipe_settings: Settings,
@@ -228,9 +266,7 @@ def test_chat_persists_attributed_calories_during_usda_outage(
         calories = nutrition["ingredientCalories"]
         assert {item["ingredientLineId"] for item in calories} == {"rice", "carrot", "oil"}
         assert {item["source"] for item in calories} == (
-            {"usda_mcp", "web_iq", "ai_knowledge"}
-            if mode == "fail_carrot"
-            else {"web_iq", "ai_knowledge"}
+            {"usda_mcp", "web_iq"} if mode == "fail_carrot" else {"web_iq"}
         )
         assert all(
             (item["reference"] is None) == (item["source"] == "ai_knowledge") for item in calories
@@ -240,9 +276,10 @@ def test_chat_persists_attributed_calories_during_usda_outage(
         )
         energy = next(item for item in nutrition["nutrients"] if item["name"] == "energy")
         assert energy["amount"] == (200 if mode == "fail_carrot" else 150)
-        assert nutrition["status"] == "partial"
-        assert all(
-            "energy" not in item["unknownNutrients"] for item in nutrition["unknownComponents"]
+        assert nutrition["status"] == "known" and not nutrition["unknownComponents"]
+        assert len(nutrition["nutrients"]) == 6
+        assert {item["ingredientLineId"] for item in nutrition["nutrientEstimates"]} == (
+            {"carrot", "oil"} if mode == "fail_carrot" else {"rice", "carrot", "oil"}
         )
         assert "not USDA-verified" in turn["messages"][-1]["content"]
         assert len(recipe_transport.requests) == 4
@@ -269,7 +306,7 @@ def test_chat_persists_attributed_calories_during_usda_outage(
         "high_usage",
     ],
 )
-def test_optional_calorie_failure_preserves_completed_chat_and_verified_usda_history(
+def test_incomplete_or_unattributed_web_nutrition_cannot_complete_chat(
     fault: str,
     combined_settings: Settings,
     auth_headers: dict[str, str],
@@ -278,7 +315,7 @@ def test_optional_calorie_failure_preserves_completed_chat_and_verified_usda_his
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level("INFO", logger="sous_chef.operational")
-    original = web_fixtures.calorie_response
+    original = web_fixtures.nutrient_response
 
     def calorie_result(payload: dict[str, Any], *, combined: bool = False) -> dict[str, Any]:
         response = original(payload, combined=combined)
@@ -290,12 +327,12 @@ def test_optional_calorie_failure_preserves_completed_chat_and_verified_usda_his
         if fault == "incomplete":
             response["status"] = "incomplete"
         elif fault == "invented_source":
-            output["calorieEstimates"][0]["reference"] = "https://invented.example.invalid"
+            output["nutrientEstimates"][0]["reference"] = "https://invented.example.invalid"
         elif fault == "above_old_output_limit":
             response["usage"]["input_tokens"] = 160001
             response["usage"]["output_tokens"] = 20000
         elif fault in {"partial", "empty"}:
-            output["calorieEstimates"] = output["calorieEstimates"][
+            output["nutrientEstimates"] = output["nutrientEstimates"][
                 : 1 if fault == "partial" else 0
             ]
         elif fault == "high_usage":
@@ -303,7 +340,7 @@ def test_optional_calorie_failure_preserves_completed_chat_and_verified_usda_his
         content["text"] = json.dumps(output)
         return response
 
-    monkeypatch.setattr(web_fixtures, "calorie_response", calorie_result)
+    monkeypatch.setattr(web_fixtures, "nutrient_response", calorie_result)
     transport = CombinedHarness(use_web=False)
     monkeypatch.setattr(foundry_gateway, "_project_client", transport.factory)
     settings = combined_settings.model_copy(
@@ -313,35 +350,21 @@ def test_optional_calorie_failure_preserves_completed_chat_and_verified_usda_his
         onboard(client)
         conversation = create(client)
         response = send(client, conversation)
-        assert response.status_code == 200, response.text
-        turn = response.json()["data"]
-        assert turn["status"] == "completed"
-        nutrition = turn["recipe"]["nutrition"]
-        assert {item["ingredientLineId"] for item in nutrition["mappings"]} == {"rice"}
-        expected = (
-            {"rice", "carrot", "oil"}
-            if fault in {"high_usage", "above_old_output_limit", "partial"}
-            else {"rice"}
-        )
-        assert {item["ingredientLineId"] for item in nutrition["ingredientCalories"]} == expected
-        energy = next(item for item in nutrition["coverage"] if item["name"] == "energy")
-        assert set(energy["coveredIngredientLineIds"]) == expected
-        assert set(energy["unknownIngredientLineIds"]) == {"rice", "carrot", "oil"} - expected
-        assert energy["status"] == (
-            "known" if fault in {"high_usage", "above_old_output_limit", "partial"} else "partial"
-        )
-        assert all(
-            item["reference"] != "https://invented.example.invalid"
-            for item in nutrition["ingredientCalories"]
-        )
+        if fault in {"high_usage", "above_old_output_limit"}:
+            assert response.status_code == 200, response.text
+            turn = response.json()["data"]
+            assert turn["status"] == "completed"
+            assert turn["recipe"]["nutrition"]["status"] == "known"
+        else:
+            assert response.status_code == 502, response.text
+            turn = client.get(f"{BASE}/{conversation}/turns").json()["items"][0]
+            assert turn["status"] == "failed" and turn.get("recipe") is None
         if fault not in {"high_usage", "above_old_output_limit"}:
             assert "calorie_fallback_unavailable" in caplog.text
         assert "private invalid calorie content" not in caplog.text
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
-        assert send(client, conversation).json() == response.json()
-        assert len(transport.requests) == (
-            4 if fault in {"high_usage", "above_old_output_limit"} else 5
-        )
+        assert send(client, conversation).status_code == response.status_code
+        assert len(transport.requests) == 4
         fallback = json.loads(transport.requests[2].content)
         assert "max_output_tokens" not in fallback
 
@@ -504,13 +527,14 @@ def test_combined_chat_keeps_known_components_when_broad_search_details_are_miss
         turn = response.json()["data"]
         assert turn["status"] == "completed" and turn["generatedRecipeId"]
         nutrition = turn["recipe"]["nutrition"]
-        assert nutrition["status"] == "partial"
+        assert nutrition["status"] == "known"
         assert nutrition["nutrients"]
         assert {item["ingredientLineId"] for item in nutrition["mappings"]} == {"carrot"}
-        assert any(
-            item["ingredientLineId"] == "rice" and item["reason"] == "food_unavailable"
-            for item in nutrition["unknownComponents"]
-        )
+        assert not nutrition["unknownComponents"]
+        assert {item["ingredientLineId"] for item in nutrition["nutrientEstimates"]} == {
+            "rice",
+            "oil",
+        }
         assert {source["kind"] for source in turn["recipe"]["sources"]} == {
             "curated_recipe",
             "usda",

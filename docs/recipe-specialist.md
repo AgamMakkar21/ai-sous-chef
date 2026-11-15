@@ -1,6 +1,6 @@
 # Recipe + Nutrition structured output and grounding (ASC-26 / ASC-30 / ASC-34)
 
-This slice implements the GPT-5.4 specialist's version-11 combined source policy, strict
+This slice implements the GPT-5.4 specialist's version-13 combined source policy, strict
 draft/full-recipe schemas, one-call New Foundry generation, backend enrichment,
 identity-bound Foundry IQ recipe retrieval and conditional Web IQ. It does not activate chat
 or an Azure release, save/cook a recipe, or replace
@@ -15,7 +15,7 @@ The current dev design keeps recipe MCP retrieval and **native web search on the
 same Recipe + Nutrition agent version**. Set
 `ASC_FOUNDRY_RECIPE_NUTRITION_MODE=combined` and pin its reviewed
 `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION`. A separate retrieval pin is not
-used in this mode. When USDA ingredient calories are missing, calorie fallback invokes
+used in this mode. When any USDA ingredient nutrient is missing, nutrient fallback invokes
 that same combined version; no separate web-phase pin is required or used.
 The default `phased` mode remains available for
 existing releases; the phase-specific sections below describe that legacy route.
@@ -28,10 +28,12 @@ backend function or an A2A connection, and no separate Web IQ model invocation
 occurs. Current-information query authorization is unchanged; this does not
 introduce general web-based recipe inspiration.
 
-The combined strict output is `combined_recipe_nutrition_v2`, an envelope with
-`recipe` and `calorieEstimates`. Recipe generation returns the existing draft
+The combined strict output is `combined_recipe_nutrition_v3`, an envelope with
+`recipe`, `calorieEstimates` and `nutrientEstimates`. Recipe generation returns the existing draft
 plus `webClaims` (at most three short claims with `sourceUrl`) inside `recipe`,
-and `calorieEstimates=[]`. Calorie fallback returns `recipe=null` and attributed
+and empty estimate arrays. Nutrient fallback returns `recipe=null`,
+`calorieEstimates=[]` and cited amounts for every missing nutrient it can support.
+Calorie-only recovery returns `recipe=null`, `nutrientEstimates=[]` and attributed
 estimates for the backend's missing ingredient lines. Nullable references remain
 required JSON properties, including explicit null for AI knowledge. The backend
 checks the native search query, single-search count, completion, retrieved URLs,
@@ -49,13 +51,21 @@ response is not proof that private data was never searched. This is intentionall
 different from the isolated web phase; do not describe combined mode as providing
 that phase's pre-search privacy isolation.
 
-Combined source policy 12 has its own exact definition/phase/fingerprint checks.
+Combined source policy 13 has its own exact definition/phase/fingerprint checks.
 Manually attaching web search to an older retrieval version is not sufficient:
 the old instructions/output schema and stale fingerprint metadata do not meet
 this contract. Preserve existing agent identities and versions, and publish a
 reviewed combined source using `--phase combined`; retain its returned version
 without assuming the next number. Native reasoning configuration changes also
 require review rather than silently accepting source drift.
+
+Combined-agent web requests use a two-call **transport** allowance. Live checks
+with a one-call allowance returned an unfinished extra web action, no native
+citations and no nutrient evidence, even for a single missing nutrient. The
+two-call allowance returned one completed search and cited nutrient values.
+This does not authorize two searches: the gateway still rejects extra searches,
+rewritten queries, unfinished actions or unsupported citations. Legacy web-only
+phases retain their one-call transport allowance.
 
 ## Execution and tool boundaries
 
@@ -561,13 +571,27 @@ remaining gap honestly rather than fabricate an amount. Neither failure discards
 or existing USDA values. Authentication/configuration failures remain explicit.
 Transient USDA API failure after successful MCP initialization is logged but
 does not prevent startup; initialization/schema/authentication failures remain
-fail-closed. Live release smoke still requires actual known USDA-backed nutrition.
+fail-closed. Live release smoke requires complete attributed nutrition,
+not USDA coverage for every ingredient. The backend now sends a
+`purpose=nutrition_fallback` request for every ingredient/nutrient gap after USDA,
+including energy, protein, carbohydrate, fat, fiber and sodium. A single bounded
+Bing search supplies only values supported by searched, natively cited sources,
+scaled to the whole specified ingredient quantity. It cannot overwrite a known
+USDA value or use absence as evidence for zero.
+Non-calorie web evidence is stored in `nutrition.nutrientEstimates`, with ingredient
+line IDs, nutrient amount/unit pairs, HTTPS references and conversion explanations.
+Energy remains in `ingredientCalories`. The existing independent AI recovery is
+calorie-only; it cannot fill missing non-calorie nutrients.
+If any nutrient remains unsupported after fallback, generation fails explicitly
+rather than completing chat with partial nutrition. Historical partial snapshots
+remain readable and retain their original uncertainty labels.
 
 Activation requires publishing and reading back the reviewed `--phase combined`
 and `--phase calorie` sources, then pinning their returned versions in the version-5
 dev manifest. Delivery verifies and copies both specialist definitions without changing
 identities; readiness verifies their schemas and policy fingerprints. The live
-release smoke requires both USDA-backed chat and complete tool-free calorie recovery.
+release smoke accepts complete USDA-first chat with Bing-grounded fallback
+nutrition, and requires complete tool-free calorie recovery.
 Historical phased releases remain available for rollback.
 No runtime tool/schema override is used.
 
@@ -1050,7 +1074,7 @@ managed-identity-first. An ambiguous publication error must be inspected before
 retrying. The command changes no app runtime flags or release manifest.
 
 The current `deploy/agents.dev.json` candidate pins read-back-verified combined
-source 49 (policy 12), tool-free calorie source 51 (policy 2), and Orchestrator
+source 54 (policy 13), tool-free calorie source 55 (policy 3), and Orchestrator
 source 39 (policy 7) in an enabled schema-version-5 release
 (schema version 3 remains the legacy phased format). Live adapters and final
 safety are composed by the backend; publishing a source or preparing this manifest

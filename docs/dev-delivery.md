@@ -17,9 +17,11 @@ entire deployment payload.
 
 Agent-enabled smoke checks also execute one synthetic Orchestrator -> Recipe +
 Nutrition -> USDA request using the deployed agent pins and protected USDA key.
-They require a structured recipe with known, attributed nutrition; a healthy
-`/ready` response, clarification, unavailable nutrition or failed tool call cannot
-pass. The synthetic request is not retried as a whole and reads/writes no consumer
+They require a structured recipe with complete, source-backed nutrition for every
+ingredient; a healthy `/ready` response, clarification or missing nutrient evidence
+cannot pass. Nutrition can combine USDA MCP with Bing-grounded evidence; it does
+not require every ingredient or nutrient to be covered by USDA.
+The synthetic request is not retried as a whole and reads/writes no consumer
 documents. It runs under the delivery identity, not the App Service identity,
 so signed-in browser, authentication and workload-specific acceptance remain
 separate requirements. Do not treat this dependency check as an authenticated
@@ -28,8 +30,14 @@ end-to-end UI test.
 The version-4 combined manifest pins one Recipe + Nutrition source with both
 recipe MCP and native web search. That same version handles calorie fallback;
 an extra `recipe_nutrition.web_version` is rejected in combined mode.
-Missing recipe calories can use explicitly labeled Web IQ/AI estimates, but these
-cannot satisfy release smoke: every ingredient must have USDA MCP calorie evidence.
+USDA is queried first. Missing calories, protein, carbohydrate, fat, fiber and
+sodium are requested from Grounding with Bing for the specified recipe quantities.
+Only natively cited, searched sources can fill missing nutrients. Existing USDA
+values are preserved. The existing tool-free recovery remains calorie-only;
+it cannot invent missing non-calorie nutrients. These attributed estimates satisfy
+release smoke without requiring every ingredient to have USDA MCP calorie evidence.
+If USDA and web evidence cannot complete the nutrition, chat fails explicitly
+instead of delivering a partially calculated recipe.
 
 The first fallback release's deployment check incorrectly selected `environment=local`
 to obtain delivery credentials, rejecting a valid 4,949-token recipe MCP response

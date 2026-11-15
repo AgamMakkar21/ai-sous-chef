@@ -252,6 +252,21 @@ class CalorieEstimate(IngredientCalories):
     source: Literal["web_iq", "ai_knowledge"]
 
 
+class IngredientNutrientEstimate(RecipeModel):
+    ingredient_line_id: LineId
+    nutrients: tuple[Nutrient, ...] = Field(min_length=1, max_length=6)
+    source: Literal["web_iq"] = "web_iq"
+    reference: str = Field(min_length=1, max_length=500, repr=False)
+    basis: str = Field(min_length=1, max_length=500, pattern=r"\S", repr=False)
+
+    @model_validator(mode="after")
+    def attributed_nutrients(self) -> Self:
+        if len({item.name for item in self.nutrients}) != len(self.nutrients):
+            raise ValueError("Ingredient nutrient estimates must have unique nutrient names.")
+        WebClaim(text=self.basis, source_url=self.reference)
+        return self
+
+
 class NutritionUnknownComponent(RecipeModel):
     ingredient_line_id: LineId
     reason: Literal[
@@ -288,6 +303,7 @@ class NutritionEvidence(RecipeModel):
     coverage: tuple[NutrientCoverage, ...] = Field(default=(), max_length=6)
     unknown_components: tuple[NutritionUnknownComponent, ...] = Field(default=(), max_length=30)
     ingredient_calories: tuple[IngredientCalories, ...] = Field(default=(), max_length=30)
+    nutrient_estimates: tuple[IngredientNutrientEstimate, ...] = Field(default=(), max_length=30)
 
     @model_validator(mode="after")
     def evidence_state(self) -> Self:
@@ -295,6 +311,12 @@ class NutritionEvidence(RecipeModel):
         mapping_ids = [mapping.ingredient_line_id for mapping in self.mappings]
         nutrients = [nutrient.name for nutrient in self.nutrients]
         calorie_ids = {item.ingredient_line_id for item in self.ingredient_calories}
+        estimate_ids = {item.ingredient_line_id for item in self.nutrient_estimates}
+        estimate_pairs = {
+            (item.ingredient_line_id, nutrient.name)
+            for item in self.nutrient_estimates
+            for nutrient in item.nutrients
+        }
         if (
             len(source_ids) != len(self.sources)
             or len(mapping_ids) != len(set(mapping_ids))
@@ -303,12 +325,22 @@ class NutritionEvidence(RecipeModel):
             or any(mapping.source_id not in source_ids for mapping in self.mappings)
             or source_ids != {mapping.source_id for mapping in self.mappings}
             or len(calorie_ids) != len(self.ingredient_calories)
+            or len(estimate_ids) != len(self.nutrient_estimates)
+            or any(name == "energy" for _, name in estimate_pairs)
         ):
             raise ValueError("Nutrition requires unique USDA sources and ingredient mappings.")
         if self.status == "unavailable":
-            if self.nutrients or self.mappings or self.sources or self.ingredient_calories:
+            if (
+                self.nutrients
+                or self.mappings
+                or self.sources
+                or self.ingredient_calories
+                or self.nutrient_estimates
+            ):
                 raise ValueError("Unavailable nutrition must not contain invented amounts.")
-        elif not self.nutrients or not (self.mappings or self.ingredient_calories):
+        elif not self.nutrients or not (
+            self.mappings or self.ingredient_calories or self.nutrient_estimates
+        ):
             raise ValueError("Known or partial nutrition requires attributed tool evidence.")
         for item in self.ingredient_calories:
             mapping = next(
@@ -355,12 +387,20 @@ class NutritionEvidence(RecipeModel):
             )
             if (
                 len(names) != 6
-                or covered_ids != set(mapping_ids) | calorie_ids
+                or covered_ids != set(mapping_ids) | calorie_ids | estimate_ids
                 or any(
-                    not set(item.covered_ingredient_line_ids) <= set(mapping_ids)
+                    not set(item.covered_ingredient_line_ids)
+                    <= set(mapping_ids)
+                    | {line_id for line_id, name in estimate_pairs if name == item.name}
                     for item in self.coverage
                     if item.name != "energy"
                 )
+                or not estimate_pairs
+                <= {
+                    (line_id, item.name)
+                    for item in self.coverage
+                    for line_id in item.covered_ingredient_line_ids
+                }
                 or (
                     bool(self.ingredient_calories)
                     and next(
@@ -394,10 +434,45 @@ class NutritionEvidence(RecipeModel):
                     or abs(energy.amount - expected) > 0.011
                 ):
                     raise ValueError("Calorie totals must match the ingredient-level evidence.")
+            for nutrient_coverage in self.coverage:
+                web_total = sum(
+                    nutrient.amount
+                    for estimate in self.nutrient_estimates
+                    for nutrient in estimate.nutrients
+                    if nutrient.name == nutrient_coverage.name
+                )
+                if any(name == nutrient_coverage.name for _, name in estimate_pairs):
+                    nutrient_total = nutrient_coverage.whole_recipe_amount
+                    amount = next(
+                        row.amount for row in self.nutrients if row.name == nutrient_coverage.name
+                    )
+                    if (
+                        nutrient_total is None
+                        or nutrient_total + 0.011 < web_total
+                        or (
+                            set(nutrient_coverage.covered_ingredient_line_ids)
+                            == {
+                                line_id
+                                for line_id, name in estimate_pairs
+                                if name == nutrient_coverage.name
+                            }
+                            and abs(nutrient_total - web_total) > 0.011
+                        )
+                        or abs(
+                            amount
+                            - (
+                                nutrient_total / self.servings
+                                if self.serving_basis == "per_serving"
+                                else nutrient_total
+                            )
+                        )
+                        > 0.011
+                    ):
+                        raise ValueError("Nutrient totals must include attributed web estimates.")
         elif self.unknown_components:
             raise ValueError("Unknown components require detailed nutrient coverage.")
-        elif self.ingredient_calories:
-            raise ValueError("Ingredient calories require nutrient coverage.")
+        elif self.ingredient_calories or self.nutrient_estimates:
+            raise ValueError("Ingredient nutrition requires nutrient coverage.")
         return self
 
 
@@ -426,6 +501,9 @@ class WebClaim(RecipeModel):
 class WebDraft(RecipeModel):
     claims: tuple[WebClaim, ...] = Field(max_length=3, repr=False)
     calorie_estimates: tuple[CalorieEstimate, ...] = Field(default=(), max_length=30, repr=False)
+    nutrient_estimates: tuple[IngredientNutrientEstimate, ...] = Field(
+        default=(), max_length=30, repr=False
+    )
 
 
 class CombinedRecipeDraft(RecipeDraft):
@@ -435,6 +513,9 @@ class CombinedRecipeDraft(RecipeDraft):
 class CombinedRecipeOutput(RecipeModel):
     recipe: CombinedRecipeDraft | None
     calorie_estimates: tuple[CalorieEstimate, ...] = Field(max_length=30, repr=False)
+    nutrient_estimates: tuple[IngredientNutrientEstimate, ...] = Field(
+        default=(), max_length=30, repr=False
+    )
 
 
 class WebCitation(RecipeModel):
@@ -485,7 +566,11 @@ class StructuredRecipe(RecipeDraft):
         ):
             raise ValueError("Recipe enrichment must reference the actual recipe and sources.")
         mapped = {mapping.ingredient_line_id for mapping in self.nutrition.mappings}
-        if self.nutrition.status == "known" and mapped != set(ingredients):
+        if (
+            self.nutrition.status == "known"
+            and not self.nutrition.coverage
+            and mapped != set(ingredients)
+        ):
             raise ValueError("Known nutrition requires every ingredient to be mapped.")
         if self.nutrition.coverage:
             coverage = self.nutrition.coverage[0]
@@ -496,6 +581,8 @@ class StructuredRecipe(RecipeDraft):
         if any(
             item.ingredient_line_id not in ingredients
             for item in self.nutrition.ingredient_calories
+        ) or any(
+            item.ingredient_line_id not in ingredients for item in self.nutrition.nutrient_estimates
         ):
             raise ValueError("Ingredient calories must reference the generated recipe.")
         for mapping in self.nutrition.mappings:
@@ -571,7 +658,26 @@ class CalorieGroundingRequest(WebGroundingRequest):
     use_web: bool = True
 
 
+class NutrientGroundingRequest(CalorieGroundingRequest):
+    use_web: Literal[True] = True
+    missing_nutrients: dict[LineId, tuple[NutrientName, ...]] = Field(min_length=1, max_length=30)
+
+    @model_validator(mode="after")
+    def requested_gaps(self) -> Self:
+        if set(self.missing_nutrients) != set(self.ingredient_line_ids) or any(
+            not names or len(names) != len(set(names)) for names in self.missing_nutrients.values()
+        ):
+            raise ValueError(
+                "Nutrient fallback must specify the gaps for each requested ingredient."
+            )
+        return self
+
+
 class RecipeGenerator(Protocol):
+    async def estimate_nutrients(
+        self, request: NutrientGroundingRequest
+    ) -> tuple[tuple[IngredientNutrientEstimate, ...], TokenUsage]: ...
+
     async def estimate_calories(
         self, request: CalorieGroundingRequest
     ) -> tuple[tuple[CalorieEstimate, ...], TokenUsage]: ...
