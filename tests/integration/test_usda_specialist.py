@@ -291,13 +291,14 @@ def test_chat_uses_mass_sources_or_complete_fallback_without_household_keyword_m
     )
     recipe = run(service, context).recipe
     assert recipe is not None
-    assert len(model.requests) == (4 if household_units else 2)
+    assert len(model.requests) == (3 if household_units else 2)
     assert [line.unit for line in recipe.ingredients] == [
         line["unit"] for line in draft["ingredients"]
     ]
     assert [line.quantity for line in recipe.ingredients] == list(quantities)
     assert recipe.nutrition.status == "known"
     if household_units:
+        assert json.loads(json.loads(model.requests[-1].content)["input"])["useWeb"] is False
         assert not recipe.nutrition.mappings and not recipe.nutrition.sources
         assert len(recipe.nutrition.nutrient_estimates) == 5
         assert all(
@@ -415,4 +416,5 @@ def test_malformed_usda_or_fallback_evidence_is_not_accepted(mode: str) -> None:
     with pytest.raises(FoundryGatewayError) as caught:
         run(service)
     assert caught.value.code == FoundryFailure.NO_RESULTS
-    assert len(model.requests) == 3
+    assert len(model.requests) == 2
+    assert json.loads(json.loads(model.requests[-1].content)["input"])["useWeb"] is False
