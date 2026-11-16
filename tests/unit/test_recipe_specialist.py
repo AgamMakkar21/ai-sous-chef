@@ -3,6 +3,7 @@ import copy
 import json
 from datetime import UTC, datetime
 from decimal import Decimal
+from math import ceil
 from pathlib import Path
 from time import monotonic
 from typing import Any
@@ -225,7 +226,8 @@ def test_slow_generation_does_not_reserve_an_expired_usda_deadline(
     from sous_chef.services import recipe_specialist
 
     service, tools, _ = setup()
-    started = monotonic()
+    # Keep half-budget comparisons exact while the asyncio deadline remains in the future.
+    started = float(ceil(monotonic()))
     now = started
     deadline = started + 60
     generate = service._generator.generate_recipe
