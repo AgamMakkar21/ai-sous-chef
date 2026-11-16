@@ -161,18 +161,18 @@ def manifest() -> dict[str, dict[str, str]]:
         not isinstance(data, dict)
         or set(data) != {"schema_version", "agents_enabled", "agents"}
         or type(data.get("schema_version")) is not int
-        or data.get("schema_version") not in (2, 3, 4, 5)
+        or data.get("schema_version") not in (2, 3, 4, 5, 6)
         or type(data.get("agents_enabled")) is not bool
         or not isinstance(data.get("agents"), dict)
     ):
         raise DeliveryError(
-            "Use a version-2 through version-5 manifest with explicit agents_enabled."
+            "Use a version-2 through version-6 manifest with explicit agents_enabled."
         )
     if data["agents_enabled"] is False:
         if data["agents"]:
             raise DeliveryError("Disabled agent releases must have an empty agents mapping.")
         return {}
-    if data["schema_version"] not in (3, 4, 5):
+    if data["schema_version"] not in (3, 4, 5, 6):
         raise DeliveryError("Enabled releases require phase pins or combined source pins.")
     if set(data["agents"]) != set(ROLES):
         raise DeliveryError("Enabled agent releases must contain both agent roles.")
@@ -184,10 +184,17 @@ def manifest() -> dict[str, dict[str, str]]:
             ("version",)
             if role == "orchestrator" or data["schema_version"] == 4
             else ("version", "calorie_version")
-            if data["schema_version"] == 5
+            if data["schema_version"] in (5, 6)
             else ("version", "retrieval_version", "web_version")
         )
-        if not isinstance(target, dict) or set(target) != {"name", *version_fields}:
+        contract_fields = (
+            {"contract_sha256"} if role == "orchestrator" and data["schema_version"] == 6 else set()
+        )
+        if not isinstance(target, dict) or set(target) != {
+            "name",
+            *version_fields,
+            *contract_fields,
+        }:
             raise DeliveryError(f"Pin an explicit agent name and numeric version for {role}.")
         name = target["name"]
         if (
@@ -203,7 +210,17 @@ def manifest() -> dict[str, dict[str, str]]:
         if len({target[field] for field in version_fields}) != len(version_fields):
             raise DeliveryError("Pin different specialist source versions for each phase.")
         validated[role] = {"name": name, **{field: target[field] for field in version_fields}}
-        if role == "recipe_nutrition" and data["schema_version"] in (4, 5):
+        if contract_fields:
+            from sous_chef.orchestrator_definition import orchestrator_contract_fingerprint
+
+            if target["contract_sha256"] != orchestrator_contract_fingerprint():
+                raise DeliveryError(
+                    "The reviewed Orchestrator contract fingerprint is stale. "
+                    "Publish and read back the current source, then update both its version "
+                    "and contract_sha256 before merging."
+                )
+            validated[role]["contract_sha256"] = target["contract_sha256"]
+        if role == "recipe_nutrition" and data["schema_version"] in (4, 5, 6):
             validated[role]["mode"] = "combined"
     if agents[ROLES[0]]["name"] == agents[ROLES[1]]["name"]:
         raise DeliveryError("The two agents must have different runtime names.")

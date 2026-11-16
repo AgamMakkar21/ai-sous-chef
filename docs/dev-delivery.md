@@ -187,7 +187,7 @@ PostgreSQL, import USDA data, register API keys or copy developer credentials.
    | `ASC_FOUNDRY_PROJECT_NAME` | Existing dev project name |
 
 5. Review the explicit stage in `deploy/agents.dev.json`. The current candidate
-   enables combined-mode chat with the read-back-verified Orchestrator source 45,
+   enables combined-mode chat with the read-back-verified Orchestrator source 47,
    Recipe + Nutrition combined source 58 and tool-free selection/nutrition recovery source 62.
    This is release configuration,
    not evidence that the candidate has been deployed or passed live UI acceptance.
@@ -220,18 +220,24 @@ Wait for role propagation and investigate the actual denial at the granted scope
 ## Release stages
 
 The current dev agent design is **combined**: native web search and recipe MCP
-are published on one Recipe + Nutrition source version. After publishing and
-exactly verifying the reviewed `--phase combined` source, use this manifest shape:
+are published on one Recipe + Nutrition source version, with a separate tool-free
+nutrition recovery source. After publishing and exactly verifying the reviewed
+sources, use this manifest shape:
 
 ```json
 {
-  "schema_version": 4,
+  "schema_version": 6,
   "agents_enabled": true,
   "agents": {
-    "orchestrator": {"name": "sous-chef-orchestrator-dev", "version": "36"},
+    "orchestrator": {
+      "name": "sous-chef-orchestrator-dev",
+      "version": "47",
+      "contract_sha256": "f7d914147b63ebafde3cbebb1be27b2f8bc7bece5be10f32230c4a92b9eff987"
+    },
     "recipe_nutrition": {
       "name": "sous-chef-recipe-nutrition-dev",
-      "version": "44"
+      "version": "58",
+      "calorie_version": "62"
     }
   }
 }
@@ -240,14 +246,20 @@ exactly verifying the reviewed `--phase combined` source, use this manifest shap
 The pins above are the actual read-back-verified sources selected for this candidate,
 not assumed next-version numbers. Future releases must read back their selected
 versions again. Deployment sets `ASC_FOUNDRY_RECIPE_NUTRITION_MODE=combined`,
-verifies and clones both exact sources under their existing identities, then pins
+verifies and clones all three exact sources under their existing identities, then pins
 the resulting release versions. It does not publish separate retrieval/web phases.
-Orchestrator source 36 carries policy 6 and the structured AI quantity-routing
-schema; the earlier policy-5 source 32 is incompatible with this backend.
-Readiness requires the combined strict schema and policy-10 fingerprint. Manually
-adding a web tool/reasoning settings to old version 4 does not automatically meet
-that contract. Source 44 was published with both tasks and their shared strict output envelope and
-read back successfully before enabling the candidate manifest. App Service must
+Orchestrator source 47 carries policy 11 and the bounded residual-nutrition repair
+instructions; policy-10 source 45 is incompatible with this backend.
+The version-6 manifest records its read-back-verified `asc_contract_sha256` as
+`contract_sha256`. Manifest validation, already exercised by infrastructure PR CI,
+recomputes that contract from the current instructions and function schema before
+any Azure access. A policy-version, instruction or tool-schema change therefore fails PR
+checks until the reviewed source is published, read back and both the numeric pin
+and receipt are updated together. The portable contract normalizes environment-specific
+model-deployment and RAI identifiers; deployment still validates the full remote
+definition, its full fingerprint, policy metadata, active state and identity.
+This receipt does not replace live verification or authorize publication/deployment.
+Recipe sources 58 and 62 retain their exact reviewed definitions. App Service must
 receive the compatible backend and complete runtime pins together through delivery;
 do not enable its flag manually against the older backend. USDA secrets/enabling
 and the stable `ASC_PAGINATION_KEY` remain owner-managed.

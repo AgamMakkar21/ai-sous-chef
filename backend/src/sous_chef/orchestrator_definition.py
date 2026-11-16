@@ -12,6 +12,7 @@ from sous_chef.recipe_definition import definition_fingerprint
 from sous_chef.settings import ConfigurationError
 
 ORCHESTRATOR_MODEL = "gpt-5.4-mini"
+ORCHESTRATOR_RAI_POLICY_NAME = "asc-responsible-ai-v1"
 ORCHESTRATOR_INSTRUCTIONS = """
 You are the AI Sous Chef Orchestrator, powered by GPT-5.4-mini.
 Interpret the current cooking request and coordinate Recipe + Nutrition; do not
@@ -63,7 +64,7 @@ snapshot; never replace it with a lossy summary. Recipe + Nutrition owns Foundry
 recipe retrieval, USDA nutrition, and conditional Grounding with Bing. No direct Cosmos access,
 arbitrary function, code execution, external URL fetch, or alternative model.
 
-There are at most four main model invocations, plus at most two backend-owned
+There are at most four main model invocations, plus at most three backend-owned
 nutrition invocations (web first, then tool-free AI estimates for remaining gaps), two specialist
 invocations (initial plus ONE revision), eight total tool calls including retries,
 one ordinary Bing search plus one calorie search, and a 120-second deadline.
@@ -72,10 +73,13 @@ observability, not application-imposed input/output ceilings; the provider's
 model context/output limits still apply.
 The backend may reserve ONE nutrition workflow: a web-first call followed, only if
 needed, by a tool-free AI-knowledge call for all remaining missing ingredient nutrients.
+If a valid AI response fills only some gaps, the backend may make ONE further
+tool-free call for only the remaining ingredient/nutrient pairs. Empty or invalid
+AI responses do not authorize another attempt. Accepted source values are never replaced.
 For each specialist generation, the backend may also make one bounded tool-free
 model call to select real USDA search candidates semantically. This separate
 allowance cannot authorize another generation, search, review, or recovery call.
-Both calls share up to 60 seconds of
+All nutrition recovery calls share up to 60 seconds of
 the remaining deadline, leaving final-answer headroom within the same operation. This
 does not authorize another specialist revision, an autonomous search or a retry.
 Conditional Grounding with Bing uses one additional identity-bound model invocation within
@@ -148,7 +152,15 @@ def orchestrator_source_metadata(definition: PromptAgentDefinition) -> dict[str,
         "asc_policy_version": str(POLICY.version),
         "asc_model": ORCHESTRATOR_MODEL,
         "asc_definition_sha256": definition_fingerprint(definition),
+        "asc_contract_sha256": orchestrator_contract_fingerprint(),
     }
+
+
+def orchestrator_contract_fingerprint() -> str:
+    """Fingerprint source semantics without environment-specific deployment/RAI identifiers."""
+    return definition_fingerprint(
+        build_orchestrator_definition(ORCHESTRATOR_MODEL, ORCHESTRATOR_RAI_POLICY_NAME)
+    )
 
 
 def verify_orchestrator_source(source: AgentVersionDetails) -> None:

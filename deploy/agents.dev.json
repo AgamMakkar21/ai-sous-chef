@@ -1,10 +1,11 @@
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "agents_enabled": true,
   "agents": {
     "orchestrator": {
       "name": "sous-chef-orchestrator-dev",
-      "version": "45"
+      "version": "47",
+      "contract_sha256": "f7d914147b63ebafde3cbebb1be27b2f8bc7bece5be10f32230c4a92b9eff987"
     },
     "recipe_nutrition": {
       "name": "sous-chef-recipe-nutrition-dev",
