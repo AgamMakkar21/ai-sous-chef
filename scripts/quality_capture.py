@@ -13,6 +13,7 @@ from sous_chef.adapters.usda_mcp import UsdaMcpConfig
 from sous_chef.domain.context import RequestContext
 from sous_chef.domain.foundry import FoundryFailure
 from sous_chef.domain.groceries import GroceryRow
+from sous_chef.domain.nutrition import UsdaFoodSearch
 from sous_chef.domain.orchestrator import (
     CoordinationRequest,
     CoordinationStep,
@@ -37,6 +38,8 @@ from sous_chef.domain.recipes import (
     RecipeGenerationRequest,
     RecipeGrounding,
     RecipeToolError,
+    UsdaFoodSelection,
+    UsdaSelectionRequest,
     WebGrounding,
     WebGroundingRequest,
 )
@@ -110,6 +113,7 @@ class Trace(EvidenceModel):
     nutrition: list[NutritionEvidence] = Field(default_factory=list)
     web: list[WebGrounding] = Field(default_factory=list)
     fallback_model_attempts: int = 0
+    usda_selection_attempts: int = 0
     nutrient_estimates: list[IngredientNutrientEstimate] = Field(default_factory=list)
     calorie_estimates: list[CalorieEstimate] = Field(default_factory=list)
 
@@ -123,6 +127,10 @@ class Observation(EvidenceModel):
 
 
 class Gateway(Protocol):
+    async def select_usda_foods(
+        self, request: UsdaSelectionRequest
+    ) -> tuple[tuple[UsdaFoodSelection, ...], TokenUsage]: ...
+
     async def estimate_nutrients(
         self, request: NutrientGroundingRequest
     ) -> tuple[tuple[IngredientNutrientEstimate, ...], TokenUsage]: ...
@@ -154,19 +162,31 @@ class ObservedGateway:
     def __init__(self, gateway: Gateway, trace: Trace) -> None:
         self.gateway, self.trace = gateway, trace
 
+    async def select_usda_foods(
+        self, request: UsdaSelectionRequest
+    ) -> tuple[tuple[UsdaFoodSelection, ...], TokenUsage]:
+        self.trace.model_attempts += 1
+        self.trace.usda_selection_attempts += 1
+        result = await self.gateway.select_usda_foods(request)
+        self.trace.usage.append(result[1])
+        return result
+
     async def estimate_nutrients(
         self, request: NutrientGroundingRequest
     ) -> tuple[tuple[IngredientNutrientEstimate, ...], TokenUsage]:
-        event = ToolEvent(name="web_iq", nutrition_fallback=True)
-        self.trace.tools.append(event)
+        event = ToolEvent(name="web_iq", nutrition_fallback=True) if request.use_web else None
+        if event is not None:
+            self.trace.tools.append(event)
         self.trace.model_attempts += 1
         self.trace.fallback_model_attempts += 1
         try:
             result = await self.gateway.estimate_nutrients(request)
         except BaseException:
-            event.status = "error"
+            if event is not None:
+                event.status = "error"
             raise
-        event.status = "completed"
+        if event is not None:
+            event.status = "completed"
         self.trace.usage.append(result[1])
         self.trace.nutrient_estimates.extend(result[0])
         return result
@@ -267,6 +287,13 @@ class ObservedNutrition:
     def __init__(self, tool: NutritionTool, trace: Trace, fault: str) -> None:
         self.tool, self.trace, self.fault = tool, trace, fault
 
+    async def candidates(
+        self, request: NutritionRequest, *, deadline: float
+    ) -> dict[str, UsdaFoodSearch]:
+        if self.fault in {"nutrition_timeout", "missing_nutrition"}:
+            return {}
+        return await self.tool.candidates(request, deadline=deadline)
+
     async def lookup(self, request: NutritionRequest, *, deadline: float) -> NutritionEvidence:
         event = ToolEvent(name="usda", fault_injected=self.fault != "none")
         self.trace.tools.append(event)
@@ -300,6 +327,17 @@ class ReplayGateway:
         self.case = case
         self.fixture = json.loads(
             (ROOT / "tests" / "fixtures" / "recipe-specialist.json").read_text(encoding="utf-8")
+        )
+
+    async def select_usda_foods(
+        self, request: UsdaSelectionRequest
+    ) -> tuple[tuple[UsdaFoodSelection, ...], TokenUsage]:
+        return (
+            tuple(
+                UsdaFoodSelection(ingredient_line_id=line_id, usda_food_id=ids[0])
+                for line_id, ids in request.allowed_food_ids.items()
+            ),
+            TokenUsage(input_tokens=100, output_tokens=50),
         )
 
     async def estimate_calories(

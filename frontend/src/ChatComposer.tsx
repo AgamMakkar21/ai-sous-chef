@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "./api";
 import {
+  CHAT_TIMEOUT_MS,
   inspectOperation,
   rememberOperation,
   safeTitle,
@@ -206,7 +207,7 @@ export default function ChatComposer({
         if (controller.signal.aborted) return;
         accept(operation);
         if (operation.turn.status === "pending") {
-          if (Date.now() - started >= 75_000)
+          if (Date.now() - started >= CHAT_TIMEOUT_MS)
             failed(new ApiError(0, "transport"));
           else timer = setTimeout(() => void poll(), 2_000);
         }

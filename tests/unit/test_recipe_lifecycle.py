@@ -239,7 +239,7 @@ def test_altered_persisted_recipe_does_not_inherit_its_old_safety_approval(
 ) -> None:
     source = generate(chat_api, executor)
     turn = documents(harness[0], "turn")[0]
-    turn["recipe"]["instructions"][0]["text"] = "Cook the rice, then garnish with peanut."
+    turn["recipe"]["ingredients"][0]["name"] = "peanut oil"
     rejected = accept(chat_api, source["generatedRecipeId"])
     assert rejected.status_code == 422, rejected.text
     assert not documents(harness[0], "recipe") and not documents(harness[0], "behavior")

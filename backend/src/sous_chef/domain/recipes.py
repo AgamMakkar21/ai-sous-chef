@@ -12,7 +12,7 @@ from pydantic import ConfigDict, Field, StringConstraints, model_validator
 from sous_chef.domain.agent_identity import AgentRole
 from sous_chef.domain.foundry import FoundryFailure, FoundryRequest
 from sous_chef.domain.groceries import GroceryModel, GroceryUnit, Quantity
-from sous_chef.domain.nutrition import FdcId
+from sous_chef.domain.nutrition import FdcId, UsdaFoodSearch
 from sous_chef.domain.profiles import Skill
 
 if TYPE_CHECKING:
@@ -191,9 +191,12 @@ class NutritionMapping(RecipeModel):
     conversion_basis: str | None = Field(default=None, min_length=1, max_length=500)
     approximate_match: bool = False
     quantity_estimate: QuantityEstimate | None = None
+    nutrients: tuple[Nutrient, ...] = Field(default=(), max_length=6)
 
     @model_validator(mode="after")
     def attributed_quantity(self) -> Self:
+        if len({item.name for item in self.nutrients}) != len(self.nutrients):
+            raise ValueError("USDA ingredient nutrients must have unique names.")
         if self.quantity_estimate is not None:
             if self.weight_grams != self.quantity_estimate.weight_grams:
                 raise ValueError("Estimated weight must match its quantity evidence.")
@@ -255,15 +258,21 @@ class CalorieEstimate(IngredientCalories):
 class IngredientNutrientEstimate(RecipeModel):
     ingredient_line_id: LineId
     nutrients: tuple[Nutrient, ...] = Field(min_length=1, max_length=6)
-    source: Literal["web_iq"] = "web_iq"
-    reference: str = Field(min_length=1, max_length=500, repr=False)
+    source: Literal["web_iq", "ai_knowledge"] = "web_iq"
+    reference: str | None = Field(min_length=1, max_length=500, repr=False)
     basis: str = Field(min_length=1, max_length=500, pattern=r"\S", repr=False)
 
     @model_validator(mode="after")
     def attributed_nutrients(self) -> Self:
         if len({item.name for item in self.nutrients}) != len(self.nutrients):
             raise ValueError("Ingredient nutrient estimates must have unique nutrient names.")
-        WebClaim(text=self.basis, source_url=self.reference)
+        if self.source == "ai_knowledge":
+            if self.reference is not None:
+                raise ValueError("AI nutrient estimates must not invent a citation.")
+        elif self.reference is None:
+            raise ValueError("Web nutrient estimates require a source reference.")
+        else:
+            WebClaim(text=self.basis, source_url=self.reference)
         return self
 
 
@@ -290,7 +299,7 @@ class NutritionUnknownComponent(RecipeModel):
 
 
 class NutritionEvidence(RecipeModel):
-    """USDA-calculated nutrition with separately attributed recipe-weight assumptions."""
+    """Recipe nutrition with USDA ingredient values and attributed fallback estimates."""
 
     status: Literal["known", "partial", "unavailable"]
     serving_basis: Literal["per_serving", "whole_recipe"]
@@ -303,7 +312,7 @@ class NutritionEvidence(RecipeModel):
     coverage: tuple[NutrientCoverage, ...] = Field(default=(), max_length=6)
     unknown_components: tuple[NutritionUnknownComponent, ...] = Field(default=(), max_length=30)
     ingredient_calories: tuple[IngredientCalories, ...] = Field(default=(), max_length=30)
-    nutrient_estimates: tuple[IngredientNutrientEstimate, ...] = Field(default=(), max_length=30)
+    nutrient_estimates: tuple[IngredientNutrientEstimate, ...] = Field(default=(), max_length=60)
 
     @model_validator(mode="after")
     def evidence_state(self) -> Self:
@@ -325,7 +334,7 @@ class NutritionEvidence(RecipeModel):
             or any(mapping.source_id not in source_ids for mapping in self.mappings)
             or source_ids != {mapping.source_id for mapping in self.mappings}
             or len(calorie_ids) != len(self.ingredient_calories)
-            or len(estimate_ids) != len(self.nutrient_estimates)
+            or len(estimate_pairs) != sum(len(item.nutrients) for item in self.nutrient_estimates)
             or any(name == "energy" for _, name in estimate_pairs)
         ):
             raise ValueError("Nutrition requires unique USDA sources and ingredient mappings.")
@@ -378,6 +387,16 @@ class NutritionEvidence(RecipeModel):
                 for item in self.unknown_components
                 for name in item.unknown_nutrients
             }
+            usda_pairs = {
+                (mapping.ingredient_line_id, item.name)
+                for mapping in self.mappings
+                for item in mapping.nutrients
+            }
+            covered_pairs = {
+                (line_id, item.name)
+                for item in self.coverage
+                for line_id in item.covered_ingredient_line_ids
+            }
             expected_status = (
                 "known"
                 if all(item.status == "known" for item in self.coverage)
@@ -387,6 +406,8 @@ class NutritionEvidence(RecipeModel):
             )
             if (
                 len(names) != 6
+                or not usda_pairs <= covered_pairs
+                or bool(usda_pairs & estimate_pairs)
                 or covered_ids != set(mapping_ids) | calorie_ids | estimate_ids
                 or any(
                     not set(item.covered_ingredient_line_ids)
@@ -435,6 +456,31 @@ class NutritionEvidence(RecipeModel):
                 ):
                     raise ValueError("Calorie totals must match the ingredient-level evidence.")
             for nutrient_coverage in self.coverage:
+                attributed = [
+                    (mapping.ingredient_line_id, nutrient.amount)
+                    for mapping in self.mappings
+                    for nutrient in mapping.nutrients
+                    if nutrient.name == nutrient_coverage.name
+                ] + [
+                    (estimate.ingredient_line_id, nutrient.amount)
+                    for estimate in self.nutrient_estimates
+                    for nutrient in estimate.nutrients
+                    if nutrient.name == nutrient_coverage.name
+                ]
+                if (
+                    nutrient_coverage.status != "unavailable"
+                    and {line_id for line_id, _ in attributed}
+                    == set(nutrient_coverage.covered_ingredient_line_ids)
+                    and (
+                        nutrient_coverage.whole_recipe_amount is None
+                        or abs(
+                            sum(amount for _, amount in attributed)
+                            - nutrient_coverage.whole_recipe_amount
+                        )
+                        > 0.011
+                    )
+                ):
+                    raise ValueError("Nutrient totals must match ingredient-level evidence.")
                 web_total = sum(
                     nutrient.amount
                     for estimate in self.nutrient_estimates
@@ -504,6 +550,15 @@ class WebDraft(RecipeModel):
     nutrient_estimates: tuple[IngredientNutrientEstimate, ...] = Field(
         default=(), max_length=30, repr=False
     )
+
+
+class UsdaFoodSelection(RecipeModel):
+    ingredient_line_id: LineId
+    usda_food_id: FdcId | None
+
+
+class RecoveryDraft(WebDraft):
+    food_selections: tuple[UsdaFoodSelection, ...] = Field(default=(), max_length=30)
 
 
 class CombinedRecipeDraft(RecipeDraft):
@@ -613,6 +668,7 @@ class NutritionRequest(RecipeModel):
     ingredients: tuple[DraftIngredient, ...] = Field(min_length=1, max_length=30, repr=False)
     selected_food_ids: dict[LineId, FdcId] = Field(default_factory=dict, max_length=30)
     allow_estimates: bool = False
+    require_selection: bool = False
     quantity_estimates: dict[LineId, QuantityEstimate] = Field(default_factory=dict, max_length=30)
 
     @model_validator(mode="after")
@@ -659,7 +715,6 @@ class CalorieGroundingRequest(WebGroundingRequest):
 
 
 class NutrientGroundingRequest(CalorieGroundingRequest):
-    use_web: Literal[True] = True
     missing_nutrients: dict[LineId, tuple[NutrientName, ...]] = Field(min_length=1, max_length=30)
 
     @model_validator(mode="after")
@@ -673,7 +728,25 @@ class NutrientGroundingRequest(CalorieGroundingRequest):
         return self
 
 
+class UsdaSelectionRequest(CalorieGroundingRequest):
+    prompt: str = Field(min_length=1, max_length=131072, pattern=r"\S", repr=False)
+    use_web: Literal[False] = False
+    allowed_food_ids: dict[LineId, tuple[FdcId, ...]] = Field(min_length=1, max_length=30)
+
+    @model_validator(mode="after")
+    def candidate_lines(self) -> Self:
+        if set(self.allowed_food_ids) != set(self.ingredient_line_ids) or any(
+            not ids or len(ids) != len(set(ids)) for ids in self.allowed_food_ids.values()
+        ):
+            raise ValueError("USDA selection requires actual candidates for every requested line.")
+        return self
+
+
 class RecipeGenerator(Protocol):
+    async def select_usda_foods(
+        self, request: UsdaSelectionRequest
+    ) -> tuple[tuple[UsdaFoodSelection, ...], TokenUsage]: ...
+
     async def estimate_nutrients(
         self, request: NutrientGroundingRequest
     ) -> tuple[tuple[IngredientNutrientEstimate, ...], TokenUsage]: ...
@@ -708,6 +781,10 @@ class CombinedRecipeGenerator(Protocol):
 
 
 class NutritionTool(Protocol):
+    async def candidates(
+        self, request: NutritionRequest, *, deadline: float
+    ) -> dict[str, UsdaFoodSearch]: ...
+
     async def lookup(self, request: NutritionRequest, *, deadline: float) -> NutritionEvidence: ...
 
 

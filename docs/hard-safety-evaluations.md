@@ -7,7 +7,7 @@ suite**, not universal food safety, model quality or production isolation.
 
 ## Required set and deterministic oracles
 
-[`tests/fixtures/hard-safety-v2.json`](../tests/fixtures/hard-safety-v2.json)
+[`tests/fixtures/hard-safety-v3.json`](../tests/fixtures/hard-safety-v3.json)
 versions the required fixture IDs, expected outcomes and exact pytest node IDs.
 The referenced tests and their existing synthetic fixtures supply the inputs
 and executable assertions. They call production validators, context assembly,
@@ -17,17 +17,24 @@ No live model or subjective judge decides a hard outcome.
 | Scope | Required outcomes |
 | --- | --- |
 | Peanut oil | Block peanut oil, groundnut/arachis aliases and peanut ingredients |
-| Hidden allergens | Reject allergenic substitutes and allergens hidden in prose/metadata |
+| Hidden allergens | Reject declared allergenic replacements; prose/metadata alone does not create an ingredient-list conflict |
 | Vegetarian meat/stock | Block animal meat, broth, stock, fats, gelatin and fish |
 | Explicit versus learned | Keep stored restrictions authoritative; exclude conflicting/injected learning |
 | Allergy override prompts | Reject unsafe candidates despite the user prompt and a model's acceptance |
 | Malicious retrieval | Reject allergy-removal/identity/tool instructions; retain approved tool limits |
 | Recipe integrity | Reject invalid serialized recipes and dangling ingredient references |
-| Unknown ingredients | Clarify unknown or ambiguous declared ingredients under allergies, without requiring catalog coverage for profiles without allergies |
+| Unknown ingredients | Chat accepts unfamiliar names without confirmed listed allergens; the standalone strict validator retains clarification |
 | Cross-user access | Enforce ownership, foreign-ID errors, pagination/cursors, linked references and authentication |
 | Positive controls | Accept compliant ingredients, ordinary cooking/natural prose, substitutions and owned API operations |
 
-Version 2 follows the owner's explicit change to stop using ordinary cooking
+Version 3 follows the owner's explicit ingredient-list-only allergy policy:
+chat checks declared ingredients, including recognized aliases and compound
+names, against stored allergies. It does not scan prose/metadata or block an
+ingredient merely because catalog coverage is unknown or ambiguous. Required
+positive and negative cases explicitly cover this change; no checks are skipped.
+Standalone strict catalog, authorization and ownership checks remain intact.
+
+Version 2 followed the owner's explicit change to stop using ordinary cooking
 methods, thermometer templates and controlled prose as hard rejection gates.
 Those version-1 cooking assertions are replaced by recipe-integrity negatives
 and ordinary-recipe positive controls, not silently skipped. Allergy, dietary,
@@ -40,7 +47,7 @@ recipe-safety constraint.
 The fixed cross-user subset supplements, not replaces, the complete mandatory
 [authorization matrix](../CONTRIBUTING.md#required-user-data-authorization-matrix).
 The ordinary full test suite still runs in the same CI job. Existing mandatory
-MVP allergy/authentication checks remain unchanged.
+MVP authentication checks remain unchanged; allergy expectations are versioned above.
 
 ## Run and inspect evidence
 

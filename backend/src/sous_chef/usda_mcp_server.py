@@ -216,10 +216,14 @@ class FoodDataCentral:
         except httpx.HTTPError:
             raise FdcError("unavailable") from None
 
-    async def search(self, keyword: str, limit: int = 20) -> UsdaFoodSearch:
-        words = _words(keyword)
+    async def search(
+        self, keyword: str, limit: int = 20, *, agent_selection: bool = False
+    ) -> UsdaFoodSearch:
+        words = _words(keyword) if not agent_selection else []
         if (
-            not words
+            not keyword.strip()
+            or not agent_selection
+            and not words
             or len(keyword) > 100
             or any(c in keyword for c in "%_\x00\r\n")
             or not 1 <= limit <= 20
@@ -229,7 +233,7 @@ class FoodDataCentral:
             "POST",
             "foods/search",
             {
-                "query": " ".join("+" + word for word in words),
+                "query": keyword if agent_selection else " ".join("+" + word for word in words),
                 "dataType": ["Foundation", "SR Legacy"],
                 "pageSize": PAGE_SIZE,
                 "pageNumber": 1,
@@ -242,17 +246,18 @@ class FoodDataCentral:
             ) != len(result.foods):
                 raise FdcError("invalid_result")
             foods = [food.food() for food in result.foods]
-            foods = [
-                food
-                for food in foods
-                if all(
-                    word in _words(food.long_desc)
-                    if word in _FORMS
-                    else word in food.long_desc.casefold()
-                    for word in words
-                )
-            ]
-            foods.sort(key=lambda food: _rank(food, words))
+            if not agent_selection:
+                foods = [
+                    food
+                    for food in foods
+                    if all(
+                        word in _words(food.long_desc)
+                        if word in _FORMS
+                        else word in food.long_desc.casefold()
+                        for word in words
+                    )
+                ]
+                foods.sort(key=lambda food: _rank(food, words))
             return UsdaFoodSearch(
                 foods=tuple(foods[:limit]),
                 truncated=result.total_hits > len(result.foods) or len(foods) > limit,
@@ -316,10 +321,12 @@ def create_server(api: FoodDataCentral) -> FastMCP:
     server = FastMCP("usda-fooddata-central")
 
     @server.tool()
-    async def search_foods(keyword: str, limit: int = 20) -> str:
+    async def search_foods(keyword: str, limit: int = 20, agent_selection: bool = False) -> str:
         """Return source candidates; never guess a cut, skin or preparation."""
         try:
-            return (await api.search(keyword, limit)).model_dump_json()
+            return (
+                await api.search(keyword, limit, agent_selection=agent_selection)
+            ).model_dump_json()
         except FdcError as error:
             return json.dumps({"error": error.code})
 

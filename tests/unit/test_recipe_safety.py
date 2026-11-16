@@ -18,6 +18,7 @@ from sous_chef.domain.orchestrator import (
 from sous_chef.domain.recipe_safety import (
     UNABLE,
     RecipeSafetyError,
+    RecipeSafetyFailure,
     render_recipe,
     validate_final_recipe,
 )
@@ -120,21 +121,26 @@ def test_compliant_recipe_is_rendered_without_untrusted_evidence_or_commentary()
         "non-ascii-food",
     ],
 )
-def test_undeclared_allergens_in_prose_are_blocked(text: str) -> None:
-    with pytest.raises(RecipeSafetyError) as caught:
-        validate_final_recipe(
-            full_recipe(instructions=(text,)), SafetyProfile(allergies=("peanut", "tree nut"))
-        )
-    assert text not in str(caught.value)
-    assert "peanut" not in str(caught.value)
+def test_allergy_validation_only_checks_declared_ingredients_not_prose(text: str) -> None:
+    recipe = full_recipe(instructions=(text,))
+    assert validate_final_recipe(recipe, SafetyProfile(allergies=("peanut", "tree nut"))) == recipe
 
 
-@pytest.mark.parametrize("name", ["mystery seasoning", "rice and peanut", "rice\u9db4"])
-def test_unknown_ingredients_only_require_clarification_under_hard_restrictions(name: str) -> None:
+@pytest.mark.parametrize(
+    "name", ["mystery seasoning", "rice\u9db4", "chicken breast (mystery seasoning)", "pesto"]
+)
+def test_unknown_or_ambiguous_names_do_not_block_without_a_listed_allergen(name: str) -> None:
     recipe = full_recipe(names=(name,))
     assert validate_final_recipe(recipe, SafetyProfile()) == recipe
-    with pytest.raises(RecipeSafetyError):
-        validate_final_recipe(recipe, SafetyProfile(allergies=("peanut",)))
+    assert validate_final_recipe(recipe, SafetyProfile(allergies=("peanut",))) == recipe
+
+
+@pytest.mark.parametrize("name", ["rice and peanut", "PEANUTS", "peanut oil", "groundnut oil"])
+def test_listed_allergens_and_recognized_aliases_remain_blocked(name: str) -> None:
+    with pytest.raises(RecipeSafetyError) as caught:
+        validate_final_recipe(full_recipe(names=(name,)), SafetyProfile(allergies=("peanut",)))
+    assert caught.value.code == RecipeSafetyFailure.INGREDIENT
+    assert name not in str(caught.value)
 
 
 def test_safe_replacement_does_not_consume_the_excluded_original_allergen() -> None:
@@ -150,11 +156,8 @@ def test_safe_replacement_does_not_consume_the_excluded_original_allergen() -> N
     recipe = StructuredRecipe.model_validate_json(json.dumps(data))
     assert validate_final_recipe(recipe, SafetyProfile(allergies=("milk",))) == recipe
     data["substitutions"][0]["reason"] = "Use olive oil, then garnish with butter."
-    with pytest.raises(RecipeSafetyError):
-        validate_final_recipe(
-            StructuredRecipe.model_validate_json(json.dumps(data)),
-            SafetyProfile(allergies=("milk",)),
-        )
+    updated = StructuredRecipe.model_validate_json(json.dumps(data))
+    assert validate_final_recipe(updated, SafetyProfile(allergies=("milk",))) == updated
 
 
 def test_replacement_ingredient_itself_is_subject_to_current_allergies() -> None:
@@ -177,14 +180,12 @@ def test_replacement_ingredient_itself_is_subject_to_current_allergies() -> None
 
 
 @pytest.mark.parametrize("field", ["title", "fit_reasons", "adaptations"])
-def test_ingredient_bearing_metadata_cannot_bypass_the_gate(field: str) -> None:
-    value: Any = "Garnish with peanut"
+def test_metadata_mentions_do_not_create_ingredient_list_allergy_conflicts(field: str) -> None:
+    value: Any = "No peanuts used."
     if field != "title":
         value = (value,)
-    with pytest.raises(RecipeSafetyError):
-        validate_final_recipe(
-            full_recipe().model_copy(update={field: value}), SafetyProfile(allergies=("peanut",))
-        )
+    recipe = full_recipe().model_copy(update={field: value})
+    assert validate_final_recipe(recipe, SafetyProfile(allergies=("peanut",))) == recipe
 
 
 @pytest.mark.parametrize(
@@ -222,12 +223,9 @@ def test_preparation_words_do_not_trigger_a_cooking_gate(name: str) -> None:
     assert validate_final_recipe(recipe, SafetyProfile()) == recipe
 
 
-def test_declared_food_ids_do_not_authorize_a_restricted_food_in_prose() -> None:
-    with pytest.raises(RecipeSafetyError):
-        validate_final_recipe(
-            full_recipe(names=("carrot",), instructions=("Cook with peanut oil.",)),
-            SafetyProfile(allergies=("peanut",)),
-        )
+def test_prose_does_not_change_the_list_used_for_allergy_validation() -> None:
+    recipe = full_recipe(names=("carrot",), instructions=("Avoid peanut oil.",))
+    assert validate_final_recipe(recipe, SafetyProfile(allergies=("peanut",))) == recipe
 
 
 @pytest.mark.parametrize(
@@ -254,24 +252,20 @@ def test_step_shorthand_uses_its_unambiguous_validated_ingredient_reference(
         (("rice", "coconut milk", "oat milk"), "Cook the rice with milk.", "milk"),
     ],
 )
-def test_step_references_do_not_hide_explicit_allergens_or_ambiguous_shorthand(
+def test_step_text_is_not_an_additional_allergy_gate(
     names: tuple[str, ...], text: str, allergy: str
 ) -> None:
-    with pytest.raises(RecipeSafetyError):
-        validate_final_recipe(
-            full_recipe(names=names, instructions=(text,)),
-            SafetyProfile(allergies=(allergy,)),
-        )
+    recipe = full_recipe(names=names, instructions=(text,))
+    assert validate_final_recipe(recipe, SafetyProfile(allergies=(allergy,))) == recipe
 
 
-def test_step_shorthand_cannot_borrow_another_steps_ingredient_reference() -> None:
+def test_generic_step_wording_does_not_change_declared_ingredient_matching() -> None:
     recipe = full_recipe(
         names=("rice", "olive oil"),
         instructions=("Cook the rice in oil.", "Drizzle the olive oil."),
         references=(("line0",), ("line1",)),
     )
-    with pytest.raises(RecipeSafetyError):
-        validate_final_recipe(recipe, SafetyProfile(allergies=("peanut",)))
+    assert validate_final_recipe(recipe, SafetyProfile(allergies=("peanut",))) == recipe
 
 
 def test_incorrect_instruction_references_and_model_copy_bypasses_are_revalidated() -> None:
@@ -294,11 +288,7 @@ def test_edits_and_substitutions_cannot_reuse_an_old_pass() -> None:
     recipe = validate_final_recipe(full_recipe(), SafetyProfile(allergies=("peanut",)))
     edit = recipe.model_copy(
         update={
-            "instructions": (
-                recipe.instructions[0].model_copy(
-                    update={"text": "Cook the rice, then garnish with peanut."}
-                ),
-            )
+            "ingredients": (recipe.ingredients[0].model_copy(update={"name": "peanut oil"}),),
         }
     )
     with pytest.raises(RecipeSafetyError):
@@ -327,11 +317,11 @@ def test_natural_recipe_prose_and_metadata_do_not_require_a_whitelist() -> None:
         ("Simmer in chicken stock.", SafetyProfile(allergies=("chicken",))),
     ],
 )
-def test_freeform_prose_retains_ambiguous_and_custom_allergy_checks(
+def test_freeform_prose_does_not_add_undeclared_ingredient_checks(
     text: str, profile: SafetyProfile
 ) -> None:
-    with pytest.raises(RecipeSafetyError):
-        validate_final_recipe(full_recipe(instructions=(text,)), profile)
+    recipe = full_recipe(instructions=(text,))
+    assert validate_final_recipe(recipe, profile) == recipe
 
 
 @pytest.mark.parametrize(
@@ -378,7 +368,6 @@ def test_poultry_preparation_is_not_a_cooking_gate(name: str) -> None:
     [
         "chicken breast (peanut coating)",
         "chicken breast, peanut oil",
-        "chicken breast (mystery seasoning)",
         "chicken breast without peanut",
     ],
 )
@@ -436,7 +425,7 @@ def test_coordinator_projection_must_match_full_instruction_references() -> None
 
 
 def test_one_final_gate_regeneration_shares_the_existing_four_call_budget() -> None:
-    bad = full_recipe(instructions=("Cook the rice, then garnish with peanut.",))
+    bad = full_recipe(names=("rice", "peanut oil"))
     specialist = FullSpecialist(bad, full_recipe())
     router = Coordinator(call(), call(call_id="revision"))
     result = asyncio.run(OrchestratorService(router, specialist).run(context()))
@@ -481,7 +470,7 @@ def test_rejection_diagnostics_only_contain_allowlisted_categories(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     configure_safe_telemetry()
-    bad = full_recipe(instructions=("Cook the rice, then garnish with peanut.",))
+    bad = full_recipe(names=("rice", "peanut oil"))
     router = Coordinator(call(), call(call_id="revision"))
     asyncio.run(OrchestratorService(router, FullSpecialist(bad, full_recipe())).run(context()))
     assert '"event":"recipe_safety_rejected"' in caplog.text
@@ -494,7 +483,7 @@ def test_rejection_diagnostics_only_contain_allowlisted_categories(
 def test_rejected_recipe_never_returns_as_success_and_regeneration_terminates(
     accept_rejected: bool,
 ) -> None:
-    bad = full_recipe(instructions=("Cook the rice, then garnish with peanut.",))
+    bad = full_recipe(names=("rice", "peanut oil"))
     specialist = FullSpecialist(bad, bad, full_recipe())
     router = Coordinator(
         call(),
@@ -517,7 +506,7 @@ def test_nested_accounted_work_cannot_give_regeneration_extra_model_calls() -> N
             budget.usage(USAGE)
             return result
 
-    bad = full_recipe(instructions=("Cook the rice, then garnish with peanut.",))
+    bad = full_recipe(names=("rice", "peanut oil"))
     specialist = NestedSpecialist(bad)
     router = Coordinator(call(), call(call_id="revision"))
     result = asyncio.run(OrchestratorService(router, specialist).run(context()))

@@ -28,7 +28,7 @@ backend function or an A2A connection, and no separate Web IQ model invocation
 occurs. Current-information query authorization is unchanged; this does not
 introduce general web-based recipe inspiration.
 
-The combined strict output is `combined_recipe_nutrition_v3`, an envelope with
+The combined strict output is `combined_recipe_nutrition_v4`, an envelope with
 `recipe`, `calorieEstimates` and `nutrientEstimates`. Recipe generation returns the existing draft
 plus `webClaims` (at most three short claims with `sourceUrl`) inside `recipe`,
 and empty estimate arrays. Nutrient fallback returns `recipe=null`,
@@ -51,7 +51,7 @@ response is not proof that private data was never searched. This is intentionall
 different from the isolated web phase; do not describe combined mode as providing
 that phase's pre-search privacy isolation.
 
-Combined source policy 13 has its own exact definition/phase/fingerprint checks.
+Combined source policy 14 has its own exact definition/phase/fingerprint checks.
 Manually attaching web search to an older retrieval version is not sufficient:
 the old instructions/output schema and stale fingerprint metadata do not meet
 this contract. Preserve existing agent identities and versions, and publish a
@@ -194,7 +194,7 @@ It replaces the earlier PostgreSQL/SR28 integration: no database, data download,
 upstream executable download, SQL tool or database firewall is needed.
 The server and its pinned MCP/HTTP dependencies ship in the normal Python package.
 
-The only tools are `search_foods(keyword, limit=20)` and
+The only tools are `search_foods(keyword, limit=20, agent_selection=false)` and
 `get_nutrition_profile(fdc_id)`. Identifiers are original **FDC IDs**, not padded
 five-digit NDB numbers. Only Foundation and SR Legacy records are accepted;
 their nutrient amounts use the per-100-g basis. Branded and Survey/FNDDS records
@@ -293,7 +293,7 @@ Only ingredient names/FDC IDs leave the backend, not profile, allergy, history,
 user or conversation metadata. The logical `usda_nutrition` tool is still one
 reserved composite operation and makes no additional model calls.
 
-Search sends all punctuation-separated terms to FDC as required terms. It reads
+Standalone search sends all punctuation-separated terms to FDC as required terms. It reads
 one relevance-ranked page of at most 20 Foundation/SR Legacy records, validates
 it, preserves every term locally, then ranks before the requested candidate limit.
 The smaller source page keeps ordinary broad searches such as rice and salt
@@ -321,7 +321,7 @@ name. Empty searches never broaden by dropping terms; a saturated
 An explicit selected FDC ID must belong to the current search results;
 its detail ID, data type and descriptions must match before values are used.
 Unknown/ambiguous foods have unavailable nutrition rather than an invented mapping.
-Recipe enrichment explicitly enables approximate, source-backed matches. It removes
+Legacy recipe enrichment explicitly enables approximate, source-backed matches. It removes
 non-nutritional preparation words such as sliced, minced, drained, deveined,
 boneless and generic pieces/chunks (without removing an actual breast/thigh cut),
 but preserves raw/cooked, ground meat, fat, skin and other composition qualifiers.
@@ -359,32 +359,42 @@ measured user inputs, and are not dietary recommendations.
 
 These are **assumed whole-recipe amounts**, not a fabricated weight per piece.
 Original ingredient quantities, shopping quantities and pantry ownership are
-never rewritten. Supported measured mass/volume and USDA household portions take
-precedence. Mappings disclose `quantityEstimate`, source quotes, source mass and
+never rewritten. Supported measured mass takes precedence in chat; household
+portions are not interpreted with keyword heuristics. Mappings disclose
+`quantityEstimate`, source quotes, source mass and
 servings, and the assumed gram weight in `conversionBasis`. USDA alone supplies
-nutrient values. When no reliable estimate exists, nutrition stays explicitly
-partial/unavailable and the card asks the user to specify an amount or weight.
+nutrient values. When no reliable source weight exists, the missing nutrition
+uses the explicitly attributed web/AI recovery below, without rewriting the amount.
 Empty comparable-recipe web results do not invent evidence; provider failures
 remain explicit. Older snapshots without quantity assumptions remain readable.
 Rollback to an older strict reader requires compatibility review before exposing
 new nullable-quantity mappings or `quantityEstimate` fields to that reader.
 
-There is no ingredient-specific synonym/substitution table in nutrition lookup.
-Generic preparation normalization converts `uncooked` to `raw` and `skinless`
-to `meat only`, but keeps variety, blend, dry/ground and composition wording.
-Compatible USDA comma-separated identity/qualifier descriptions are supported;
-an unrelated compound name or explicit added-ingredient wording is not a match merely because
-it contains a requested word. Approximate matches reject unrelated prepared
-dishes, organ meats and unrequested skin. Compatible candidates are ranked by exact word match,
-raw form, SR Legacy data (which commonly includes household portions), then
-specificity and stable source identity. A truncated search is not proof of
-uniqueness, but can supply a clearly labeled approximate recipe match. Explicit
-user-selected IDs and grocery lookup retain their existing source validation.
+Chat uses `agent_selection=true` for both candidate discovery and the fresh
+selected-ID verification search. It sends the original ingredient name as a
+normal USDA query and preserves source order, without forced keyword terms or
+application preparation filters/ranking. Source validation and the 20-row limit
+still apply.
 
-All 30 supported ingredient lines can be queried, with at most 60 read-only MCP
-calls and 30 USDA sources. Normalized name/selection pairs share one profile
-within a request without combining their quantity mappings. Unmatched ingredients
-remain explicitly unmapped and the result cannot be `known`.
+Chat searches USDA using the generated ingredient names unchanged. One bounded
+tool-free AI invocation interprets the returned food descriptions, including
+identity, preparation and raw/cooked state, and selects an actual candidate ID
+or null for each requested line. Chat does not use preparation keyword lists,
+word overlap, a preferred raw form, SR Legacy ranking or household-portion
+keyword matching to decide food identity or grams.
+
+The backend validates exact requested line coverage and candidate membership.
+It then rechecks each selected ID against a fresh USDA search and verifies the
+fetched profile's identity before calculating nutrition. Invalid, timed-out or
+null selections leave gaps for web/AI recovery; they never fall back to the old
+semantic matcher or fabricate USDA evidence. Standalone grocery lookup and
+explicit source-ID validation retain their existing contracts.
+
+All 30 supported ingredient lines can be queried: at most 30 initial candidate
+searches, 30 validation searches and 30 profile fetches. Repeated original names
+share candidate results and identical name/selection pairs share profiles
+within that operation, without combining quantities. Unmatched ingredients stay
+unmapped to USDA, but complete attributed recovery can make nutrition `known`.
 
 The backend converts these mass units exactly:
 
@@ -403,13 +413,13 @@ skin, flavor and fat level. These are proposed recipe amounts, not measurements
 of the user's inventory. Explicit user-provided quantities, units and food-form
 constraints remain unchanged. The model must not invent a gram conversion for
 cups, spoons, pieces or packages, or silently choose an unspecified product form.
-Those ingredients can still have unavailable nutrition.
+Those ingredients use source-backed quantity assumptions or the full-nutrient
+web/AI recovery; missing source data is not silently treated as zero.
 
-The backend resolves recipe names against real USDA candidates using the
-approximation policy above and verifies the selected profile before calculating
-values. No model-generated FDC IDs, nutrient amounts or extra model calls are
-introduced. Supported matching does not guarantee that USDA has a compatible
-record or all six nutrients.
+AI chooses only from the actual USDA candidates; it cannot invent FDC IDs or
+supply USDA nutrient amounts. This consumes one separately bounded model call
+per specialist generation, not either of the two recovery calls. USDA may still
+lack a compatible record or one of the six nutrients.
 
 This instruction change requires a newly published and verified specialist
 source: combined policy **9**, or policy **8** for legacy phases. Policy numbers
@@ -437,14 +447,16 @@ rounded to two decimal places using round-half-up, only after aggregation.
 Changing servings without changing ingredient quantities leaves whole-recipe
 amounts unchanged. Changing quantities requires a new calculation.
 
-Household volumes (`ml`, `l`, `tsp`, `tbsp`, `cup`) use the selected USDA food's
+Outside the chat path, household volumes (`ml`, `l`, `tsp`, `tbsp`, `cup`) use the selected USDA food's
 `foodPortions` gram weights, including the source portion's amount and unit.
 Equivalent volumes scale using US customary measures (cup 236.5882365 mL,
 tablespoon 14.78676478125 mL, teaspoon 4.92892159375 mL). Preparation-specific
 portions are preferred where available. Recipe pieces/items use compatible
 source portions for any identified food, not a whitelist of produce or eggs.
 Explicit part names must match the source part; a whole fruit cannot establish
-a wedge's weight. Medium size is preferred when no size was specified.
+a wedge's weight. Medium size is preferred when no size was specified. Chat deliberately bypasses
+these legacy portion-selection heuristics: only defined mass conversions or
+existing cited quantity estimates establish USDA grams.
 
 There are no ingredient-name density constants or assumed wedges-per-fruit
 ratios. Source-backed volume weights work for any food; without usable source
@@ -551,9 +563,14 @@ The persisted `web_iq` source/tool identifiers are retained for compatibility
 with existing recipe history; they identify Bing-grounded web evidence, not a
 separate Web IQ provider.
 
-The backend reserves 30 seconds for calorie fallback plus two seconds for final
-completion, within the original request deadline. Both calorie invocations share
-that single 30-second ceiling; recovery never resets it. Fallback leaves the final two seconds
+After recipe generation, the backend leaves two seconds for final completion
+and reserves at most half the remaining usable time (capped at 60 seconds) for
+nutrition fallback. USDA gets the other half instead of an already-expired
+deadline when agent generation is slow. Its existing per-lookup timeout still
+applies; unused USDA time remains available to fallback. Both fallback invocations share
+a single 60-second ceiling; recovery never resets it. The web call is capped at
+half the available recovery window so tool-free AI still has time to run.
+Fallback leaves the final two seconds
 and never extends the whole-operation deadline. No application input/output token
 ceiling is imposed or sent to the provider, and high reported usage cannot invalidate
 otherwise valid evidence. This does not permit another revision or search.
@@ -567,8 +584,9 @@ turning an empty result into zero calories. Malformed/incomplete responses,
 rejected optional calls and invalid attribution are discarded and logged as
 `calorie_fallback_unavailable`; a failed web-first invocation still permits the
 independent tool-free recovery. If that also fails, the backend must report the
-remaining gap honestly rather than fabricate an amount. Neither failure discards the already-validated recipe
-or existing USDA values. Authentication/configuration failures remain explicit.
+remaining gap honestly rather than fabricate an amount: generation fails explicitly
+instead of delivering a newly partial recipe. Successful USDA and web values are
+never overwritten. Authentication/configuration failures remain explicit.
 Transient USDA API failure after successful MCP initialization is logged but
 does not prevent startup; initialization/schema/authentication failures remain
 fail-closed. Live release smoke requires complete attributed nutrition,
@@ -578,10 +596,16 @@ including energy, protein, carbohydrate, fat, fiber and sodium. A single bounded
 Bing search supplies only values supported by searched, natively cited sources,
 scaled to the whole specified ingredient quantity. It cannot overwrite a known
 USDA value or use absence as evidence for zero.
-Non-calorie web evidence is stored in `nutrition.nutrientEstimates`, with ingredient
-line IDs, nutrient amount/unit pairs, HTTPS references and conversion explanations.
-Energy remains in `ingredientCalories`. The existing independent AI recovery is
-calorie-only; it cannot fill missing non-calorie nutrients.
+Non-calorie fallback evidence is stored in `nutrition.nutrientEstimates`, with
+ingredient line IDs, nutrient amount/unit pairs, source and portion assumptions.
+Web entries require HTTPS references; AI knowledge entries require null references
+and are explicitly approximate, never presented as searched evidence. The
+independent tool-free source supports `purpose=nutrition_fallback` for all six
+nutrients, and retains legacy `purpose=calorie_fallback` compatibility.
+Up to 60 persisted records allow disjoint web/AI gaps for the same ingredient;
+duplicate ingredient/nutrient pairs are rejected. Energy remains in
+`ingredientCalories`. USDA mappings additionally carry `nutrients` scaled to each
+ingredient's whole recipe quantity, enabling the full ingredient breakdown.
 If any nutrient remains unsupported after fallback, generation fails explicitly
 rather than completing chat with partial nutrition. Historical partial snapshots
 remain readable and retain their original uncertainty labels.
@@ -657,26 +681,24 @@ authentication to test the lookup.
 
 ### Agent food resolution
 
-`UsdaNutritionTool.search(name, deadline=...)` exposes the same typed, bounded
-source candidates to agent composition. A resolver may select an FDC ID only
-when the ingredient's cut/form supports it; generic `chicken` cannot authorize
-choosing breast, skin or raw/cooked state. Otherwise ask for clarification or
-leave nutrition unavailable. No source values are generated by the model.
+`UsdaNutritionTool.candidates(request, deadline=...)` batches typed, bounded
+source candidates for chat. The independently pinned tool-free source receives
+`purpose=usda_selection` with ingredient names and their actual candidate lists.
+It interprets food identity and preparation semantically, without an
+application-maintained ingredient dictionary. No source values are generated
+by the selection model.
 
 Pass justified selections in `NutritionRequest.selected_food_ids`, keyed by
 ingredient line ID. `RecipeSpecialistService.generate` also accepts those
 `selected_food_ids` for a composing caller; unknown line IDs or malformed FDC
 numbers are rejected, and the adapter validates candidate membership and profile
 provenance. Different selections of the same ingredient name never share a cached
-profile. Existing specialist name lookups automatically support equivalent word
-ordering without another model invocation.
-
-This supplies the source-search/selection capability; it does not add an
-unbudgeted model round-trip, publish new Foundry tool definitions or enable chat.
-The live orchestration in #39 must expose these candidates as untrusted tool
-data, account for search/model calls in its existing budget, and request
-clarification or retain unavailable nutrition for unresolved ambiguity. Keep
-deterministic final ingredient safety checks independent of nutrition selection.
+profile. Chat sets `require_selection=True`; an absent/null ID cannot reactivate
+the legacy approximate matcher. A failed selection is logged and complete
+web/AI recovery remains available. The selector cannot call tools or return
+nutrition/citations, and its separate allowance cannot fund another specialist
+attempt or consume recovery's reserved calls. Deterministic final declared-list
+allergy checks remain independent of nutrition selection.
 
 ## Specialist request flow
 
@@ -738,7 +760,7 @@ category, not a raw upstream body. A returned `status=unavailable` nutrition res
 is valid and explicit, not zero nutrition; an actual tool failure stops the request.
 
 The supplied finite deadline covers retrieval, generation and nutrition together,
-with a 60-second ceiling. Cancellation starts no replacement invocation. The
+with a 120-second ceiling. Cancellation starts no replacement invocation. The
 gateway leaves input/output token limits to the model provider. Dev recipe MCP retrieval allows
 up to 65,536 characters for its complete result, including every
 reference record. Local/production retain the 16,000-character limit.
@@ -779,7 +801,7 @@ the native `WebSearchTool` (`web_search`, external access, low context),
 required tool selection and strict `WebDraft` schema. The request limits native
 tool calls to one and disables provider storage without overriding source configuration.
 No approximate location is inferred.
-The search stage has a 10-second ceiling inside the shared 60-second deadline.
+The search stage has a 10-second ceiling inside the shared 120-second deadline.
 
 The backend accepts at most three short claims. Each requires an HTTPS URL present
 in both the native search sources and URL-citation annotations, valid annotation
@@ -856,12 +878,12 @@ nutrition contains no amounts, mappings or fake citations. Nutrient units are
 fixed (`kcal` energy, `mg` sodium, `g` protein/carbohydrate/fat/fiber). The source
 dataset/version and serving basis are preserved. No assertion here guarantees
 medical suitability or that every consumed ingredient has been extracted from
-free-text instructions: the final deterministic full-recipe gate independently
-checks the latest profile and ingredient-bearing prose before display/persistence.
+free-text instructions. The final deterministic full-recipe gate checks declared
+ingredient names against the latest stored allergies before display/persistence.
 
 ## Final recipe gate (ASC-36)
 
-`domain/recipe_safety.py` policy **3** revalidates the actual serialized
+`domain/recipe_safety.py` policy **4** revalidates the actual serialized
 `StructuredRecipe`, not just its nominal Python type or fit projection. It uses
 the reviewed ingredient catalog and ASC-35's deterministic hard-constraint checks.
 Dislikes and learned preferences never weaken explicit allergies. Dietary
@@ -875,31 +897,18 @@ Natural instructions and descriptive dish names are accepted. This deliberately
 removes the `recipe_cooking_rejected`/`recipe_prose_unsupported` gates that exhausted
 both attempts in the observed dev chat. A pass is not cooking-safety certification.
 
-- Stored allergies remain mandatory. Under those allergies,
-  declared ingredients must still resolve unambiguously; conflicting,
-  possible-allergen and unknown products remain blocked or need clarification.
-  Without allergies, catalog coverage alone does not reject a recipe.
+- Stored allergies remain mandatory for the **declared ingredient list only**.
+  Confirmed matches, recognized aliases (including groundnut/arachis for peanut),
+  compound ingredients and explicit custom-food allergy matches remain blocked.
+  Unknown or ambiguous catalog names alone do not reject chat recipes.
 - Instructions, titles, fit reasons, adaptations and substitution reasons are
-  scanned using the same catalog traits/custom-allergy matching. Ordinary prose
-  words are not treated as unknown ingredient names. Known forbidden ingredients
-  and relevant ambiguous products cannot be hidden in prose. Name specific oils,
-  milks, stocks and sauces rather than ambiguous generic products.
-  In instruction steps, a complete recognized alias may refer to exactly one
-  already-validated ingredient linked by that step's `ingredientLineIds`.
-  This prevents shorthand from turning a declared specific product into an
-  unknown product. Multiple matches, cross-step borrowing, explicit conflicting
-  foods and unrecognized declared products still fail closed; metadata has no
-  such reference binding.
-- The catalog is English, not a universal language/ingredient classifier.
-  Untranslated non-Latin letters in ingredients or recipe prose fail closed under
-  stored allergies; accented Latin text is supported. Every consumed ingredient
-  must still be declared by the specialist; free prose cannot prove exhaustive
-  extraction of every possible food.
+  not additional allergy gates. The catalog is not a universal-language food
+  classifier; unknown scripts alone do not block. The specialist must still
+  declare consumed ingredients, but this check does not prove exhaustive
+  extraction, product-label safety or absence of cross-contact.
 - A substitution references its actual replacement line, which must pass the
-  current allergies. `Use olive oil instead of butter` / `Olive oil replaces
-  butter` describes an excluded original, not consumption. The optional suffix
-  `to respect the dairy restriction` is also descriptive. These phrases do not
-  excuse butter used elsewhere as a consumed food.
+  current allergies. An excluded original named in its description is not
+  checked as a consumed ingredient; the declared replacement is checked.
 - Schema/reference integrity, current-profile rereads, projection equality,
   output size limits, source attribution and honest USDA coverage remain enforced.
   Unknown foods do not acquire fabricated nutrition because cooking checks changed.
@@ -944,8 +953,8 @@ thermometer template to pass the backend.
 
 The specialist and Orchestrator source instructions describe natural recipe
 output and the remaining profile/integrity checks. Source policy versions are
-Orchestrator **7**, Recipe + Nutrition **8**, combined Recipe + Nutrition **11**,
-and isolated web/calorie **10**. These are
+Orchestrator **9**, Recipe + Nutrition **9**, combined Recipe + Nutrition **14**,
+isolated web **13**, and independent recovery **4**. These are
 policy versions, **not** Foundry agent-version pins. Existing immutable agents
 do not acquire the new instructions when only backend code changes.
 
@@ -1074,8 +1083,8 @@ managed-identity-first. An ambiguous publication error must be inspected before
 retrying. The command changes no app runtime flags or release manifest.
 
 The current `deploy/agents.dev.json` candidate pins read-back-verified combined
-source 54 (policy 13), tool-free calorie source 55 (policy 3), and Orchestrator
-source 39 (policy 7) in an enabled schema-version-5 release
+source 58 (policy 14), tool-free full-nutrition recovery source 59 (policy 4),
+and Orchestrator source 43 (policy 9) in an enabled schema-version-5 release
 (schema version 3 remains the legacy phased format). Live adapters and final
 safety are composed by the backend; publishing a source or preparing this manifest
 does not deploy that backend or prove end-to-end UI acceptance. Existing manually

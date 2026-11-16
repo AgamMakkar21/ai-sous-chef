@@ -226,10 +226,10 @@ def test_one_revision_is_four_model_calls_with_the_same_context_and_budget() -> 
 
 @pytest.mark.parametrize(
     "bad",
-    [candidate("peanut oil"), candidate("mystery seasoning")],
-    ids=["peanut-oil", "unknown-seasoning"],
+    [candidate("peanut oil"), candidate("roasted peanuts")],
+    ids=["peanut-oil", "peanuts"],
 )
-def test_model_cannot_override_stored_allergies_or_accept_unknown_ingredients(
+def test_model_cannot_override_a_declared_ingredient_allergy_conflict(
     bad: RecipeCandidate,
 ) -> None:
     router = Coordinator(call(), answer())
@@ -240,6 +240,15 @@ def test_model_cannot_override_stored_allergies_or_accept_unknown_ingredients(
     assert caught.value.code == OrchestratorFailure.INVALID_RESULT
     assert json.loads(router.requests[1].tool_output or "")["status"] == "safety_rejected"
     assert data.explicit_preferences.allergies == ("peanut",)
+
+
+def test_an_unknown_ingredient_without_an_allergy_match_is_not_rejected() -> None:
+    specialist = Specialist(candidate("mystery seasoning"))
+    result = asyncio.run(
+        OrchestratorService(Coordinator(call(), answer()), specialist).run(context())
+    )
+    assert result.status == "candidate"
+    assert len(specialist.calls) == 1
 
 
 def test_repeated_rejected_candidates_terminate_after_one_revision() -> None:
@@ -360,6 +369,30 @@ def test_calorie_allowance_does_not_consume_the_final_answers_original_headroom(
         budget.tool("web_iq", calorie_fallback=True)
 
 
+def test_usda_selection_is_once_per_generation_and_preserves_both_recovery_calls() -> None:
+    budget = ExecutionBudget(uuid4())
+    with pytest.raises(OrchestratorError):
+        budget.model(usda_selection=True)
+    budget.model(specialist=True)
+    budget.model(usda_selection=True)
+    with pytest.raises(OrchestratorError):
+        budget.model(usda_selection=True)
+    budget.tool("web_iq", calorie_fallback=True)
+    budget.model(calorie_fallback=True)
+    budget.model(calorie_fallback=True)
+    for _ in range(3):
+        budget.model()
+    assert budget.model_calls == 7 and budget.usda_selection_calls == 1
+    with pytest.raises(OrchestratorError):
+        budget.model()
+    late = ExecutionBudget(uuid4())
+    late.model(specialist=True)
+    late.model(specialist=True)
+    late.model(usda_selection=True)
+    with pytest.raises(OrchestratorError):
+        late.model(usda_selection=True)
+
+
 def test_timeout_and_cancellation_stop_the_local_specialist_without_replay() -> None:
     async def check() -> None:
         specialist = Specialist(candidate())
@@ -384,6 +417,25 @@ def test_timeout_and_cancellation_stop_the_local_specialist_without_replay() -> 
         assert router.requests == []
 
     asyncio.run(check())
+
+
+def test_slow_multi_call_recipe_can_complete_after_the_old_one_minute_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [monotonic()]
+    monkeypatch.setattr(orchestration, "monotonic", lambda: clock[0])
+
+    class DelayedCoordinator(Coordinator):
+        async def coordinate(self, request: CoordinationRequest) -> CoordinationStep:
+            clock[0] += 40
+            return await super().coordinate(request)
+
+    specialist = Specialist(candidate())
+    result = asyncio.run(
+        OrchestratorService(DelayedCoordinator(call(), answer()), specialist).run(context())
+    )
+    assert result.status == "candidate"
+    assert len(specialist.calls) == 1
 
 
 def test_synchronously_delayed_result_cannot_succeed_after_deadline(
@@ -457,7 +509,7 @@ def test_source_definition_is_reproducible_strict_and_does_not_bind_extra_tools(
         POLICY.max_tool_calls,
         POLICY.max_web_calls,
         POLICY.deadline_seconds,
-    ) == (4, 2, 1, 8, 1, 60)
+    ) == (4, 2, 1, 8, 1, 120)
     with pytest.raises(ValueError):
         build_orchestrator_definition(" ", policy_id)
     with pytest.raises(ValueError):

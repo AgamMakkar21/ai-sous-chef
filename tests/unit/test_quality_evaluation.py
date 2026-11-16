@@ -131,7 +131,8 @@ def test_capture_preserves_configured_grounding_mode_and_single_combined_usage(
         capture(case, suite.defaults, Settings.model_construct(foundry_recipe_nutrition_mode=mode))
     )
     assert all(item.status == "pass" for item in factual_checks(suite, case, observation).values())
-    expected_models = 4 if mode == "phased" and case.web == "required" else 3
+    expected_models = 5 if mode == "phased" and case.web == "required" else 4
+    assert observation.trace.usda_selection_attempts == 1
     assert observation.trace.model_attempts == len(observation.trace.usage) == expected_models
     assert len(observation.trace.web) == int(case.web == "required")
 

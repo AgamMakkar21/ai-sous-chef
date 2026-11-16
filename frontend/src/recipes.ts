@@ -47,8 +47,8 @@ type IngredientCalories = {
 type IngredientNutrientEstimate = {
   ingredientLineId: string;
   nutrients: { name: NutrientName; amount: number; unit: string }[];
-  source: "web_iq";
-  reference: string;
+  source: "web_iq" | "ai_knowledge";
+  reference: string | null;
   basis: string;
 };
 export type StructuredRecipe = {
@@ -92,6 +92,7 @@ export type StructuredRecipe = {
       approximateMatch?: boolean;
       weightGrams?: number | null;
       quantityEstimate?: QuantityEstimate | null;
+      nutrients?: { name: NutrientName; amount: number; unit: string }[];
     })[];
     coverage?: Coverage[];
     ingredientCalories?: IngredientCalories[];
@@ -338,14 +339,16 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
   if (
     !list(
       nutrientEstimates,
-      30,
+      60,
       (item): item is IngredientNutrientEstimate =>
         isRecord(item) &&
         typeof item.ingredientLineId === "string" &&
         ids.includes(item.ingredientLineId) &&
-        item.source === "web_iq" &&
-        text(item.reference, 500) &&
-        safeRecipeUrl(item.reference) !== null &&
+        (item.source === "ai_knowledge"
+          ? item.reference === null
+          : item.source === "web_iq" &&
+            text(item.reference, 500) &&
+            safeRecipeUrl(item.reference) !== null) &&
         text(item.basis, 500) &&
         list(
           item.nutrients,
@@ -362,7 +365,13 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
         ) &&
         unique(item.nutrients.map((nutrient) => nutrient.name)),
     ) ||
-    !unique(nutrientEstimates.map((item) => item.ingredientLineId))
+    !unique(
+      nutrientEstimates.flatMap((item) =>
+        item.nutrients.map(
+          (nutrient) => `${item.ingredientLineId}:${nutrient.name}`,
+        ),
+      ),
+    )
   )
     return false;
   if (
@@ -419,6 +428,24 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
         (item.conversionBasis == null || text(item.conversionBasis, 500)) &&
         (item.approximateMatch === undefined ||
           typeof item.approximateMatch === "boolean") &&
+        (item.nutrients === undefined ||
+          (list(
+            item.nutrients,
+            6,
+            (
+              nutrient,
+            ): nutrient is StructuredRecipe["nutrition"]["nutrients"][number] =>
+              isRecord(nutrient) &&
+              nutrientName(nutrient.name) &&
+              number(nutrient.amount, 0, 10_000_000) &&
+              nutrient.unit ===
+                (nutrient.name === "energy"
+                  ? "kcal"
+                  : nutrient.name === "sodium"
+                    ? "mg"
+                    : "g"),
+          ) &&
+            unique(item.nutrients.map((nutrient) => nutrient.name)))) &&
         amount(item) &&
         (item.quantityEstimate == null
           ? item.quantity !== null && item.unit !== null
@@ -538,6 +565,14 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
   const mappings = n.mappings;
   const nutritionSources = n.sources;
   for (const item of details) {
+    const usda = mappings.flatMap((mapping) =>
+      (mapping.nutrients ?? [])
+        .filter((nutrient) => nutrient.name === item.name)
+        .map((nutrient) => ({
+          lineId: mapping.ingredientLineId,
+          amount: nutrient.amount,
+        })),
+    );
     const estimates = nutrientEstimates.flatMap((estimate) =>
       estimate.nutrients
         .filter((nutrient) => nutrient.name === item.name)
@@ -546,6 +581,24 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
           amount: nutrient.amount,
         })),
     );
+    const attributed = [...usda, ...estimates];
+    if (
+      !unique(attributed.map((row) => row.lineId)) ||
+      attributed.some(
+        (row) => !item.coveredIngredientLineIds.includes(row.lineId),
+      ) ||
+      (attributed.length > 0 &&
+        same(
+          item.coveredIngredientLineIds,
+          attributed.map((row) => row.lineId),
+        ) &&
+        (item.wholeRecipeAmount === null ||
+          Math.abs(
+            attributed.reduce((sum, row) => sum + row.amount, 0) -
+              item.wholeRecipeAmount,
+          ) > 0.011))
+    )
+      return false;
     if (!estimates.length) continue;
     const total = item.wholeRecipeAmount;
     const webTotal = estimates.reduce(

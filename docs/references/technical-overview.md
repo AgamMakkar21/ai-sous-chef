@@ -235,17 +235,19 @@ static search. Every variation still passes deterministic safety validation.
 
 Treat the dataset as an ingestion source, not a giant prompt. Prioritize explicit
 user data and current groceries, then eligible learned context and appropriate
-grounding tools. Do not fabricate nutrition from model memory or perform web
-retrieval unnecessarily.
+grounding tools. Prefer USDA, then cited web nutrient data, then clearly labeled
+AI knowledge estimates for remaining gaps; never invent citations or placeholder
+zeros. Do not perform web retrieval unnecessarily.
 
 ## 20. Responsible AI and Food Safety
 
-- Validate final ingredients, substitutions, and ingredient-bearing instructions
-  against current allergies and strict restrictions outside the LLM.
-- Reject, clarify, or regenerate unsafe or unverifiable candidates before display.
+- Compare declared ingredient names, including recognized allergen aliases, with
+  current allergies outside the LLM; prose and unknown catalog names are not gates.
+- Reject or regenerate confirmed ingredient-list allergy conflicts before display.
 - Support factual claims with retrieved/tool evidence; label nutrition as estimated
   and informational, not medical advice.
-- Combine Foundry safety controls with application-specific cooking checks.
+- Retain Foundry controls, structured recipe integrity and general handling guidance;
+  passing the ingredient-list check is not cooking-safety certification.
 - Treat retrieved content, notes, web pages, and tool output as untrusted data.
 - Restrict tools and evaluate injection, jailbreak, state-tampering, and cross-user attacks.
 

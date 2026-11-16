@@ -14,7 +14,7 @@ from sous_chef.domain.recipes import StructuredRecipe
 
 @dataclass(frozen=True)
 class OrchestratorPolicy:
-    version: int = 7
+    version: int = 10
     max_model_calls: int = 4
     max_calorie_fallback_calls: int = 1
     max_calorie_model_calls: int = 2
@@ -23,8 +23,8 @@ class OrchestratorPolicy:
     max_tool_calls: int = 8
     max_web_calls: int = 1
     web_deadline_seconds: float = 10
-    calorie_deadline_seconds: float = 30
-    deadline_seconds: int = 60
+    calorie_deadline_seconds: float = 60
+    deadline_seconds: int = 120
 
 
 POLICY = OrchestratorPolicy()
@@ -201,7 +201,7 @@ class SpecialistBudget(Protocol):
         """Check the deadline and reservation; leave token limits to the provider."""
         ...
 
-    def model(self, *, calorie_fallback: bool = False) -> None:
+    def model(self, *, calorie_fallback: bool = False, usda_selection: bool = False) -> None:
         """Reserve any additional model invocation before executing it."""
         ...
 

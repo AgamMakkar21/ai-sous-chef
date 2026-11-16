@@ -15,9 +15,8 @@ from sous_chef.domain.agent_identity import AgentRole, AgentTool, authorize_tool
 from sous_chef.domain.context import RequestContext
 from sous_chef.domain.food_safety import (
     IngredientLine,
-    SafetyProfile,
     Verdict,
-    validate_ingredients,
+    validate_declared_allergies,
 )
 from sous_chef.domain.foundry import FoundryFailure, FoundryGatewayError
 from sous_chef.domain.ingredient_catalog import resolve
@@ -36,7 +35,6 @@ from sous_chef.domain.recipes import (
     CombinedRecipeGenerator,
     DraftIngredient,
     GroundedRecipeGenerationRequest,
-    NutrientGroundingRequest,
     NutritionRequest,
     NutritionTool,
     RecipeGenerationRequest,
@@ -50,11 +48,10 @@ from sous_chef.domain.recipes import (
     WebGroundingRequest,
 )
 from sous_chef.services.calorie_estimates import (
-    calorie_request,
     nutrient_request,
-    with_calorie_estimates,
     with_nutrient_estimates,
 )
+from sous_chef.services.nutrition import food_selection_request
 from sous_chef.services.quantity_estimates import recipe_quantity_estimates
 from sous_chef.services.recipe_grounding import recipe_knowledge_arguments, retrieval_query
 from sous_chef.services.web_grounding import public_web_query
@@ -295,10 +292,8 @@ class RecipeSpecialistService:
                     if web is not None:
                         span.add_event("web_iq.completed")
                     with operation(Operation.SAFETY):
-                        safety = validate_ingredients(
-                            SafetyProfile(
-                                allergies=context.explicit_preferences.allergies,
-                            ),
+                        safety = validate_declared_allergies(
+                            context.explicit_preferences.allergies,
                             tuple(
                                 IngredientLine(line_id=line.line_id, name=line.name)
                                 for line in draft.ingredients
@@ -324,30 +319,70 @@ class RecipeSpecialistService:
                         ingredients=draft.ingredients,
                         selected_food_ids=selected_food_ids or {},
                         allow_estimates=True,
+                        require_selection=True,
                         quantity_estimates=recipe_quantity_estimates(draft, grounding, web),
                     )
+                    remaining = deadline - monotonic() - 2
+                    if remaining <= 0:
+                        raise TimeoutError
+                    fallback_reserve = min(POLICY.calorie_deadline_seconds, remaining / 2)
+                    nutrition_deadline = deadline - fallback_reserve - 2
+                    selected = dict(nutrition_request.selected_food_ids)
+                    try:
+                        candidates = await self._nutrition.candidates(
+                            nutrition_request, deadline=nutrition_deadline
+                        )
+                        selection = food_selection_request(
+                            nutrition_request, candidates, operation_id=operation_id
+                        )
+                        if selection is not None:
+                            budget.model(usda_selection=True)
+                            async with asyncio.timeout_at((monotonic() + nutrition_deadline) / 2):
+                                choices, selection_usage = await self._generator.select_usda_foods(
+                                    selection
+                                )
+                            budget.usage(selection_usage)
+                            selected.update(
+                                {
+                                    item.ingredient_line_id: item.usda_food_id
+                                    for item in choices
+                                    if item.usda_food_id is not None
+                                }
+                            )
+                    except (TimeoutError, FoundryGatewayError, ValueError) as error:
+                        code = (
+                            error.code
+                            if isinstance(error, FoundryGatewayError)
+                            else FoundryFailure.TIMEOUT
+                            if isinstance(error, TimeoutError)
+                            else FoundryFailure.INVALID_RESULT
+                        )
+                        if code not in {
+                            FoundryFailure.TIMEOUT,
+                            FoundryFailure.UNAVAILABLE,
+                            FoundryFailure.THROTTLED,
+                            FoundryFailure.INVALID_RESULT,
+                            FoundryFailure.REJECTED,
+                            FoundryFailure.NO_RESULTS,
+                        }:
+                            raise
+                        operational_event(Event.USDA_FAILED, category=ErrorCategory(code.value))
+                    nutrition_request = nutrition_request.model_copy(
+                        update={"selected_food_ids": selected}
+                    )
                     evidence = await self._nutrition.lookup(
-                        nutrition_request, deadline=deadline - POLICY.calorie_deadline_seconds - 2
+                        nutrition_request, deadline=nutrition_deadline
                     )
                     fallback_deadline = min(
                         deadline - 2, monotonic() + POLICY.calorie_deadline_seconds
                     )
+                    web_deadline = (monotonic() + fallback_deadline) / 2
                     for use_web in (True, False):
-                        fallback = (
-                            nutrient_request(
-                                nutrition_request,
-                                evidence,
-                                operation_id=operation_id,
-                            )
-                            if use_web
-                            else calorie_request(
-                                nutrition_request,
-                                evidence,
-                                operation_id=operation_id,
-                                max_input_tokens=None,
-                                max_output_tokens=None,
-                                use_web=use_web,
-                            )
+                        fallback = nutrient_request(
+                            nutrition_request,
+                            evidence,
+                            operation_id=operation_id,
+                            use_web=use_web,
                         )
                         if fallback is None:
                             break
@@ -361,19 +396,14 @@ class RecipeSpecialistService:
                             budget.tool(AgentTool.WEB_IQ, calorie_fallback=True)
                         budget.model(calorie_fallback=True)
                         try:
-                            async with asyncio.timeout_at(fallback_deadline):
-                                if isinstance(fallback, NutrientGroundingRequest):
-                                    (
-                                        nutrient_estimates,
-                                        fallback_usage,
-                                    ) = await self._generator.estimate_nutrients(fallback)
-                                    merged = with_nutrient_estimates(evidence, nutrient_estimates)
-                                else:
-                                    (
-                                        estimates,
-                                        fallback_usage,
-                                    ) = await self._generator.estimate_calories(fallback)
-                                    merged = with_calorie_estimates(evidence, estimates)
+                            async with asyncio.timeout_at(
+                                web_deadline if use_web else fallback_deadline
+                            ):
+                                (
+                                    nutrient_estimates,
+                                    fallback_usage,
+                                ) = await self._generator.estimate_nutrients(fallback)
+                                merged = with_nutrient_estimates(evidence, nutrient_estimates)
                             budget.usage(fallback_usage, calorie_fallback=True)
                             if merged.status != "known":
                                 operational_event(

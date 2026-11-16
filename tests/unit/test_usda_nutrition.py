@@ -76,6 +76,31 @@ def test_unambiguous_reordered_words_resolve_without_choosing_a_different_food_f
     assert cooked.status == "unavailable"
 
 
+def test_chat_keeps_agent_candidate_mode_when_rechecking_selected_food(tmp_path: Path) -> None:
+    log = tmp_path / "chat-search.jsonl"
+
+    async def check() -> None:
+        tool = UsdaNutritionTool(config("candidates", log=log))
+        original = request(ingredient("chicken"))
+        candidates = await tool.candidates(original, deadline=monotonic() + 10)
+        selected = original.model_copy(
+            update={
+                "selected_food_ids": {"rice": candidates["rice"].foods[0].fdc_id},
+                "require_selection": True,
+            }
+        )
+        evidence = await tool.lookup(selected, deadline=monotonic() + 10)
+        assert evidence.status == "known" and evidence.mappings[0].usda_food_id == "99901"
+
+    asyncio.run(check())
+    searches = [
+        message["params"]["arguments"]
+        for message in map(json.loads, log.read_text().splitlines())
+        if message["method"] == "tools/call" and message["params"]["name"] == "search_foods"
+    ]
+    assert searches == [{"keyword": "chicken", "limit": 20, "agent_selection": True}] * 2
+
+
 def test_selected_candidate_line_ids_and_original_fdc_ids_are_validated() -> None:
     for selection in ({"foreign": "99901"}, {"rice": "0"}, {"rice": "00001"}, {"rice": "%"}):
         with pytest.raises(ValidationError):
@@ -98,7 +123,7 @@ def test_empty_multiword_search_never_drops_preparation_or_other_terms(tmp_path:
         for request in map(json.loads, log.read_text().splitlines())
         if request["method"] == "tools/call"
     ]
-    assert calls == [{"keyword": "chicken, raw", "limit": 20}]
+    assert calls == [{"keyword": "chicken, raw", "limit": 20, "agent_selection": False}]
 
 
 def test_known_food_has_typed_source_values_and_original_ndb_number() -> None:
@@ -144,6 +169,13 @@ def test_mass_conversion_and_servings_are_deterministic(
     assert evidence.mappings[0].source_id == evidence.sources[0].source_id
     assert evidence.mappings[0].weight_grams == pytest.approx(
         {"g": 1, "kg": 1000, "oz": 28.349523125, "lb": 453.59237}[unit] * quantity
+    )
+    assert {item.name for item in evidence.mappings[0].nutrients} == {
+        item.name for item in evidence.nutrients
+    }
+    assert evidence.mappings[0].weight_grams is not None
+    assert evidence.mappings[0].nutrients[0].amount == pytest.approx(
+        evidence.mappings[0].weight_grams * 2
     )
 
 

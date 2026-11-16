@@ -1,22 +1,18 @@
 """Current-profile allergy checks and recipe integrity, not cooking certification."""
 
-import re
-import unicodedata
 from enum import StrEnum
 
 from pydantic import ValidationError
 
 from sous_chef.domain.food_safety import (
-    FindingKind,
     IngredientLine,
     SafetyProfile,
     Verdict,
-    validate_ingredients,
+    validate_declared_allergies,
 )
-from sous_chef.domain.ingredient_catalog import resolve, tokenize
 from sous_chef.domain.recipes import StructuredRecipe
 
-POLICY_VERSION = "3"
+POLICY_VERSION = "4"
 GUIDANCE = "https://www.cdc.gov/food-safety/prevention/index.html"
 UNABLE = (
     "I couldn't complete a recipe that fits your request and stored allergies "
@@ -48,57 +44,6 @@ def _reject(code: RecipeSafetyFailure) -> None:
     raise RecipeSafetyError(code)
 
 
-def _check_prose(recipe: StructuredRecipe, profile: SafetyProfile) -> None:
-    lines = {line.line_id: line for line in recipe.ingredients}
-    exclusions: list[tuple[str, str]] = []
-    for sub in recipe.substitutions:
-        if resolve(sub.replaces).is_known:
-            replacement = lines[sub.ingredient_line_id].name
-            for phrase in (
-                f"use {replacement} instead of {sub.replaces}",
-                f"{replacement} replaces {sub.replaces}",
-            ):
-                exclusions.append((" ".join(tokenize(phrase)), " ".join(tokenize(replacement))))
-    metadata = (
-        recipe.title,
-        *recipe.fit_reasons,
-        *recipe.adaptations,
-        *(sub.reason for sub in recipe.substitutions),
-    )
-    texts: list[tuple[str, tuple[str, ...]]] = []
-    for text in metadata:
-        normalized = " ".join(tokenize(text))
-        for phrase, replacement in exclusions:
-            normalized = re.sub(
-                r"\b" + re.escape(phrase) + r"(?: to respect (?:the )?[a-z]+ restriction)?\b",
-                replacement,
-                normalized,
-            )
-        texts.append((normalized, ()))
-    texts.extend(
-        (step.text, tuple(lines[line_id].name for line_id in step.ingredient_line_ids))
-        for step in recipe.instructions
-    )
-    for text in (
-        *(line.name for line in recipe.ingredients),
-        *metadata,
-        *(step.text for step in recipe.instructions),
-    ):
-        if any(
-            char.isalpha() and not char.isascii() for char in unicodedata.normalize("NFKD", text)
-        ):
-            _reject(RecipeSafetyFailure.INGREDIENT)
-    for text, references in texts:
-        result = validate_ingredients(
-            profile,
-            (IngredientLine(line_id="prose", name=text),),
-            references=references,
-        )
-        # Ordinary prose is not an ingredient name; only actual restriction findings apply.
-        if any(finding.kind != FindingKind.UNKNOWN_INGREDIENT for finding in result.findings):
-            _reject(RecipeSafetyFailure.INGREDIENT)
-
-
 def validate_final_recipe(recipe: StructuredRecipe, profile: SafetyProfile) -> StructuredRecipe:
     """Revalidate structure and current allergies without judging cooking methods."""
     try:
@@ -107,15 +52,12 @@ def validate_final_recipe(recipe: StructuredRecipe, profile: SafetyProfile) -> S
         )
     except (ValidationError, ValueError, TypeError, AttributeError):
         raise RecipeSafetyError(RecipeSafetyFailure.STRUCTURE) from None
-    allergy_profile = SafetyProfile(allergies=profile.allergies)
-    safety = validate_ingredients(
-        allergy_profile,
+    safety = validate_declared_allergies(
+        profile.allergies,
         tuple(IngredientLine(line_id=line.line_id, name=line.name) for line in checked.ingredients),
     )
     if safety.verdict != Verdict.PASS:
         _reject(RecipeSafetyFailure.INGREDIENT)
-    if profile.allergies:
-        _check_prose(checked, allergy_profile)
     render_recipe(checked)
     return checked
 
@@ -148,8 +90,16 @@ def render_recipe(recipe: StructuredRecipe) -> str:
         if len(text) + len(summary) <= 4000:
             text += summary
     if recipe.nutrition.nutrient_estimates:
+        sources = " / ".join(
+            name
+            for source, name in (
+                ("web_iq", "Grounding with Bing"),
+                ("ai_knowledge", "AI knowledge"),
+            )
+            if any(item.source == source for item in recipe.nutrition.nutrient_estimates)
+        )
         summary = (
-            "\n\nMissing USDA nutrients were filled with source-backed Grounding with Bing "
+            f"\n\nMissing USDA nutrients were filled with approximate {sources} "
             "estimates, not USDA-verified; see ingredient nutrient sources."
         )
         if len(text) + len(summary) <= 4000:

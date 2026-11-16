@@ -76,7 +76,7 @@ def test_web_fallback_fills_all_missing_nutrients_without_replacing_usda() -> No
         )
     corrupted = merged.model_dump()
     corrupted["nutrients"][1]["amount"] = 999
-    with pytest.raises(ValidationError, match="totals must include"):
+    with pytest.raises(ValidationError, match="totals must (include|match)"):
         NutritionEvidence.model_validate(corrupted)
 
 
@@ -114,6 +114,47 @@ def test_fallback_preserves_usda_values_and_only_fills_missing_calories() -> Non
         NutritionEvidence.model_validate(corrupted)
 
 
+def test_ai_fills_only_remaining_pairs_and_preserves_usda_and_web_values() -> None:
+    evidence = partial()
+    payload = request(ingredient(), ingredient("carrot", 150, line_id="carrot"))
+    web = IngredientNutrientEstimate(
+        ingredient_line_id="carrot",
+        nutrients=(Nutrient(name="protein", amount=3, unit="g"),),
+        reference="https://source.example.invalid/nutrition",
+        basis="Synthetic cited protein for the whole portion.",
+    )
+    merged = with_nutrient_estimates(evidence, (web,))
+    fallback = nutrient_request(payload, merged, operation_id=uuid4(), use_web=False)
+    assert fallback is not None and not fallback.use_web
+    assert "protein" not in fallback.missing_nutrients["carrot"]
+    ai = IngredientNutrientEstimate(
+        ingredient_line_id="carrot",
+        nutrients=tuple(
+            Nutrient(
+                name=name,
+                amount=60 if name == "energy" else 2,
+                unit="kcal" if name == "energy" else "mg" if name == "sodium" else "g",
+            )
+            for name in fallback.missing_nutrients["carrot"]
+        ),
+        source="ai_knowledge",
+        reference=None,
+        basis="Approximate AI knowledge estimate for the specified 150 g portion.",
+    )
+    complete = with_nutrient_estimates(merged, (ai,))
+    assert complete.status == "known" and not complete.unknown_components
+    assert complete.mappings == evidence.mappings
+    assert complete.nutrient_estimates[0] == web
+    assert {item.source for item in complete.nutrient_estimates} == {"web_iq", "ai_knowledge"}
+    assert complete.ingredient_calories[-1].source == "ai_knowledge"
+    with pytest.raises(ValueError, match="never replace"):
+        with_nutrient_estimates(complete, (web,))
+    corrupted = complete.model_dump()
+    corrupted["nutrient_estimates"][1]["reference"] = "https://invented.example.invalid"
+    with pytest.raises(ValidationError):
+        NutritionEvidence.model_validate(corrupted)
+
+
 @pytest.mark.parametrize("serving_basis", ["per_serving", "whole_recipe"])
 def test_web_only_nutrient_totals_use_the_whole_portion_and_cannot_be_inflated(
     serving_basis: str,
@@ -148,7 +189,7 @@ def test_web_only_nutrient_totals_use_the_whole_portion_and_cannot_be_inflated(
     next(item for item in corrupted["nutrients"] if item["name"] == "protein")["amount"] = (
         4 if serving_basis == "per_serving" else 8
     )
-    with pytest.raises(ValidationError, match="totals must include"):
+    with pytest.raises(ValidationError, match="totals must (include|match)"):
         NutritionEvidence.model_validate(corrupted)
 
 

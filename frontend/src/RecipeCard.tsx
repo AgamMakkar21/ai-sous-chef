@@ -62,6 +62,24 @@ export default function RecipeCard({
   const sources = recipe.sources.filter(
     (source) => source.kind === "curated_recipe",
   );
+  const ingredientNutrients = [
+    ...nutrition.mappings
+      .filter((mapping) =>
+        mapping.nutrients?.some((item) => item.name !== "energy"),
+      )
+      .map((mapping) => ({
+        ingredientLineId: mapping.ingredientLineId,
+        nutrients: mapping.nutrients!.filter((item) => item.name !== "energy"),
+        source: "usda_mcp" as const,
+        reference: nutrition.sources.find(
+          (source) => source.sourceId === mapping.sourceId,
+        )!.reference,
+        basis:
+          mapping.conversionBasis ??
+          "USDA amounts for this ingredient's recipe quantity.",
+      })),
+    ...(nutrition.nutrientEstimates ?? []),
+  ];
 
   return (
     <section className="recipe-card" aria-labelledby={`${id}-title`}>
@@ -231,16 +249,17 @@ export default function RecipeCard({
             </ul>
           </>
         )}
-        {!!nutrition.nutrientEstimates?.length && (
+        {!!ingredientNutrients.length && (
           <>
-            <h5>Web nutrition estimates by ingredient (whole recipe)</h5>
+            <h5>Nutrition by ingredient (whole recipe)</h5>
             <p>
-              Missing USDA nutrients were filled using Grounding with Bing.
-              These are source-backed approximations, not USDA-verified.
+              USDA is preferred. Missing nutrients may use Grounding with Bing
+              or AI knowledge estimates, labeled below as approximate and not
+              USDA-verified.
             </p>
             <ul>
-              {nutrition.nutrientEstimates.map((item) => (
-                <li key={item.ingredientLineId}>
+              {ingredientNutrients.map((item, index) => (
+                <li key={`${item.ingredientLineId}:${item.source}:${index}`}>
                   {ingredientName(item.ingredientLineId)}:{" "}
                   {item.nutrients
                     .map(
@@ -249,10 +268,15 @@ export default function RecipeCard({
                     )
                     .join(", ")}
                   {" / "}
-                  <Reference
-                    reference={item.reference}
-                    label="Grounding with Bing"
-                  />
+                  {item.reference ? (
+                    <Reference
+                      reference={item.reference}
+                      label={calorieSources[item.source]}
+                    />
+                  ) : (
+                    calorieSources[item.source]
+                  )}
+                  {item.source !== "usda_mcp" && " (approximate)"}
                   {" / "}
                   {item.basis}
                 </li>

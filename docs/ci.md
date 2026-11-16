@@ -105,9 +105,10 @@ required checks and peer review to prevent broken changes from being merged.
 The existing test job covers transient USDA failures through the real stdio MCP
 server and chat persistence, including idempotent resends. Agent-enabled delivery
 also requires a live synthetic recipe with complete attributed nutrition: USDA
-first, then Bing-grounded estimates for any missing nutrients. Every nutrient must
-have evidence, but every ingredient does not need a USDA mapping. The existing
-tool-free recovery is calorie-only and cannot fill missing macros.
+first, then Bing-grounded estimates and tool-free AI knowledge for remaining gaps.
+Every ingredient must have all six nutrients, but not necessarily a USDA mapping.
+AI estimates are explicitly approximate, use null references, and never replace
+successful USDA/web values. Delivery also checks complete tool-free recovery.
 
 ## Owner: enable required checks after a successful run
 

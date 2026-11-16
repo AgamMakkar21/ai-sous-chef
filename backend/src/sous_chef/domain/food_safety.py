@@ -191,6 +191,20 @@ def validate_ingredients(
     )
 
 
+def validate_declared_allergies(
+    allergies: tuple[str, ...], ingredients: tuple[IngredientLine, ...]
+) -> SafetyResult:
+    """Reject confirmed allergy matches in the declared list, not catalog uncertainty."""
+    result = validate_ingredients(SafetyProfile(allergies=allergies), ingredients)
+    findings = tuple(
+        finding for finding in result.findings if finding.kind == FindingKind.VIOLATION
+    )
+    return SafetyResult(
+        verdict=Verdict.BLOCKED if findings else Verdict.PASS,
+        findings=findings,
+    )
+
+
 def _check_line(
     line: IngredientLine,
     forbidden: dict[Trait, str],

@@ -716,9 +716,9 @@ async def chat_smoke(deployed: dict[str, str]) -> None:
     from sous_chef.domain.agent_identity import AgentRole
     from sous_chef.domain.context import RequestContext
     from sous_chef.domain.foundry import FoundryGatewayError
-    from sous_chef.domain.orchestrator import OrchestratorError
+    from sous_chef.domain.orchestrator import POLICY, OrchestratorError
     from sous_chef.domain.profiles import ExplicitPreferences
-    from sous_chef.domain.recipes import NUTRIENT_NAMES, CalorieGroundingRequest
+    from sous_chef.domain.recipes import NUTRIENT_NAMES, NutrientGroundingRequest
     from sous_chef.services.nutrition import UsdaNutritionTool
     from sous_chef.services.orchestrator import OrchestratorService
     from sous_chef.services.recipe_specialist import RecipeSpecialistService
@@ -776,7 +776,7 @@ async def chat_smoke(deployed: dict[str, str]) -> None:
                 "and 10 g olive oil. Give all ingredient quantities in grams."
             ),
         )
-        async with asyncio.timeout(90), nutrition.lifespan():
+        async with asyncio.timeout(POLICY.deadline_seconds + 30), nutrition.lifespan():
             result = await OrchestratorService(gateway, specialist).run(context)
         if (
             result.status != "candidate"
@@ -787,7 +787,7 @@ async def chat_smoke(deployed: dict[str, str]) -> None:
             != {line.line_id for line in result.recipe.ingredients}
         ):
             raise DeliveryError(
-                "Live chat did not produce complete source-backed nutrition after USDA/web lookup."
+                "Live chat did not produce complete attributed nutrition after USDA/web/AI lookup."
             )
         if settings.foundry_recipe_nutrition_calorie_agent_version is not None:
             ingredients = [
@@ -796,15 +796,16 @@ async def chat_smoke(deployed: dict[str, str]) -> None:
                     "name": line.name,
                     "quantity": float(line.quantity) if line.quantity is not None else None,
                     "unit": line.unit,
+                    "missingNutrients": list(NUTRIENT_NAMES),
                 }
                 for line in result.recipe.ingredients
             ]
-            query = "calories for the specified ingredient quantities"
-            recovery = CalorieGroundingRequest(
+            query = "calories and nutrition for the specified ingredient quantities"
+            recovery = NutrientGroundingRequest(
                 role=AgentRole.RECIPE_NUTRITION,
                 prompt=json.dumps(
                     {
-                        "purpose": "calorie_fallback",
+                        "purpose": "nutrition_fallback",
                         "useWeb": False,
                         "query": query,
                         "ingredients": ingredients,
@@ -813,16 +814,24 @@ async def chat_smoke(deployed: dict[str, str]) -> None:
                 ),
                 query=query,
                 ingredient_line_ids=tuple(line.line_id for line in result.recipe.ingredients),
+                missing_nutrients={
+                    line.line_id: NUTRIENT_NAMES for line in result.recipe.ingredients
+                },
                 use_web=False,
             )
             async with asyncio.timeout(30):
-                estimates, _ = await gateway.estimate_calories(recovery)
+                estimates, _ = await gateway.estimate_nutrients(recovery)
             if {item.ingredient_line_id for item in estimates} != set(
                 recovery.ingredient_line_ids
             ) or any(
-                item.source != "ai_knowledge" or item.reference is not None for item in estimates
+                item.source != "ai_knowledge"
+                or item.reference is not None
+                or {nutrient.name for nutrient in item.nutrients} != set(NUTRIENT_NAMES)
+                for item in estimates
             ):
-                raise DeliveryError("Live calorie recovery did not produce attributed estimates.")
+                raise DeliveryError(
+                    "Live nutrition recovery did not produce complete AI estimates."
+                )
     except (ConfigurationError, FoundryGatewayError, OrchestratorError, TimeoutError):
         raise DeliveryError(
             "Live chat dependency check failed; inspect safe operational logs."

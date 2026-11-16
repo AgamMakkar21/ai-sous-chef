@@ -153,7 +153,13 @@ def factual_checks(suite: Suite, case: Case, observation: Observation) -> dict[s
             expected_outcome, "Match the preregistered response/fault outcome."
         ),
         "bounded_execution": check(
-            trace.model_attempts <= POLICY.max_model_calls + trace.fallback_model_attempts
+            trace.model_attempts
+            <= (
+                POLICY.max_model_calls
+                + trace.fallback_model_attempts
+                + trace.usda_selection_attempts
+            )
+            and trace.usda_selection_attempts <= len(trace.specialist_arguments)
             and trace.fallback_model_attempts
             <= POLICY.max_calorie_model_calls * len(fallback_tools)
             and len(fallback_tools) <= POLICY.max_calorie_fallback_calls

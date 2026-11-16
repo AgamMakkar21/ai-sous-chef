@@ -132,24 +132,136 @@ async function open(page: Page) {
 const card = (page: Page) =>
   page.getByRole("region", { name: "Simple carrot rice", exact: true });
 
-test("Bing fills missing nutrients without requiring USDA mappings for every ingredient", async ({
-  page,
-}) => {
-  const turn = recipeTurn();
-  const recipe = turn.recipe!;
-  const n = recipe.nutrition;
+for (const backup of ["web_iq", "ai_knowledge"] as const) {
+  test(`${backup} fills missing nutrients alongside USDA ingredient breakdowns`, async ({
+    page,
+  }) => {
+    const turn = recipeTurn();
+    const recipe = turn.recipe!;
+    const n = recipe.nutrition;
+    const ids = recipe.ingredients.map((item) => item.lineId);
+    n.mappings = n.mappings.slice(0, 1);
+    n.nutrients.find((item) => item.name === "energy")!.amount = 150;
+    n.ingredientCalories = ids.map((id, index) => ({
+      ingredientLineId: id,
+      amount: 100,
+      source: index === 0 ? "usda_mcp" : backup,
+      reference:
+        index === 0
+          ? n.sources[0].reference
+          : backup === "web_iq"
+            ? "https://nutrition.example.invalid/portion"
+            : null,
+      basis: "Synthetic cited calorie amount for the entire portion.",
+    }));
+    n.coverage = n.nutrients.map((item) => ({
+      name: item.name,
+      status: "known",
+      wholeRecipeAmount: item.amount * recipe.servings,
+      coveredIngredientLineIds: ids,
+      unknownIngredientLineIds: [],
+    }));
+    n.nutrientEstimates = ids.slice(1).map((id) => ({
+      ingredientLineId: id,
+      nutrients: n.nutrients
+        .filter((item) => item.name !== "energy")
+        .map((item) => ({ ...item, amount: item.amount / 3 })),
+      source: backup,
+      reference:
+        backup === "web_iq"
+          ? "https://nutrition.example.invalid/portion"
+          : null,
+      basis: "Synthetic source-backed nutrients scaled to the whole portion.",
+    }));
+    n.mappings[0].nutrients = n.nutrients.map((item) => ({
+      ...item,
+      amount:
+        item.name === "energy"
+          ? 100
+          : item.amount * recipe.servings - (item.amount * 2) / 3,
+    }));
+    if (backup === "ai_knowledge") {
+      const protein = n.nutrientEstimates[0].nutrients.shift()!;
+      n.nutrientEstimates.push({
+        ...n.nutrientEstimates[0],
+        nutrients: [protein],
+        source: "web_iq",
+        reference: "https://nutrition.example.invalid/protein",
+      });
+    }
+    n.unknownComponents = [];
+    expect(isStructuredRecipe(recipe)).toBe(true);
+    const corrupted = structuredClone(recipe);
+    corrupted.nutrition.nutrientEstimates![0].nutrients.pop();
+    expect(isStructuredRecipe(corrupted)).toBe(false);
+    const wrongTotal = structuredClone(recipe);
+    wrongTotal.nutrition.nutrients.find(
+      (item) => item.name === "protein",
+    )!.amount += 1;
+    expect(isStructuredRecipe(wrongTotal)).toBe(false);
+    const wrongIngredient = structuredClone(recipe);
+    wrongIngredient.nutrition.mappings[0].nutrients![1].amount += 1;
+    expect(isStructuredRecipe(wrongIngredient)).toBe(false);
+    const inventedCitation = structuredClone(recipe);
+    inventedCitation.nutrition.nutrientEstimates![0].reference =
+      backup === "ai_knowledge" ? "https://invented.example.invalid" : null;
+    expect(isStructuredRecipe(inventedCitation)).toBe(false);
+    await recipeBackend(page, [turn]);
+    await open(page);
+    await expect(
+      card(page).getByRole("heading", {
+        name: "Nutrition by ingredient (whole recipe)",
+      }),
+    ).toBeVisible();
+    await expect(card(page).getByText(/Incomplete estimate/)).toHaveCount(0);
+    await expect(card(page).getByText(/Partial:/)).toHaveCount(0);
+    if (backup === "ai_knowledge")
+      await expect(
+        card(page)
+          .getByText(/AI knowledge \(approximate\)/)
+          .first(),
+      ).toBeVisible();
+    await page.reload();
+    await expect(card(page).getByText(/USDA is preferred/)).toBeVisible();
+  });
+}
+
+test("thirty ingredients retain disjoint web and AI nutrient records", () => {
+  const recipe = recipeTurn().recipe!;
+  const original = recipe.ingredients;
+  recipe.ingredients = Array.from({ length: 30 }, (_, index) => ({
+    ...original[index % original.length],
+    lineId: index < original.length ? original[index].lineId : `food${index}`,
+  }));
   const ids = recipe.ingredients.map((item) => item.lineId);
-  n.mappings = n.mappings.slice(0, 1);
-  n.nutrients.find((item) => item.name === "energy")!.amount = 150;
-  n.ingredientCalories = ids.map((id, index) => ({
-    ingredientLineId: id,
-    amount: 100,
-    source: index === 0 ? "usda_mcp" : "web_iq",
-    reference:
-      index === 0
-        ? n.sources[0].reference
-        : "https://nutrition.example.invalid/portion",
-    basis: "Synthetic cited calorie amount for the entire portion.",
+  recipe.instructions = [
+    {
+      step: 1,
+      text: "Combine and cook the declared ingredients.",
+      ingredientLineIds: ids,
+    },
+  ];
+  recipe.shoppingItems = recipe.ingredients
+    .filter((item) => item.inventoryStatus === "missing")
+    .map((item) => ({
+      ingredientLineId: item.lineId,
+      quantity: item.quantity,
+      unit: item.unit,
+    }));
+  const n = recipe.nutrition;
+  n.mappings = [];
+  n.sources = [];
+  recipe.sources = recipe.sources.filter((source) => source.kind !== "usda");
+  n.ingredientCalories = ids.map((ingredientLineId) => ({
+    ingredientLineId,
+    amount: 10,
+    source: "ai_knowledge",
+    reference: null,
+    basis: "Synthetic AI portion estimate.",
+  }));
+  n.nutrients = n.nutrients.map((item) => ({
+    ...item,
+    amount: (item.name === "energy" ? 300 : 90) / recipe.servings,
   }));
   n.coverage = n.nutrients.map((item) => ({
     name: item.name,
@@ -158,38 +270,32 @@ test("Bing fills missing nutrients without requiring USDA mappings for every ing
     coveredIngredientLineIds: ids,
     unknownIngredientLineIds: [],
   }));
-  n.nutrientEstimates = ids.slice(1).map((id) => ({
-    ingredientLineId: id,
-    nutrients: n.nutrients
-      .filter((item) => item.name !== "energy")
-      .map((item) => ({ ...item, amount: item.amount / 3 })),
-    source: "web_iq",
-    reference: "https://nutrition.example.invalid/portion",
-    basis: "Synthetic source-backed nutrients scaled to the whole portion.",
-  }));
   n.unknownComponents = [];
+  n.nutrientEstimates = ids.flatMap((ingredientLineId) => [
+    {
+      ingredientLineId,
+      source: "web_iq" as const,
+      reference: "https://nutrition.example.invalid/protein",
+      basis: "Synthetic cited portion protein.",
+      nutrients: [{ name: "protein" as const, amount: 3, unit: "g" }],
+    },
+    {
+      ingredientLineId,
+      source: "ai_knowledge" as const,
+      reference: null,
+      basis: "Synthetic AI estimates for remaining portion nutrients.",
+      nutrients: n.nutrients
+        .filter((item) => item.name !== "energy" && item.name !== "protein")
+        .map((item) => ({ ...item, amount: 3 })),
+    },
+  ]);
   expect(isStructuredRecipe(recipe)).toBe(true);
-  const corrupted = structuredClone(recipe);
-  corrupted.nutrition.nutrientEstimates![0].nutrients.pop();
-  expect(isStructuredRecipe(corrupted)).toBe(false);
-  const wrongTotal = structuredClone(recipe);
-  wrongTotal.nutrition.nutrients.find(
-    (item) => item.name === "protein",
-  )!.amount += 1;
-  expect(isStructuredRecipe(wrongTotal)).toBe(false);
-  await recipeBackend(page, [turn]);
-  await open(page);
-  await expect(
-    card(page).getByRole("heading", {
-      name: "Web nutrition estimates by ingredient (whole recipe)",
-    }),
-  ).toBeVisible();
-  await expect(card(page).getByText(/Incomplete estimate/)).toHaveCount(0);
-  await expect(card(page).getByText(/Partial:/)).toHaveCount(0);
-  await page.reload();
-  await expect(
-    card(page).getByText(/Missing USDA nutrients were filled/),
-  ).toBeVisible();
+  n.nutrientEstimates[1].nutrients.push({
+    name: "protein",
+    amount: 3,
+    unit: "g",
+  });
+  expect(isStructuredRecipe(recipe)).toBe(false);
 });
 
 test("mixed calorie sources are labeled per ingredient and survive history reload", async ({

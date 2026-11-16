@@ -49,21 +49,29 @@ on a revision. The Orchestrator owns fit review; it does not invent nutrition.
 
 ## Backend limits and candidate validation
 
-The frozen policy in `domain/orchestrator.py` is version 6:
+The frozen policy in `domain/orchestrator.py` is version 10:
 
 | Limit | Value |
 | --- | --- |
-| Total model invocations | 4 main calls, plus at most 2 optional calorie calls |
+| Total model invocations | 4 main calls, one USDA selection per specialist attempt (maximum 2), plus at most 2 nutrition recovery calls |
 | Specialist invocations | 2: initial plus one revision |
 | Total tool calls, including retries and specialist handoffs | 8 |
-| Grounding with Bing | At most one ordinary search plus one calorie search; 10-second ordinary search ceiling |
-| Whole-operation deadline | 60 seconds, or the earlier caller deadline |
+| Grounding with Bing | At most one ordinary search plus one nutrition search; 10-second ordinary search ceiling |
+| Whole-operation deadline | 120 seconds, or the earlier caller deadline |
 | Application input/output token ceilings | None; provider model limits apply |
 
-The optional calorie fallback permits one web-first call and one tool-free AI
+The nutrition fallback permits one web-first call and one tool-free AI
 recovery for remaining gaps, not additional revisions or another search. Both
-calorie calls share up to 30 seconds
+calls fill all six nutrients and share up to 60 seconds
 of the remaining operation time, while preserving two seconds for completion.
+The web call gets at most half the available recovery window, leaving time for AI.
+The chat send allows 130 seconds for database admission, orchestration and durable
+completion; the browser send and pending-operation polling allow 150 seconds.
+The release dependency smoke allows 150 seconds including cold USDA startup.
+Individual provider timeouts, call limits and validation gates are unchanged.
+USDA selection uses at most half the remaining USDA window, preserving time for
+profile lookup and the independently reserved web/AI recovery. Its allowance
+cannot fund another generation, review or recovery call.
 
 `ExecutionBudget` is request-local and shared across both specialist attempts.
 Adapters must reserve each external tool attempt using `budget.tool()` **before**
@@ -90,12 +98,13 @@ brief fit reasons. This is not the eventual full nutrition/provenance/persistenc
 schema. ASC-26 additionally carries the full structured candidate separately;
 only the bounded projection is inserted into the coordinator's function result.
 Duplicate/undeclared ingredient references are rejected. The backend
-uses the existing deterministic ingredient validator against stored restrictions;
-blocked/unknown ingredients and over-budget times cannot be accepted by the LLM.
+checks declared ingredients against stored allergies, retaining confirmed allergen
+and alias matches without rejecting unknown names alone. Over-budget times and
+confirmed allergy conflicts cannot be accepted by the LLM.
 Raw rejected candidates are not fed back; the Orchestrator gets a rejection
 category and may clarify, stop, or request its one revision.
 Final-gate rejections also include an allowlisted `rejection_code` for structure,
-ingredients or structure, never rejected text. The coordinator uses it to
+ingredients, never rejected text. The coordinator uses it to
 give the specialist a precise correction within the same revision allowance.
 
 The normal path is route -> specialist -> fit review (three model calls).
@@ -120,8 +129,9 @@ the backend rechecks its projection and returns either a candidate with brief
 fit reasons or an explicit rejection, **not** another unbounded review loop.
 `status=candidate` is intentionally not a durable safety certificate.
 [ASC-36's final gate](recipe-specialist.md#final-recipe-gate-asc-36) now checks
-every full structured candidate after enrichment and every revision, including
-ingredient-bearing prose for profile conflicts, not ordinary cooking methods. It rejects a projection
+every full structured candidate after enrichment and every revision, using only
+declared ingredient names for allergy conflicts, not prose, metadata, catalog
+uncertainty or ordinary cooking methods. It rejects a projection
 that does not match the full recipe, including each step's ingredient references.
 One rejection can use the existing single
 revision, never a separate model budget; exhausted safety attempts return a fixed

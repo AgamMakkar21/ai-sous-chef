@@ -3,6 +3,7 @@
 import asyncio
 import copy
 import json
+from decimal import Decimal
 from pathlib import Path
 from time import monotonic
 from uuid import uuid4
@@ -60,11 +61,13 @@ def test_cited_recipe_quantity_fallback_preserves_original_amount_and_uses_usda(
     assert recipe.ingredients[0].quantity == quantity and recipe.ingredients[0].unit == unit
     mapping = recipe.nutrition.mappings[0]
     assert mapping.weight_grams == 250 and mapping.quantity_estimate is not None
-    assert mapping.usda_food_id == "2345678"
+    assert mapping.usda_food_id == "2345681"
     assert mapping.quantity_estimate.sources[0].reference == source.reference
     assert mapping.quantity_estimate.sources[0].servings == 4
     assert "Assumed 250 g" in (mapping.conversion_basis or "")
-    assert next(n.amount for n in recipe.nutrition.nutrients if n.name == "energy") == 150
+    assert next(n.amount for n in recipe.nutrition.nutrients if n.name == "energy") == Decimal(
+        "178.75"
+    )
     assert StructuredRecipe.model_validate_json(recipe.model_dump_json(by_alias=True)) == recipe
 
 
@@ -219,7 +222,7 @@ def test_dry_and_cooked_rice_keep_different_source_forms_and_portion_weights(
 
 
 @pytest.mark.parametrize("household_units", [False, True])
-def test_household_and_mass_recipes_produce_equivalent_source_portion_estimates(
+def test_chat_uses_mass_sources_or_complete_fallback_without_household_keyword_matching(
     household_units: bool,
 ) -> None:
     draft = copy.deepcopy(FIXTURE["draft"])
@@ -288,12 +291,25 @@ def test_household_and_mass_recipes_produce_equivalent_source_portion_estimates(
     )
     recipe = run(service, context).recipe
     assert recipe is not None
-    assert len(model.requests) == 1
+    assert len(model.requests) == (4 if household_units else 2)
     assert [line.unit for line in recipe.ingredients] == [
         line["unit"] for line in draft["ingredients"]
     ]
     assert [line.quantity for line in recipe.ingredients] == list(quantities)
     assert recipe.nutrition.status == "known"
+    if household_units:
+        assert not recipe.nutrition.mappings and not recipe.nutrition.sources
+        assert len(recipe.nutrition.nutrient_estimates) == 5
+        assert all(
+            item.source == "ai_knowledge" and item.reference is None and len(item.nutrients) == 5
+            for item in recipe.nutrition.nutrient_estimates
+        )
+        assert len(recipe.nutrition.ingredient_calories) == 5
+        assert all(
+            item.status == "known" and not item.unknown_ingredient_line_ids
+            for item in recipe.nutrition.coverage
+        )
+        return
     assert [item.amount for item in recipe.nutrition.nutrients] == [
         172,
         10.52,
@@ -313,11 +329,6 @@ def test_household_and_mass_recipes_produce_equivalent_source_portion_estimates(
     ]
     assert [item.weight_grams for item in recipe.nutrition.mappings] == [300, 200, 20, 15, 2]
     assert all(source.kind == "usda" for source in recipe.nutrition.sources)
-    if household_units:
-        assert all(
-            item.conversion_basis and item.conversion_basis.startswith("USDA portion:")
-            for item in recipe.nutrition.mappings
-        )
 
 
 def test_specialist_accepts_verified_resolver_choices_without_an_extra_model_call() -> None:
@@ -381,9 +392,12 @@ def test_recipe_uses_only_readonly_source_nutrition_with_exact_mappings(
     )
     messages = [json.loads(line) for line in log.read_text().splitlines()]
     calls = [message["params"] for message in messages if message["method"] == "tools/call"]
-    assert len(calls) == 6 and len(model.requests) == 1
+    assert len(calls) == 9 and len(model.requests) == 2
     assert {call["name"] for call in calls} == {"search_foods", "get_nutrition_profile"}
-    assert {tuple(call["arguments"]) for call in calls} == {("keyword", "limit"), ("fdc_id",)}
+    assert {tuple(call["arguments"]) for call in calls} == {
+        ("keyword", "limit", "agent_selection"),
+        ("fdc_id",),
+    }
     assert "peanut" not in log.read_text()  # No profile/history/identity enters USDA.
     assert "99901" not in caplog.text and "rice" not in caplog.text
 
@@ -391,6 +405,7 @@ def test_recipe_uses_only_readonly_source_nutrition_with_exact_mappings(
 @pytest.mark.parametrize(("mode", "model_calls"), [("malformed", 1), ("timeout", 3)])
 def test_malformed_usda_or_fallback_evidence_is_not_accepted(mode: str, model_calls: int) -> None:
     _, grounding, model = setup()
+    model.recover_nutrition = False
     gateway = FoundryGateway(coordination_settings(), client_factory=model.factory)
     service = RecipeSpecialistService(
         gateway,

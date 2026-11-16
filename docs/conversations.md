@@ -292,10 +292,12 @@ the original deadline. Each re-reads the durable operation and uses conditional
 ETags, retaining the already validated reply rather than invoking the executor
 again. This is reconciliation of a guarded write, not a generation retry.
 
-The overall send deadline is 60 seconds, including database setup, admission,
-execution, validation and final persistence. Execution stops at most 55 seconds
+The overall send deadline is 130 seconds, including database setup, admission,
+execution, validation and final persistence. Execution stops at most 125 seconds
 after send starts, reserving five seconds for completion. Database calls retain
-their smaller configured operation deadlines. No successful response is
+their smaller configured operation deadlines. Orchestration remains bounded to
+120 seconds or the earlier send deadline; browser sending and pending-operation
+polling allow 150 seconds before reporting uncertainty. No successful response is
 returned before the completion batch is persisted.
 
 ### Failure and explicit retry
