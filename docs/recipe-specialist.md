@@ -418,7 +418,7 @@ web/AI recovery; missing source data is not silently treated as zero.
 
 AI chooses only from the actual USDA candidates; it cannot invent FDC IDs or
 supply USDA nutrient amounts. This consumes one separately bounded model call
-per specialist generation, not either of the two recovery calls. USDA may still
+per specialist generation, not any nutrition recovery call. USDA may still
 lack a compatible record or one of the six nutrients.
 
 This instruction change requires a newly published and verified specialist
@@ -567,7 +567,7 @@ After recipe generation, the backend leaves two seconds for final completion
 and reserves at most half the remaining usable time (capped at 60 seconds) for
 nutrition fallback. USDA gets the other half instead of an already-expired
 deadline when agent generation is slow. Its existing per-lookup timeout still
-applies; unused USDA time remains available to fallback. Both fallback invocations share
+applies; unused USDA time remains available to fallback. All fallback invocations share
 a single 60-second ceiling; recovery never resets it. The web call is capped at
 half the available recovery window so tool-free AI still has time to run.
 Fallback leaves the final two seconds
@@ -586,7 +586,11 @@ rejected optional calls and invalid attribution are discarded and logged as
 independent tool-free recovery. If that also fails, the backend must report the
 remaining gap honestly rather than fabricate an amount: generation fails explicitly
 instead of delivering a newly partial recipe. Successful USDA and web values are
-never overwritten. Authentication/configuration failures remain explicit.
+never overwritten. A valid but partial AI response is retained, and one additional
+tool-free call requests only its remaining ingredient/nutrient pairs within the
+same deadline. Empty or invalid AI responses are not retried, and the three-call
+recovery limit prevents repeated partial answers from looping. Authentication/configuration
+failures remain explicit.
 Transient USDA API failure after successful MCP initialization is logged but
 does not prevent startup; initialization/schema/authentication failures remain
 fail-closed. Live release smoke requires complete attributed nutrition,
@@ -602,7 +606,7 @@ Web entries require HTTPS references; AI knowledge entries require null referenc
 and are explicitly approximate, never presented as searched evidence. The
 independent tool-free source supports `purpose=nutrition_fallback` for all six
 nutrients, and retains legacy `purpose=calorie_fallback` compatibility.
-Up to 60 persisted records allow disjoint web/AI gaps for the same ingredient;
+Up to 90 persisted records allow disjoint web/AI gaps across the three recovery calls;
 duplicate ingredient/nutrient pairs are rejected. Energy remains in
 `ingredientCalories`. USDA mappings additionally carry `nutrients` scaled to each
 ingredient's whole recipe quantity, enabling the full ingredient breakdown.
@@ -626,9 +630,16 @@ removing the old nine-food cap from merely replacing omissions with a ten-second
 timeout. Each response is limited to 128 KiB, a session to 2 MiB,
 and a profile to 256 unique nutrient rows. Timeout, malformed protocol/data,
 oversized output, child exit and source errors produce safe `RecipeToolError`
-categories; recipe-only transient failures retain completed evidence and allow
-the attributed calorie fallback. Exact ingredient lookup still raises errors. Cancellation
-propagates and the child is terminated/reaped, with at most one second for
+categories. Recipe-only transient failures and rejected source data retain
+already validated evidence and leave unverified ingredient values for complete
+web/AI nutrient recovery. Rejected USDA data never becomes a mapping or a zero
+placeholder. Invalid startup contracts and exact ingredient lookups still raise
+errors. The authenticated send regression covers malformed search results and
+invalid profile values through durable answer persistence and idempotent replay.
+The live release smoke uses an ordinary chicken-dinner request rather than
+prescribing mass-only ingredient amounts, so generated quantities and recovery
+are exercised together. Cancellation propagates and the child is terminated/reaped,
+with at most one second for
 cleanup. Raw child stderr is not forwarded into app logs; operational events
 contain only the safe outcome/category and duration.
 

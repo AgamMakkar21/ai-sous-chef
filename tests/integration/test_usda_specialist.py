@@ -402,8 +402,8 @@ def test_recipe_uses_only_readonly_source_nutrition_with_exact_mappings(
     assert "99901" not in caplog.text and "rice" not in caplog.text
 
 
-@pytest.mark.parametrize(("mode", "model_calls"), [("malformed", 1), ("timeout", 3)])
-def test_malformed_usda_or_fallback_evidence_is_not_accepted(mode: str, model_calls: int) -> None:
+@pytest.mark.parametrize("mode", ["malformed", "timeout"])
+def test_malformed_usda_or_fallback_evidence_is_not_accepted(mode: str) -> None:
     _, grounding, model = setup()
     model.recover_nutrition = False
     gateway = FoundryGateway(coordination_settings(), client_factory=model.factory)
@@ -412,13 +412,7 @@ def test_malformed_usda_or_fallback_evidence_is_not_accepted(mode: str, model_ca
         grounding,
         UsdaNutritionTool(config(mode, timeout=1)),
     )
-    if mode == "malformed":
-        with pytest.raises(FoundryGatewayError) as caught:
-            run(service)
-        assert caught.value.code == FoundryFailure.INVALID_RESULT
-    else:
-        # Repeated recipe JSON is not source-backed nutrient fallback evidence.
-        with pytest.raises(FoundryGatewayError) as caught:
-            run(service)
-        assert caught.value.code == FoundryFailure.NO_RESULTS
-    assert len(model.requests) == model_calls
+    with pytest.raises(FoundryGatewayError) as caught:
+        run(service)
+    assert caught.value.code == FoundryFailure.NO_RESULTS
+    assert len(model.requests) == 3

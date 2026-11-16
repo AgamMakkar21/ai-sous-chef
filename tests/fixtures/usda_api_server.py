@@ -98,6 +98,8 @@ def respond(request: httpx.Request) -> httpx.Response:
         assert body["dataType"] == ["Foundation", "SR Legacy"]
         assert body["pageSize"] == 20 and body["pageNumber"] == 1
         words = body["query"].casefold().replace("+", "").split()
+        if mode == "invalid_search" and words != ["carrots", "raw"]:
+            return httpx.Response(200, text="private invalid JSON")
         if mode == "transient_search" and words != ["carrots", "raw"]:
             key = body["query"]
             ATTEMPTS[key] = ATTEMPTS.get(key, 0) + 1
@@ -145,6 +147,14 @@ def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404)
     fdc_id = food["fdcId"]
     assert isinstance(fdc_id, int)
+    if mode == "invalid_profile" and fdc_id == 6000003:
+        return httpx.Response(
+            200,
+            json={
+                **food,
+                "foodNutrients": [{"nutrient": {"id": 1008, "unitName": "KCAL"}, "amount": -1}],
+            },
+        )
     if mode == "transient_profile" and fdc_id != 1234567:
         key = str(fdc_id)
         ATTEMPTS[key] = ATTEMPTS.get(key, 0) + 1

@@ -770,11 +770,7 @@ async def chat_smoke(deployed: dict[str, str]) -> None:
             omitted_grocery_count=0,
             history=(),
             learned_preferences=(),
-            current_request=(
-                "Make a simple chicken, rice and carrot dinner for two in 30 minutes. "
-                "Use 200 g raw chicken breast, 100 g raw rice, 100 g raw carrots "
-                "and 10 g olive oil. Give all ingredient quantities in grams."
-            ),
+            current_request="Give me a recipe for a chicken dinner.",
         )
         async with asyncio.timeout(POLICY.deadline_seconds + 30), nutrition.lifespan():
             result = await OrchestratorService(gateway, specialist).run(context)

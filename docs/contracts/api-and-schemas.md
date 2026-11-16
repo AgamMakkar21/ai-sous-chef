@@ -356,7 +356,8 @@ displayed per-serving calorie estimate. Stored snapshots may omit this field.
 values as `nutrients: [{name, amount, unit}]`, with `source: web_iq | ai_knowledge`,
 `reference` and `basis`. Web references require actual searched sources and native
 citations; AI knowledge requires a null reference and explicit assumptions.
-Up to 60 records can contain disjoint nutrient pairs for the same ingredient.
+Up to 90 records can contain disjoint nutrient pairs for the same ingredient
+across web recovery, AI recovery and one residual-only AI repair.
 These estimates fill only requested gaps; AI cannot overwrite USDA or web values.
 Optional `mappings.nutrients` contains USDA amounts for each ingredient's entire
 recipe quantity, not per-serving amounts. Totals must match attributed amounts.

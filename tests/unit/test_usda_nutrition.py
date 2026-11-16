@@ -463,6 +463,35 @@ def test_no_arbitrary_sql_or_non_allowlisted_tool_can_execute(tmp_path: Path) ->
     assert "tools/call" not in log.read_text()
 
 
+def test_invalid_profile_preserves_verified_nutrition_for_complete_recovery(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    configure_safe_telemetry()
+    original = NutritionRequest(
+        servings=2,
+        ingredients=(
+            ingredient(),
+            ingredient("carrot", line_id="carrot"),
+            ingredient("olive oil", line_id="oil"),
+        ),
+        selected_food_ids={"rice": "99901", "carrot": "99902", "oil": "99903"},
+        allow_estimates=True,
+        require_selection=True,
+    )
+    evidence = asyncio.run(
+        UsdaNutritionTool(config("invalid_later_profile")).lookup(
+            original, deadline=monotonic() + 10
+        )
+    )
+    assert evidence.status == "partial"
+    assert [row.ingredient_line_id for row in evidence.mappings] == ["rice"]
+    assert {row.ingredient_line_id for row in evidence.unknown_components} == {"carrot", "oil"}
+    assert all(row.covered_ingredient_line_ids == ("rice",) for row in evidence.coverage)
+    assert evidence.ingredient_calories[0].amount == 200
+    assert "usda_failed" in caplog.text and "foundry_invalid_result" in caplog.text
+    assert "NaN" not in caplog.text
+
+
 def test_timeout_and_cancellation_stop_the_child() -> None:
     async def check() -> None:
         async with open_usda(config("timeout"), deadline=monotonic() + 10) as session:

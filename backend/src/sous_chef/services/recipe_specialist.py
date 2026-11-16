@@ -377,7 +377,8 @@ class RecipeSpecialistService:
                         deadline - 2, monotonic() + POLICY.calorie_deadline_seconds
                     )
                     web_deadline = (monotonic() + fallback_deadline) / 2
-                    for use_web in (True, False):
+                    for attempt in range(POLICY.max_calorie_model_calls):
+                        use_web = attempt == 0
                         fallback = nutrient_request(
                             nutrition_request,
                             evidence,
@@ -410,6 +411,8 @@ class RecipeSpecialistService:
                                     Event.CALORIE_FALLBACK_UNAVAILABLE,
                                     category=ErrorCategory.FOUNDRY_NO_RESULTS,
                                 )
+                            if not use_web and merged == evidence:
+                                break
                             evidence = merged
                         except (TimeoutError, FoundryGatewayError, ValueError) as error:
                             code = (
@@ -432,6 +435,8 @@ class RecipeSpecialistService:
                                 Event.CALORIE_FALLBACK_UNAVAILABLE,
                                 category=ErrorCategory(code.value),
                             )
+                            if not use_web:
+                                break
                     if evidence.status != "known":
                         raise FoundryGatewayError(FoundryFailure.NO_RESULTS, request)
                     ingredients, shopping = _inventory(draft.ingredients, context)
