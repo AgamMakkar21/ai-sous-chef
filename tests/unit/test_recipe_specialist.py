@@ -21,11 +21,13 @@ from sous_chef.domain.orchestrator import (
     OrchestratorFailure,
     SpecialistArguments,
     SpecialistResult,
+    TokenUsage,
 )
 from sous_chef.domain.recipes import (
     NutritionEvidence,
     NutritionRequest,
     RecipeDraft,
+    RecipeGenerationRequest,
     RecipeGrounding,
     RecipeToolError,
     StructuredRecipe,
@@ -142,6 +144,44 @@ def run(
             selected_food_ids=selected_food_ids,
         )
     )
+
+
+@pytest.mark.parametrize("generation_seconds", [0, 35, 50])
+def test_slow_generation_does_not_reserve_an_expired_usda_deadline(
+    generation_seconds: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sous_chef.services import recipe_specialist
+
+    service, tools, _ = setup()
+    started = monotonic()
+    now = started
+    deadline = started + 60
+    generate = service._generator.generate_recipe
+    received: list[float] = []
+
+    async def delayed_generation(
+        request: RecipeGenerationRequest,
+    ) -> tuple[RecipeDraft, TokenUsage]:
+        nonlocal now
+        result = await generate(request)
+        now += generation_seconds
+        return result
+
+    async def lookup(request: NutritionRequest, *, deadline: float) -> NutritionEvidence:
+        received.append(deadline)
+        assert deadline > now, "USDA must get usable time after generation."
+        assert deadline <= started + 60 - 2
+        return tools.evidence
+
+    monkeypatch.setattr(recipe_specialist, "monotonic", lambda: now)
+    monkeypatch.setattr(service._generator, "generate_recipe", delayed_generation)
+    monkeypatch.setattr(tools, "lookup", lookup)
+    result = run(service, deadline=deadline)
+    assert result.recipe is not None and result.recipe.nutrition.status == "known"
+    assert len(received) == 1
+    remaining = deadline - now - 2
+    assert received[0] - now >= remaining / 2
+    assert 0 < deadline - received[0] - 2 <= POLICY.calorie_deadline_seconds
 
 
 def test_fixture_covers_inventory_substitution_time_skill_and_attributed_nutrition() -> None:

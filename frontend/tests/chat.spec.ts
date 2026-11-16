@@ -354,6 +354,47 @@ test("keyboard composition, slow sending and synchronous double submission save 
   await expect(page.getByText("A second idea", { exact: true })).toBeVisible();
 });
 
+for (const phase of ["sending", "pending"] as const) {
+  test(`a slow ${phase} request can complete after 90 seconds without resubmitting`, async ({
+    page,
+  }) => {
+    await page.clock.install();
+    await page.addInitScript(() => {
+      AbortSignal.timeout = (milliseconds) => {
+        const controller = new AbortController();
+        setTimeout(
+          () =>
+            controller.abort(
+              new DOMException("Request timed out.", "TimeoutError"),
+            ),
+          milliseconds,
+        );
+        return controller.signal;
+      };
+    });
+    const { chat, complete } = await chatBackend(page);
+    await open(page);
+    const gate = deferred();
+    if (phase === "sending") chat.gate = gate;
+    else chat.mode = "pending";
+    await requestInput(page).fill("A slow recipe request");
+    await sendButton(page).click();
+    const notice =
+      phase === "sending" ? "Sending your request." : "Awaiting a reply.";
+    await expect(page.getByText(notice, { exact: false })).toBeVisible();
+    await page.clock.fastForward(90_000);
+    await expect(page.getByText(notice, { exact: false })).toBeVisible();
+    if (phase === "sending") gate.resolve();
+    else {
+      complete();
+      await page.clock.fastForward(2_000);
+    }
+    await expect(page.getByText(reply, { exact: true })).toBeVisible();
+    expect(chat.writes).toHaveLength(1);
+    expect(chat.generations).toBe(1);
+  });
+}
+
 test("input validation preserves drafts and counts Unicode code points rather than UTF-16 units", async ({
   page,
 }) => {

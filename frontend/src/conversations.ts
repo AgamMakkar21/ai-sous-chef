@@ -2,6 +2,8 @@ import { ApiError, getSession, json, request } from "./api.ts";
 import { isRecord, type Session } from "./profile.ts";
 import { isStructuredRecipe, type StructuredRecipe } from "./recipes.ts";
 
+export const CHAT_TIMEOUT_MS = 150_000;
+
 export type Conversation = {
   conversationId: string;
   title: string;
@@ -207,7 +209,7 @@ export async function sendMessage(
             : {}),
         }),
       },
-      75_000,
+      CHAT_TIMEOUT_MS,
     );
   } catch (error) {
     const prefix = `/api/v1/conversations/${conversationId}/operations/`;

@@ -716,7 +716,7 @@ async def chat_smoke(deployed: dict[str, str]) -> None:
     from sous_chef.domain.agent_identity import AgentRole
     from sous_chef.domain.context import RequestContext
     from sous_chef.domain.foundry import FoundryGatewayError
-    from sous_chef.domain.orchestrator import OrchestratorError
+    from sous_chef.domain.orchestrator import POLICY, OrchestratorError
     from sous_chef.domain.profiles import ExplicitPreferences
     from sous_chef.domain.recipes import NUTRIENT_NAMES, CalorieGroundingRequest
     from sous_chef.services.nutrition import UsdaNutritionTool
@@ -776,7 +776,7 @@ async def chat_smoke(deployed: dict[str, str]) -> None:
                 "and 10 g olive oil. Give all ingredient quantities in grams."
             ),
         )
-        async with asyncio.timeout(90), nutrition.lifespan():
+        async with asyncio.timeout(POLICY.deadline_seconds + 30), nutrition.lifespan():
             result = await OrchestratorService(gateway, specialist).run(context)
         if (
             result.status != "candidate"

@@ -66,7 +66,7 @@ arbitrary function, code execution, external URL fetch, or alternative model.
 There are at most four main model invocations, plus at most two backend-owned
 calorie invocations (web first, then tool-free AI estimates for remaining gaps), two specialist
 invocations (initial plus ONE revision), eight total tool calls including retries,
-one ordinary Bing search plus one calorie search, and a 60-second deadline.
+one ordinary Bing search plus one calorie search, and a 120-second deadline.
 The backend tracks token usage for
 observability, not application-imposed input/output ceilings; the provider's
 model context/output limits still apply.

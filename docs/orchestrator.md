@@ -49,7 +49,7 @@ on a revision. The Orchestrator owns fit review; it does not invent nutrition.
 
 ## Backend limits and candidate validation
 
-The frozen policy in `domain/orchestrator.py` is version 6:
+The frozen policy in `domain/orchestrator.py` is version 8:
 
 | Limit | Value |
 | --- | --- |
@@ -57,13 +57,17 @@ The frozen policy in `domain/orchestrator.py` is version 6:
 | Specialist invocations | 2: initial plus one revision |
 | Total tool calls, including retries and specialist handoffs | 8 |
 | Grounding with Bing | At most one ordinary search plus one calorie search; 10-second ordinary search ceiling |
-| Whole-operation deadline | 60 seconds, or the earlier caller deadline |
+| Whole-operation deadline | 120 seconds, or the earlier caller deadline |
 | Application input/output token ceilings | None; provider model limits apply |
 
 The optional calorie fallback permits one web-first call and one tool-free AI
 recovery for remaining gaps, not additional revisions or another search. Both
 calorie calls share up to 30 seconds
 of the remaining operation time, while preserving two seconds for completion.
+The chat send allows 130 seconds for database admission, orchestration and durable
+completion; the browser send and pending-operation polling allow 150 seconds.
+The release dependency smoke allows 150 seconds including cold USDA startup.
+Individual provider timeouts, call limits and validation gates are unchanged.
 
 `ExecutionBudget` is request-local and shared across both specialist attempts.
 Adapters must reserve each external tool attempt using `budget.tool()` **before**

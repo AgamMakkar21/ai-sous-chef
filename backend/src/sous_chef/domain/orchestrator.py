@@ -14,7 +14,7 @@ from sous_chef.domain.recipes import StructuredRecipe
 
 @dataclass(frozen=True)
 class OrchestratorPolicy:
-    version: int = 7
+    version: int = 8
     max_model_calls: int = 4
     max_calorie_fallback_calls: int = 1
     max_calorie_model_calls: int = 2
@@ -24,7 +24,7 @@ class OrchestratorPolicy:
     max_web_calls: int = 1
     web_deadline_seconds: float = 10
     calorie_deadline_seconds: float = 30
-    deadline_seconds: int = 60
+    deadline_seconds: int = 120
 
 
 POLICY = OrchestratorPolicy()

@@ -326,8 +326,12 @@ class RecipeSpecialistService:
                         allow_estimates=True,
                         quantity_estimates=recipe_quantity_estimates(draft, grounding, web),
                     )
+                    remaining = deadline - monotonic() - 2
+                    if remaining <= 0:
+                        raise TimeoutError
+                    fallback_reserve = min(POLICY.calorie_deadline_seconds, remaining / 2)
                     evidence = await self._nutrition.lookup(
-                        nutrition_request, deadline=deadline - POLICY.calorie_deadline_seconds - 2
+                        nutrition_request, deadline=deadline - fallback_reserve - 2
                     )
                     fallback_deadline = min(
                         deadline - 2, monotonic() + POLICY.calorie_deadline_seconds

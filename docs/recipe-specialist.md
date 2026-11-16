@@ -551,9 +551,12 @@ The persisted `web_iq` source/tool identifiers are retained for compatibility
 with existing recipe history; they identify Bing-grounded web evidence, not a
 separate Web IQ provider.
 
-The backend reserves 30 seconds for calorie fallback plus two seconds for final
-completion, within the original request deadline. Both calorie invocations share
-that single 30-second ceiling; recovery never resets it. Fallback leaves the final two seconds
+After recipe generation, the backend leaves two seconds for final completion
+and reserves at most half the remaining usable time (capped at 30 seconds) for
+nutrition fallback. USDA gets the other half instead of an already-expired
+deadline when agent generation is slow. Its existing per-lookup timeout still
+applies; unused USDA time remains available to fallback. Both fallback invocations share
+a single 30-second ceiling; recovery never resets it. Fallback leaves the final two seconds
 and never extends the whole-operation deadline. No application input/output token
 ceiling is imposed or sent to the provider, and high reported usage cannot invalidate
 otherwise valid evidence. This does not permit another revision or search.
@@ -738,7 +741,7 @@ category, not a raw upstream body. A returned `status=unavailable` nutrition res
 is valid and explicit, not zero nutrition; an actual tool failure stops the request.
 
 The supplied finite deadline covers retrieval, generation and nutrition together,
-with a 60-second ceiling. Cancellation starts no replacement invocation. The
+with a 120-second ceiling. Cancellation starts no replacement invocation. The
 gateway leaves input/output token limits to the model provider. Dev recipe MCP retrieval allows
 up to 65,536 characters for its complete result, including every
 reference record. Local/production retain the 16,000-character limit.
@@ -779,7 +782,7 @@ the native `WebSearchTool` (`web_search`, external access, low context),
 required tool selection and strict `WebDraft` schema. The request limits native
 tool calls to one and disables provider storage without overriding source configuration.
 No approximate location is inferred.
-The search stage has a 10-second ceiling inside the shared 60-second deadline.
+The search stage has a 10-second ceiling inside the shared 120-second deadline.
 
 The backend accepts at most three short claims. Each requires an HTTPS URL present
 in both the native search sources and URL-citation annotations, valid annotation

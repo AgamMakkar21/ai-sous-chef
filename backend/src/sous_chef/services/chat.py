@@ -35,6 +35,7 @@ from sous_chef.domain.cosmos import (
     RecordPatch,
     StoredRecord,
 )
+from sous_chef.domain.orchestrator import POLICY
 from sous_chef.domain.profiles import OnboardingRequired
 from sous_chef.domain.recipe_safety import UNABLE, RecipeSafetyError
 from sous_chef.services.context import ContextService
@@ -45,7 +46,7 @@ from sous_chef.settings import ConfigurationError, Settings
 from sous_chef.tracing import Operation, observed
 
 CHAT = ProductContainer.CHAT_HISTORY
-SEND_TIMEOUT_SECONDS = 60
+SEND_TIMEOUT_SECONDS = POLICY.deadline_seconds + 10
 FailureCode = Literal["execution_failed", "invalid_assistant_response", "execution_outcome_unknown"]
 
 

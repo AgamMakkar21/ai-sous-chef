@@ -39,6 +39,15 @@ release smoke without requiring every ingredient to have USDA MCP calorie eviden
 If USDA and web evidence cannot complete the nutrition, chat fails explicitly
 instead of delivering a partially calculated recipe.
 
+Run `43656633821` deployed the app successfully, then failed this check after a
+USDA timeout and an invalid web fallback response. The fixed 30-second fallback
+reservation could give USDA an expired deadline after slow agent generation.
+Nutrition now divides the remaining usable time instead, and orchestration has
+120 seconds, durable chat sending 130 seconds, and browser waiting/release smoke
+150 seconds. Earlier caller deadlines and individual provider timeouts still
+apply. This does not bypass complete-nutrition or allergy checks, and the original
+log does not identify which native web-response validation predicate failed.
+
 The first fallback release's deployment check incorrectly selected `environment=local`
 to obtain delivery credentials, rejecting a valid 4,949-token recipe MCP response
 against the local token limit. The check now preserves deployed `ASC_ENVIRONMENT`
