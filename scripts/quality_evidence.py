@@ -161,12 +161,11 @@ def factual_checks(suite: Suite, case: Case, observation: Observation) -> dict[s
             )
             and trace.usda_selection_attempts <= len(trace.specialist_arguments)
             and trace.fallback_model_attempts
-            <= POLICY.max_calorie_model_calls * len(fallback_tools)
-            and len(fallback_tools) <= POLICY.max_calorie_fallback_calls
+            <= POLICY.max_calorie_model_calls * POLICY.max_calorie_fallback_calls
+            and not fallback_tools
             and len(trace.specialist_arguments) <= POLICY.max_specialist_calls
-            and len(tools) + len(trace.specialist_arguments)
-            <= POLICY.max_tool_calls + len(fallback_tools)
-            and tools.count("web_iq") <= POLICY.max_web_calls + len(fallback_tools),
+            and len(tools) + len(trace.specialist_arguments) <= POLICY.max_tool_calls
+            and tools.count("web_iq") <= POLICY.max_web_calls,
             "Count observed invocations, including failed attempts.",
         ),
         "necessary_tools": check(
@@ -177,7 +176,7 @@ def factual_checks(suite: Suite, case: Case, observation: Observation) -> dict[s
                 else sum(event.status == "completed" for event in ordinary_web) == 1
             )
             and ("foundry_iq" in completed and "usda" in completed if recipe is not None else True),
-            "Only current public requests or missing USDA nutrients may invoke Web IQ.",
+            "Only authorized public information or quantity grounding may search, not nutrition.",
         ),
         "no_fault_retry": check(
             not expected_timeout

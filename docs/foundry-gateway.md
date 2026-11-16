@@ -22,18 +22,19 @@ see [microsoft/agent-framework#5087](https://github.com/microsoft/agent-framewor
 The current dev design selects `ASC_FOUNDRY_RECIPE_NUTRITION_MODE=combined`:
 one specialist version contains recipe MCP and native web search, with a strict
 `{recipe, calorieEstimates, nutrientEstimates}` output schema. Recipe tasks return
-a draft (including web claims) and no nutrient estimates; missing-USDA-nutrient
-tasks return a null recipe and attributed estimates through that same version.
+a draft (including web claims) and no nutrient estimates. Missing USDA nutrients
+go directly to the separately pinned, tool-free `calorie` source on the same identity.
 The legacy `phased` mode uses three versions
 under that same identity: tool-free generation, curated retrieval plus generation,
 and isolated Web IQ.
 The native web tool uses Grounding with Bing Search. `web_iq` remains the legacy
-persisted source identifier; it does not select a separate provider. Missing or
-rejected or partial web-first nutrient output can be recovered by one `useWeb=false` request
-through a separately pinned `calorie` source on the same specialist identity.
+persisted source identifier; it does not select a separate provider. Nutrition recovery
+always uses `useWeb=false`; it does not invoke native web search or Web IQ.
 This recovery source has no tools and `tool_choice=none`; recipe and web sources
 retain `tool_choice=required`. Recovery covers all six requested nutrients and
 requires explicit AI-knowledge attribution, a null citation and portion assumptions.
+One additional residual-only call is permitted after a valid, progressing partial
+AI response, within the same recovery deadline. Empty or invalid responses stop.
 The backend selects the phase pin; user input cannot select an agent or version.
 The same tool-free source supports `purpose=usda_selection`: one bounded AI call
 interprets real USDA search candidates, returning only an allowed FDC ID or null

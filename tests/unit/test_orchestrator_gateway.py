@@ -9,7 +9,7 @@ from azure.ai.projects import AIProjectClient
 from sous_chef.adapters.foundry_gateway import FoundryGateway
 from sous_chef.domain.agent_identity import AgentRole, IdentityError
 from sous_chef.domain.foundry import FoundryFailure, FoundryGatewayError
-from sous_chef.domain.orchestrator import CoordinationPrompt, CoordinationRequest
+from sous_chef.domain.orchestrator import POLICY, CoordinationPrompt, CoordinationRequest
 from sous_chef.publish_orchestrator import publish
 from sous_chef.settings import ConfigurationError, Settings
 from sous_chef.telemetry import configure_safe_telemetry
@@ -337,7 +337,7 @@ def test_publication_creates_reproducible_source_version_under_existing_identity
             "/providers/Microsoft.CognitiveServices/accounts/synthetic/raiPolicies/asc-responsible-ai-v1"
         )
     }
-    assert invocation.kwargs["metadata"]["asc_policy_version"] == "11"
+    assert invocation.kwargs["metadata"]["asc_policy_version"] == str(POLICY.version)
     client.agents.create.assert_not_called()
     assert config.agents_enabled  # No settings or release manifest mutation.
 

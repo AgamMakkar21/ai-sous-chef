@@ -800,7 +800,7 @@ async def chat_smoke(deployed: dict[str, str]) -> None:
             != {line.line_id for line in result.recipe.ingredients}
         ):
             raise DeliveryError(
-                "Live chat did not produce complete attributed nutrition after USDA/web/AI lookup."
+                "Live chat did not produce complete attributed nutrition after USDA/AI lookup."
             )
         if settings.foundry_recipe_nutrition_calorie_agent_version is not None:
             ingredients = [

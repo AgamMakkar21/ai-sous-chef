@@ -352,22 +352,23 @@ def test_calorie_allowance_does_not_consume_the_final_answers_original_headroom(
     for _ in range(2):
         budget.model()
         budget.usage(TokenUsage(input_tokens=8000, output_tokens=1500))
-    budget.tool("web_iq", calorie_fallback=True)
+    budget.reserve_nutrition_recovery()
     budget.model(calorie_fallback=True)
     assert budget.model_allowance(calorie_fallback=True) == (None, None)
     budget.usage(TokenUsage(input_tokens=16000, output_tokens=8192), calorie_fallback=True)
-    for _ in range(2):
-        budget.model(calorie_fallback=True)
-        budget.usage(TokenUsage(input_tokens=16000, output_tokens=8192), calorie_fallback=True)
+    budget.model(calorie_fallback=True)
+    budget.usage(TokenUsage(input_tokens=16000, output_tokens=8192), calorie_fallback=True)
     with pytest.raises(OrchestratorError):
         budget.model(calorie_fallback=True)
     budget.model()
     assert budget.model_allowance() == (None, None)
     budget.usage(TokenUsage(input_tokens=16000, output_tokens=1500))
-    assert budget.input_tokens == 80000 and budget.output_tokens == 29076
-    assert budget.web_calls == 1
+    assert budget.input_tokens == 64000 and budget.output_tokens == 20884
+    assert budget.web_calls == 0 and budget.tool_calls == 0
     with pytest.raises(OrchestratorError):
-        budget.tool("web_iq", calorie_fallback=True)
+        budget.reserve_nutrition_recovery()
+    with pytest.raises(OrchestratorError):
+        budget.tool("web_iq")
 
 
 def test_usda_selection_is_once_per_generation_and_preserves_nutrition_recovery_calls() -> None:
@@ -378,13 +379,12 @@ def test_usda_selection_is_once_per_generation_and_preserves_nutrition_recovery_
     budget.model(usda_selection=True)
     with pytest.raises(OrchestratorError):
         budget.model(usda_selection=True)
-    budget.tool("web_iq", calorie_fallback=True)
-    budget.model(calorie_fallback=True)
+    budget.reserve_nutrition_recovery()
     budget.model(calorie_fallback=True)
     budget.model(calorie_fallback=True)
     for _ in range(3):
         budget.model()
-    assert budget.model_calls == 8 and budget.usda_selection_calls == 1
+    assert budget.model_calls == 7 and budget.usda_selection_calls == 1
     with pytest.raises(OrchestratorError):
         budget.model()
     late = ExecutionBudget(uuid4())

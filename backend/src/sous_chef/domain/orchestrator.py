@@ -14,10 +14,10 @@ from sous_chef.domain.recipes import StructuredRecipe
 
 @dataclass(frozen=True)
 class OrchestratorPolicy:
-    version: int = 11
+    version: int = 12
     max_model_calls: int = 4
     max_calorie_fallback_calls: int = 1
-    max_calorie_model_calls: int = 3
+    max_calorie_model_calls: int = 2
     max_specialist_calls: int = 2
     max_revisions: int = 1
     max_tool_calls: int = 8
@@ -197,6 +197,10 @@ class Coordinator(Protocol):
 
 
 class SpecialistBudget(Protocol):
+    def reserve_nutrition_recovery(self) -> None:
+        """Reserve one bounded tool-free nutrition workflow without authorizing search."""
+        ...
+
     def model_allowance(self, *, calorie_fallback: bool = False) -> tuple[None, None]:
         """Check the deadline and reservation; leave token limits to the provider."""
         ...
@@ -209,7 +213,7 @@ class SpecialistBudget(Protocol):
         """Account for an additional invocation without double-counting returned usage."""
         ...
 
-    def tool(self, operation: str, *, calorie_fallback: bool = False) -> None:
+    def tool(self, operation: str) -> None:
         """Reserve an allowlisted tool call before executing it, including retries."""
         ...
 

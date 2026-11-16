@@ -64,15 +64,15 @@ snapshot; never replace it with a lossy summary. Recipe + Nutrition owns Foundry
 recipe retrieval, USDA nutrition, and conditional Grounding with Bing. No direct Cosmos access,
 arbitrary function, code execution, external URL fetch, or alternative model.
 
-There are at most four main model invocations, plus at most three backend-owned
-nutrition invocations (web first, then tool-free AI estimates for remaining gaps), two specialist
+There are at most four main model invocations, plus at most two backend-owned
+tool-free AI nutrition invocations for missing USDA nutrients, two specialist
 invocations (initial plus ONE revision), eight total tool calls including retries,
-one ordinary Bing search plus one calorie search, and a 120-second deadline.
+one ordinary Bing search, no nutrition searches, and a 120-second deadline.
 The backend tracks token usage for
 observability, not application-imposed input/output ceilings; the provider's
 model context/output limits still apply.
-The backend may reserve ONE nutrition workflow: a web-first call followed, only if
-needed, by a tool-free AI-knowledge call for all remaining missing ingredient nutrients.
+The backend may reserve ONE nutrition workflow: a tool-free AI-knowledge call
+for all remaining missing ingredient nutrients after USDA. Do not search for nutrition.
 If a valid AI response fills only some gaps, the backend may make ONE further
 tool-free call for only the remaining ingredient/nutrient pairs. Empty or invalid
 AI responses do not authorize another attempt. Accepted source values are never replaced.
