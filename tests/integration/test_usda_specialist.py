@@ -288,7 +288,7 @@ def test_chat_uses_mass_sources_or_complete_fallback_without_household_keyword_m
     )
     recipe = run(service, context).recipe
     assert recipe is not None
-    assert len(model.requests) == (3 if household_units else 2)
+    assert len(model.requests) == (4 if household_units else 2)
     assert [line.unit for line in recipe.ingredients] == [
         line["unit"] for line in draft["ingredients"]
     ]
@@ -298,9 +298,10 @@ def test_chat_uses_mass_sources_or_complete_fallback_without_household_keyword_m
         assert not recipe.nutrition.mappings and not recipe.nutrition.sources
         assert len(recipe.nutrition.nutrient_estimates) == 5
         assert all(
-            item.source == "ai_knowledge" and item.reference is None and len(item.nutrients) == 6
+            item.source == "ai_knowledge" and item.reference is None and len(item.nutrients) == 5
             for item in recipe.nutrition.nutrient_estimates
         )
+        assert len(recipe.nutrition.ingredient_calories) == 5
         assert all(
             item.status == "known" and not item.unknown_ingredient_line_ids
             for item in recipe.nutrition.coverage

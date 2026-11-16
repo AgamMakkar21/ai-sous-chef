@@ -118,7 +118,7 @@ def cooking_context() -> RequestContext:
 
 def setup(
     draft: dict[str, Any] | None = None, *, response: dict[str, Any] | None = None
-) -> tuple[RecipeSpecialistService, FixtureTools, Harness]:
+) -> tuple[RecipeSpecialistService, FixtureTools, "RecipeHarness"]:
     message = response_body()["output"][0]
     message["content"][0]["text"] = json.dumps(FIXTURE["draft"] if draft is None else draft)
     transport = RecipeHarness(body=body(message) if response is None else response)

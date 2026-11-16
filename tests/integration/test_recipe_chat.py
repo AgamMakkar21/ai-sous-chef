@@ -288,7 +288,7 @@ def test_chat_persists_complete_web_nutrition_during_usda_outage(
                 json.loads(request.content)["agent_reference"]["version"]
                 for request in recipe_transport.requests
                 if json.loads(request.content)["agent_reference"]["name"] == "recipe-agent"
-            } == {"4"}
+            } == ({"4", "6"} if mode == "fail_carrot" else {"4"})
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
         assert send(client, conversation).json() == response.json()
         assert len(recipe_transport.requests) == 4 + int(mode == "fail_carrot")

@@ -59,7 +59,7 @@ samples are a smoke measurement, not a statistically established capacity limit.
 
 Proposed **local regression guards**, not approved live service-level objectives:
 concurrency cap 4 with observed overlap, no HTTP failures, p95 <= 15 seconds,
-per-request latency <= the current 60-second orchestration deadline, model calls
+per-request latency <= the current 120-second orchestration deadline, model calls
 within the current policy and an explicitly opted-in 4,096-token context cap.
 No new default or cumulative model token limit is introduced. Locally counted
 Responses input fields exclude instructions, schemas and output; synthetic usage
@@ -84,6 +84,8 @@ The capture started from `c336ef4` with the candidate changes uncommitted; its
 source/test hashes identify the measured implementation. Do not relabel this
 capture as a later commit or combine its percentiles with another environment.
 CI creates a fresh exact-source report independently.
+Fresh chat runs additionally count the bounded AI USDA selection invocation;
+the historical capture above is unchanged.
 
 ## Live acceptance remains pending
 

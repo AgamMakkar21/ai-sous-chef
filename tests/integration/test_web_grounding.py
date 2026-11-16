@@ -25,11 +25,14 @@ from sous_chef.domain.orchestrator import (
     TokenUsage,
 )
 from sous_chef.domain.recipes import (
+    NUTRIENT_NAMES,
     CalorieEstimate,
     CalorieGroundingRequest,
+    NutrientCoverage,
     NutrientGroundingRequest,
     NutritionEvidence,
     NutritionRequest,
+    NutritionUnknownComponent,
     StructuredRecipe,
     UsdaSelectionRequest,
 )
@@ -961,6 +964,22 @@ def test_slow_usda_selection_is_cancelled_with_time_left_for_complete_recovery(
             nutrients=(),
             mappings=(),
             sources=(),
+            coverage=tuple(
+                NutrientCoverage(
+                    name=name,
+                    status="unavailable",
+                    whole_recipe_amount=None,
+                    covered_ingredient_line_ids=(),
+                    unknown_ingredient_line_ids=tuple(line.line_id for line in request.ingredients),
+                )
+                for name in NUTRIENT_NAMES
+            ),
+            unknown_components=tuple(
+                NutritionUnknownComponent(
+                    ingredient_line_id=line.line_id, reason="service_unavailable"
+                )
+                for line in request.ingredients
+            ),
         )
 
     monkeypatch.setattr(harness.tools, "candidates", candidates)
