@@ -181,7 +181,7 @@ def tool_output(request: dict[str, object]) -> str:
         rows[0]["long_desc"] = "different food"
     elif MODE == "wrong_unit":
         rows[1]["units"] = "mg"
-    elif MODE == "nan":
+    elif MODE == "nan" or MODE == "invalid_later_profile" and food["fdc_id"] == "99902":
         rows[0]["nutr_val"] = "NaN"
     elif MODE == "negative":
         rows[0]["nutr_val"] = "-1"

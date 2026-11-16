@@ -155,6 +155,48 @@ def test_chat_recovers_from_transient_usda_failure_without_replaying_agents(
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
 
 
+@pytest.mark.parametrize("mode", ["invalid_search", "invalid_profile"])
+def test_chat_recovers_rejected_usda_data_before_saving_complete_answer(
+    mode: str,
+    recipe_settings: Settings,
+    recipe_transport: RecipeChatHarness,
+    auth_headers: dict[str, str],
+    harness: tuple[Transport, SyntheticCredential],
+) -> None:
+    settings = recipe_settings.model_copy(
+        update={
+            "usda_mcp_server": Path(__file__).parents[1] / "fixtures" / "usda_api_server.py",
+            "usda_mcp_env": {"TEST_USDA_MODE": SecretStr(mode)},
+        }
+    )
+    with TestClient(create_app(settings), headers=auth_headers) as client:
+        onboard(client)
+        conversation = create(client)
+        response = send(client, conversation)
+        assert response.status_code == 200, response.text
+        turn = response.json()["data"]
+        assert turn["status"] == "completed"
+        recipe = turn["recipe"]
+        nutrition = recipe["nutrition"]
+        assert nutrition["status"] == "known" and not nutrition["unknownComponents"]
+        assert {row["name"] for row in nutrition["nutrients"]} == {
+            "energy",
+            "protein",
+            "carbohydrate",
+            "fat",
+            "fiber",
+            "sodium",
+        }
+        assert {row["ingredientLineId"] for row in nutrition["ingredientCalories"]} == {
+            row["lineId"] for row in recipe["ingredients"]
+        }
+        assert all(row["ingredientLineId"] != "rice" for row in nutrition["mappings"])
+        calls = len(recipe_transport.requests)
+        assert send(client, conversation).json() == response.json()
+        assert len(recipe_transport.requests) == calls
+        assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
+
+
 @pytest.mark.parametrize("fails", [False, True])
 def test_release_chat_check_requires_live_recipe_and_attributed_calories(
     fails: bool,
@@ -190,7 +232,106 @@ def test_release_chat_check_requires_live_recipe_and_attributed_calories(
         assert client.call_args.args[0].environment == "dev"
 
 
-@pytest.mark.parametrize("mode", ["missing_nutrient", "fail_carrot", "error"])
+@pytest.mark.parametrize(
+    ("omission", "ingredient_count"),
+    [("ingredient", 3), ("nutrient", 3), ("nutrient", 30), ("persistent", 3)],
+)
+def test_chat_repairs_only_residual_ai_nutrients_before_durable_completion(
+    omission: str,
+    ingredient_count: int,
+    recipe_settings: Settings,
+    recipe_transport: RecipeChatHarness,
+    auth_headers: dict[str, str],
+    harness: tuple[Transport, SyntheticCredential],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = recipe_settings.model_copy(
+        update={"usda_mcp_env": {"TEST_USDA_MODE": SecretStr("error")}}
+    )
+    if ingredient_count == 30:
+        content = recipe_transport.recipe["output"][1]["content"][0]
+        draft = json.loads(content["text"])
+        draft["ingredients"] = [
+            {"lineId": f"food{i}", "name": f"ingredient {i}", "quantity": 10, "unit": "g"}
+            for i in range(ingredient_count)
+        ]
+        draft["instructions"] = [
+            {
+                "step": 1,
+                "text": "Cook the declared ingredients.",
+                "ingredientLineIds": [row["lineId"] for row in draft["ingredients"]],
+            }
+        ]
+        draft.update(substitutions=[], sourceClaims=[])
+        content["text"] = json.dumps(draft)
+    original = web_fixtures.nutrient_response
+    requests: list[dict[str, Any]] = []
+
+    def respond(payload: dict[str, Any], *, combined: bool = False) -> dict[str, Any]:
+        data = json.loads(payload["input"])
+        requests.append(data)
+        response = original(payload, combined=combined)
+        content = response["output"][-1]["content"][0]
+        output = json.loads(content["text"])
+        if data["useWeb"] or len(requests) == 2 and omission != "ingredient":
+            name = "protein" if data["useWeb"] else "carbohydrate"
+            for row in output["nutrientEstimates"]:
+                row["nutrients"] = [item for item in row["nutrients"] if item["name"] == name]
+        elif len(requests) == 2:
+            output["nutrientEstimates"] = output["nutrientEstimates"][:-1]
+        elif omission == "persistent":
+            output["nutrientEstimates"] = []
+        content["text"] = json.dumps(output)
+        return response
+
+    monkeypatch.setattr(web_fixtures, "nutrient_response", respond)
+    with TestClient(create_app(settings), headers=auth_headers) as client:
+        onboard(client)
+        conversation = create(client)
+        response = send(client, conversation)
+        assert response.status_code == (502 if omission == "persistent" else 200), response.text
+        assert [row["useWeb"] for row in requests] == [True, False, False]
+        first_ai = {row["ingredientLineId"]: row for row in requests[1]["ingredients"]}
+        residual = {row["ingredientLineId"]: row for row in requests[2]["ingredients"]}
+        assert all("protein" not in row["missingNutrients"] for row in first_ai.values())
+        if omission == "ingredient":
+            assert list(residual) == [list(first_ai)[-1]]
+            assert residual == {list(first_ai)[-1]: list(first_ai.values())[-1]}
+        else:
+            assert set(residual) == set(first_ai)
+            assert all(
+                set(row["missingNutrients"]) == {"energy", "fat", "fiber", "sodium"}
+                for row in residual.values()
+            )
+        turns = client.get(f"{BASE}/{conversation}/turns").json()["items"]
+        if omission == "persistent":
+            assert turns[0]["status"] == "failed" and turns[0]["recipe"] is None
+        else:
+            turn = response.json()["data"]
+            nutrition = turn["recipe"]["nutrition"]
+            assert nutrition["status"] == "known" and not nutrition["unknownComponents"]
+            assert all(
+                len(row["coveredIngredientLineIds"]) == ingredient_count
+                and not row["unknownIngredientLineIds"]
+                for row in nutrition["coverage"]
+            )
+            assert len(nutrition["ingredientCalories"]) == ingredient_count
+            assert len(nutrition["nutrientEstimates"]) == (
+                2 * ingredient_count if omission == "ingredient" else 3 * ingredient_count
+            )
+            assert turns == [turn]
+        calls = len(recipe_transport.requests)
+        replay = send(client, conversation)
+        if omission == "persistent":
+            assert replay.status_code == 502 and replay.json()["code"] == "execution_failed"
+        else:
+            assert replay.json() == response.json()
+        assert len(recipe_transport.requests) == calls
+
+
+@pytest.mark.parametrize(
+    "mode", ["missing_nutrient", "fail_carrot", "error", "invalid_later_profile"]
+)
 def test_release_chat_check_accepts_complete_web_fallback_nutrition(
     mode: str,
     recipe_settings: Settings,
@@ -219,9 +360,9 @@ def test_release_chat_check_accepts_complete_web_fallback_nutrition(
         )
     ]
     assert calorie_calls[-1]["useWeb"] is False
-    if mode in {"fail_carrot", "error"}:
+    if mode in {"fail_carrot", "error", "invalid_later_profile"}:
         assert calorie_calls[0]["useWeb"] is True
-        if mode == "fail_carrot":
+        if mode in {"fail_carrot", "invalid_later_profile"}:
             assert {item["ingredientLineId"] for item in calorie_calls[0]["ingredients"]} == {
                 "carrot",
                 "oil",

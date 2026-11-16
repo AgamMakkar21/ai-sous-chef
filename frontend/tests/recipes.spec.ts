@@ -226,7 +226,7 @@ for (const backup of ["web_iq", "ai_knowledge"] as const) {
   });
 }
 
-test("thirty ingredients retain disjoint web and AI nutrient records", () => {
+test("thirty ingredients retain disjoint web, AI and residual repair nutrient records", () => {
   const recipe = recipeTurn().recipe!;
   const original = recipe.ingredients;
   recipe.ingredients = Array.from({ length: 30 }, (_, index) => ({
@@ -283,9 +283,21 @@ test("thirty ingredients retain disjoint web and AI nutrient records", () => {
       ingredientLineId,
       source: "ai_knowledge" as const,
       reference: null,
+      basis: "Synthetic AI portion carbohydrate.",
+      nutrients: [{ name: "carbohydrate" as const, amount: 3, unit: "g" }],
+    },
+    {
+      ingredientLineId,
+      source: "ai_knowledge" as const,
+      reference: null,
       basis: "Synthetic AI estimates for remaining portion nutrients.",
       nutrients: n.nutrients
-        .filter((item) => item.name !== "energy" && item.name !== "protein")
+        .filter(
+          (item) =>
+            item.name !== "energy" &&
+            item.name !== "protein" &&
+            item.name !== "carbohydrate",
+        )
         .map((item) => ({ ...item, amount: 3 })),
     },
   ]);

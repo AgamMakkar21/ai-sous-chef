@@ -312,7 +312,7 @@ class NutritionEvidence(RecipeModel):
     coverage: tuple[NutrientCoverage, ...] = Field(default=(), max_length=6)
     unknown_components: tuple[NutritionUnknownComponent, ...] = Field(default=(), max_length=30)
     ingredient_calories: tuple[IngredientCalories, ...] = Field(default=(), max_length=30)
-    nutrient_estimates: tuple[IngredientNutrientEstimate, ...] = Field(default=(), max_length=60)
+    nutrient_estimates: tuple[IngredientNutrientEstimate, ...] = Field(default=(), max_length=90)
 
     @model_validator(mode="after")
     def evidence_state(self) -> Self:

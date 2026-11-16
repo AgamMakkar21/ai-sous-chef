@@ -339,7 +339,7 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
   if (
     !list(
       nutrientEstimates,
-      60,
+      90,
       (item): item is IngredientNutrientEstimate =>
         isRecord(item) &&
         typeof item.ingredientLineId === "string" &&

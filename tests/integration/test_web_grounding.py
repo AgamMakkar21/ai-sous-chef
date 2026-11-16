@@ -1095,8 +1095,12 @@ def test_full_orchestration_requires_web_evidence_for_all_missing_nutrients(
         with pytest.raises(OrchestratorError) as caught:
             asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
         assert caught.value.code == OrchestratorFailure.SPECIALIST_FAILED
-        assert [request["useWeb"] for request in requests] == [True, False]
+        assert [request["useWeb"] for request in requests] == (
+            [True, False, False] if fault == "partial" else [True, False]
+        )
         assert len(requests[1]["ingredients"]) == (8 if fault == "partial" else 9)
+        if fault == "partial":
+            assert len(requests[2]["ingredients"]) == 7
     assert "PRIVATE_CANARY" not in caplog.text
 
 

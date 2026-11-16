@@ -48,6 +48,7 @@ TRANSIENT_USDA_FAILURES = {
     FoundryFailure.UNAVAILABLE,
     FoundryFailure.THROTTLED,
 }
+RECOVERABLE_USDA_FAILURES = TRANSIENT_USDA_FAILURES | {FoundryFailure.INVALID_RESULT}
 
 
 def _rounded(value: Decimal) -> float:
@@ -161,7 +162,7 @@ class UsdaNutritionTool:
                     found[line_id] = cache[name]
         except RecipeToolError as error:
             operational_event(Event.USDA_FAILED, category=ErrorCategory(error.code.value))
-            if error.code not in TRANSIENT_USDA_FAILURES:
+            if error.code not in RECOVERABLE_USDA_FAILURES:
                 raise
         return found
 
@@ -404,7 +405,7 @@ class UsdaNutritionTool:
             ) as session:
                 await collect(session)
         except RecipeToolError as error:
-            if not request.allow_estimates or error.code not in TRANSIENT_USDA_FAILURES:
+            if not request.allow_estimates or error.code not in RECOVERABLE_USDA_FAILURES:
                 raise
             operational_event(Event.USDA_FAILED, category=ErrorCategory(error.code.value))
             processed = {item.ingredient_line_id for item in mappings} | {
