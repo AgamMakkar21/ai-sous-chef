@@ -7,7 +7,7 @@ from collections import Counter
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Literal, Self
+from typing import Any, Literal, Protocol, Self
 from unittest.mock import patch
 
 import pytest
@@ -74,8 +74,13 @@ class Suite(BaseModel):
         return self
 
 
+class RequiredSuite(Protocol):
+    @property
+    def fixtures(self) -> tuple[Fixture, ...]: ...
+
+
 class HardGate:
-    def __init__(self, suite: Suite) -> None:
+    def __init__(self, suite: RequiredSuite) -> None:
         self.suite = suite
         self.required = {node for fixture in suite.fixtures for node in fixture.tests}
         self.collected: list[str] = []
