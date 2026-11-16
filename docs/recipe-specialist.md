@@ -41,6 +41,9 @@ URL annotations, citation spans and web-result budget. It attaches validated web
 grounding separately, then runs the existing USDA MCP calculation, source/quantity
 mapping checks, Orchestrator review and deterministic final safety gate. Web
 citations cannot become curated recipe source IDs, USDA evidence or safety approval.
+An optional quantity lookup may be skipped only when both web claims and native
+citations are absent. Explicitly requested current-information searches still
+require one completed, exact-query search; any executed search retains all checks.
 
 **Privacy and enforcement boundary:** the same Foundry invocation receives the
 private personalization context and has the native web tool available. Published
@@ -365,8 +368,11 @@ portions are not interpreted with keyword heuristics. Mappings disclose
 servings, and the assumed gram weight in `conversionBasis`. USDA alone supplies
 nutrient values. When no reliable source weight exists, the missing nutrition
 uses the explicitly attributed AI recovery below, without rewriting the amount.
-Empty comparable-recipe web results do not invent evidence; provider failures
-remain explicit. Older snapshots without quantity assumptions remain readable.
+Empty comparable-recipe web results do not invent evidence. In combined mode,
+an omitted optional quantity search is also acceptable only without web claims or
+native citations: curated recipe grounding remains mandatory, and missing nutrients
+still require complete AI recovery. Current-information searches cannot be skipped.
+Provider failures remain explicit. Older snapshots without quantity assumptions remain readable.
 Rollback to an older strict reader requires compatibility review before exposing
 new nullable-quantity mappings or `quantityEstimate` fields to that reader.
 
@@ -630,9 +636,13 @@ AI nutrient recovery. Rejected USDA data never becomes a mapping or a zero
 placeholder. Invalid startup contracts and exact ingredient lookups still raise
 errors. The authenticated send regression covers malformed search results and
 invalid profile values through durable answer persistence and idempotent replay.
-The live release smoke uses an ordinary chicken-dinner request rather than
-prescribing mass-only ingredient amounts, so generated quantities and recovery
-are exercised together. Cancellation propagates and the child is terminated/reaped,
+The live release smoke requires both an ordinary no-cook yogurt bowl and a
+chicken dinner rather than prescribing mass-only ingredient amounts, so generated
+quantities and recovery are exercised together. Offline release-smoke regressions
+also require completion when the optional quantity search is skipped without web
+claims or native citations. No-cook bowls, salads, sandwiches and smoothies do not
+need cooking steps or temperature templates to pass recipe validation.
+Cancellation propagates and the child is terminated/reaped,
 with at most one second for
 cleanup. Raw child stderr is not forwarded into app logs; operational events
 contain only the safe outcome/category and duration.

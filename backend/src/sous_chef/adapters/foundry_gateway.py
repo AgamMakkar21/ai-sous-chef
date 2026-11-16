@@ -839,7 +839,7 @@ class FoundryGateway:
             if content.type != "output_text" or len(content.annotations) > 10:
                 raise ValueError
             web = None
-            if request.web_query is None:
+            if request.web_query is None or (request.allow_empty_web and not calls):
                 if calls or combined.web_claims or content.annotations:
                     raise ValueError
             else:

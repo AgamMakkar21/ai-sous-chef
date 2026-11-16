@@ -789,19 +789,32 @@ async def chat_smoke(deployed: dict[str, str]) -> None:
             learned_preferences=(),
             current_request="Give me a recipe for a chicken dinner.",
         )
-        async with asyncio.timeout(POLICY.deadline_seconds + 30), nutrition.lifespan():
-            result = await OrchestratorService(gateway, specialist).run(context)
-        if (
-            result.status != "candidate"
-            or result.recipe is None
-            or result.recipe.nutrition.status != "known"
-            or {item.name for item in result.recipe.nutrition.nutrients} != set(NUTRIENT_NAMES)
-            or {item.ingredient_line_id for item in result.recipe.nutrition.ingredient_calories}
-            != {line.line_id for line in result.recipe.ingredients}
-        ):
-            raise DeliveryError(
-                "Live chat did not produce complete attributed nutrition after USDA/AI lookup."
-            )
+        async with nutrition.lifespan():
+            for current_request in (
+                "Give me a recipe for a yogurt bowl.",
+                context.current_request,
+            ):
+                async with asyncio.timeout(POLICY.deadline_seconds + 30):
+                    result = await OrchestratorService(gateway, specialist).run(
+                        context.model_copy(update={"current_request": current_request})
+                    )
+                if (
+                    result.status != "candidate"
+                    or result.recipe is None
+                    or result.recipe.nutrition.status != "known"
+                    or {item.name for item in result.recipe.nutrition.nutrients}
+                    != set(NUTRIENT_NAMES)
+                    or {
+                        item.ingredient_line_id
+                        for item in result.recipe.nutrition.ingredient_calories
+                    }
+                    != {line.line_id for line in result.recipe.ingredients}
+                ):
+                    raise DeliveryError(
+                        "Live chat did not produce complete attributed nutrition "
+                        "after USDA/AI lookup."
+                    )
+        assert result.recipe is not None
         if settings.foundry_recipe_nutrition_calorie_agent_version is not None:
             ingredients = [
                 {
