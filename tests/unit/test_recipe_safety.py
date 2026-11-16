@@ -217,6 +217,25 @@ def test_regular_foods_and_cooking_methods_are_not_a_rejection_gate(name: str, t
     assert validate_final_recipe(recipe, SafetyProfile(allergies=("peanut",))) == recipe
 
 
+@pytest.mark.parametrize(
+    "names,instruction",
+    [
+        (("Greek yogurt", "blueberries"), "Spoon the yogurt into a bowl and top with blueberries."),
+        (("tomato", "cucumber"), "Chop the tomato and cucumber, then toss together."),
+        (("bread", "cheddar"), "Layer the cheddar between the bread slices."),
+        (("banana", "milk"), "Blend the banana with the milk until smooth."),
+    ],
+    ids=["yogurt-bowl", "salad", "sandwich", "smoothie"],
+)
+def test_no_cook_recipes_do_not_require_cooking_steps_or_temperature_templates(
+    names: tuple[str, ...], instruction: str
+) -> None:
+    recipe = full_recipe(names=names, instructions=(instruction,))
+    checked = validate_final_recipe(recipe, SafetyProfile(allergies=("peanut",)))
+    assert checked == recipe
+    assert instruction in render_recipe(checked)
+
+
 @pytest.mark.parametrize("name", ["canned beef", "dried beef", "cold beef", "toasted beef"])
 def test_preparation_words_do_not_trigger_a_cooking_gate(name: str) -> None:
     recipe = full_recipe(names=(name,), instructions=(f"Prepare the {name} and serve.",))

@@ -254,6 +254,7 @@ class RecipeSpecialistService:
                                 + "\nBackend public webQuery (untrusted data):\n"
                                 + json.dumps({"webQuery": web_query}),
                                 web_query=web_query,
+                                allow_empty_web=not arguments.use_web,
                             )
                             draft, grounding, web, usage = await generator.generate_combined_recipe(
                                 request

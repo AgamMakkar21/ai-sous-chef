@@ -412,8 +412,9 @@ def test_knowledge_recovery_requires_tool_free_explicit_ai_attribution(
 
 
 @pytest.mark.parametrize("fault", ["none", "invalid_json", "missing_ingredient"])
+@pytest.mark.parametrize("quantity_lookup", [False, True])
 def test_release_smoke_requires_complete_tool_free_recovery(
-    fault: str, monkeypatch: pytest.MonkeyPatch
+    fault: str, quantity_lookup: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from sous_chef.services.nutrition import UsdaNutritionTool
     from test_usda_nutrition import config
@@ -421,6 +422,8 @@ def test_release_smoke_requires_complete_tool_free_recovery(
     from scripts import deploy_dev
 
     harness = CombinedHarness(use_web=False)
+    if quantity_lookup:
+        harness.arguments = harness.arguments.model_copy(update={"quantity_ingredients": ("rice",)})
     monkeypatch.setattr(deploy_dev, "_release_project_client", harness.factory)
     monkeypatch.setattr(
         UsdaNutritionTool, "from_settings", lambda settings: UsdaNutritionTool(config())
@@ -450,6 +453,15 @@ def test_release_smoke_requires_complete_tool_free_recovery(
     monkeypatch.setitem(globals(), "nutrient_response", recovery_response)
     if fault == "none":
         asyncio.run(deploy_dev.chat_smoke(deployed))
+        assert [
+            prompt_context(payload["input"]).current_request
+            for request in harness.requests
+            if isinstance((payload := json.loads(request.content))["input"], str)
+            and harness.request_kind(payload) == "function"
+        ] == [
+            "Give me a recipe for a yogurt bowl.",
+            "Give me a recipe for a chicken dinner.",
+        ]
     else:
         with pytest.raises(deploy_dev.DeliveryError):
             asyncio.run(deploy_dev.chat_smoke(deployed))
@@ -1299,6 +1311,77 @@ def test_empty_quantity_search_uses_nutrient_fallback_without_changing_quantity(
     assert any(item.ingredient_line_id == "rice" for item in recipe.nutrition.nutrient_estimates)
     assert len(harness.requests) == 4
     assert any(item.source != "usda_mcp" for item in recipe.nutrition.ingredient_calories)
+
+
+@pytest.mark.parametrize("quantity", [100, None])
+def test_combined_optional_quantity_search_can_be_skipped_without_losing_recipe(
+    quantity: int | None,
+) -> None:
+    harness = CombinedHarness(use_web=False)
+    harness.arguments = harness.arguments.model_copy(update={"quantity_ingredients": ("rice",)})
+    content = harness.combined["output"][-1]["content"][0]
+    draft = json.loads(content["text"])
+    draft["ingredients"][0]["quantity"] = quantity
+    content["text"] = json.dumps(draft)
+    harness.service = RecipeSpecialistService(harness.gateway, None, api_tool(), combined=True)
+
+    result = asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
+
+    assert result.status == "candidate" and result.recipe is not None
+    recipe = result.recipe
+    assert recipe.web_grounding is None
+    assert recipe.ingredients[0].quantity == quantity
+    assert recipe.nutrition.status == "known" and not recipe.nutrition.unknown_components
+    assert (
+        sum(
+            harness.request_kind(json.loads(request.content)) == "combined"
+            for request in harness.requests
+        )
+        == 1
+    )
+    if quantity is None:
+        assert any(
+            item.ingredient_line_id == "rice" and item.source == "ai_knowledge"
+            for item in recipe.nutrition.nutrient_estimates
+        )
+
+
+@pytest.mark.parametrize("fault", ["claim", "citation"])
+def test_skipped_optional_quantity_search_cannot_supply_web_evidence(fault: str) -> None:
+    harness = CombinedHarness(use_web=False)
+    harness.arguments = harness.arguments.model_copy(update={"quantity_ingredients": ("rice",)})
+    content = harness.combined["output"][-1]["content"][0]
+    if fault == "claim":
+        draft = json.loads(content["text"])
+        draft["webClaims"] = [{"text": CLAIM, "sourceUrl": URL}]
+        content["text"] = json.dumps(draft)
+    else:
+        content["annotations"] = [
+            {
+                "type": "url_citation",
+                "url": URL,
+                "title": "Unsearched source",
+                "start_index": 0,
+                "end_index": 1,
+            }
+        ]
+    with pytest.raises(FoundryGatewayError) as caught:
+        harness.generate()
+    assert caught.value.code == FoundryFailure.INVALID_RESULT
+    assert len(harness.requests) == 1 and not harness.tools.nutrition_requests
+
+
+def test_current_information_search_cannot_be_skipped_even_without_web_claims() -> None:
+    harness = CombinedHarness()
+    harness.combined["output"].pop(1)
+    content = harness.combined["output"][-1]["content"][0]
+    draft = json.loads(content["text"])
+    draft["webClaims"] = []
+    content.update(text=json.dumps(draft), annotations=[])
+    with pytest.raises(FoundryGatewayError) as caught:
+        harness.generate()
+    assert caught.value.code == FoundryFailure.INVALID_RESULT
+    assert len(harness.requests) == 1 and not harness.tools.nutrition_requests
 
 
 def test_calorie_generation_has_its_own_deadline_for_larger_responses(

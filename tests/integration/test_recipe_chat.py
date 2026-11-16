@@ -197,6 +197,63 @@ def test_chat_recovers_rejected_usda_data_before_saving_complete_answer(
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
 
 
+def test_chat_saves_no_cook_yogurt_bowl_when_optional_quantity_search_is_skipped(
+    combined_settings: Settings,
+    auth_headers: dict[str, str],
+    harness: tuple[Transport, SyntheticCredential],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = CombinedHarness(use_web=False)
+    transport.arguments = transport.arguments.model_copy(
+        update={
+            "requirements": "A simple no-cook yogurt bowl.",
+            "quantity_ingredients": ("yogurt",),
+        }
+    )
+    content = transport.combined["output"][-1]["content"][0]
+    draft = json.loads(content["text"])
+    draft.update(
+        title="Yogurt bowl",
+        totalMinutes=5,
+        ingredients=[
+            {"lineId": "yogurt", "name": "plain Greek yogurt", "quantity": 200, "unit": "g"},
+            {"lineId": "berries", "name": "blueberries", "quantity": 80, "unit": "g"},
+        ],
+        instructions=[
+            {
+                "step": 1,
+                "text": "Spoon the yogurt into a bowl and top with blueberries.",
+                "ingredientLineIds": ["yogurt", "berries"],
+            }
+        ],
+        substitutions=[],
+        fitReasons=["A quick no-cook bowl."],
+        adaptations=[],
+        sourceClaims=[],
+    )
+    content["text"] = json.dumps(draft)
+    monkeypatch.setattr(foundry_gateway, "_project_client", transport.factory)
+    with TestClient(create_app(combined_settings), headers=auth_headers) as client:
+        onboard(client)
+        conversation = create(client)
+        response = send(client, conversation, content="yogurt bowl")
+        assert response.status_code == 200, response.text
+        turn = response.json()["data"]
+        assert turn["status"] == "completed" and turn["recipe"]["title"] == "Yogurt bowl"
+        recipe = turn["recipe"]
+        assert recipe["webGrounding"] is None
+        assert recipe["nutrition"]["status"] == "known"
+        assert not recipe["nutrition"]["unknownComponents"]
+        assert {item["ingredientLineId"] for item in recipe["nutrition"]["ingredientCalories"]} == {
+            "yogurt",
+            "berries",
+        }
+        assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
+        calls = len(transport.requests)
+        assert send(client, conversation, content="yogurt bowl").json() == response.json()
+        assert len(transport.requests) == calls
+
+
 @pytest.mark.parametrize("fails", [False, True])
 def test_release_chat_check_requires_live_recipe_and_attributed_calories(
     fails: bool,
@@ -224,6 +281,10 @@ def test_release_chat_check_requires_live_recipe_and_attributed_calories(
                 asyncio.run(delivery.chat_smoke(deployed))
         else:
             asyncio.run(delivery.chat_smoke(deployed))
+            assert [context.current_request for context in recipe_transport.contexts] == [
+                "Give me a recipe for a yogurt bowl.",
+                "Give me a recipe for a chicken dinner.",
+            ]
             recovery = json.loads(recipe_transport.requests[-1].content)
             assert recovery["agent_reference"]["version"] == (
                 recipe_settings.foundry_recipe_nutrition_calorie_agent_version

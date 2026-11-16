@@ -698,6 +698,7 @@ class GroundedRecipeGenerationRequest(RecipeGenerationRequest):
 
 class CombinedRecipeGenerationRequest(GroundedRecipeGenerationRequest):
     web_query: str | None = Field(min_length=1, max_length=240, default=None, repr=False)
+    allow_empty_web: bool = False
 
 
 class WebGroundingRequest(FoundryRequest):
