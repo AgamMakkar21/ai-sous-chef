@@ -15,8 +15,8 @@ The current dev design keeps recipe MCP retrieval and **native web search on the
 same Recipe + Nutrition agent version**. Set
 `ASC_FOUNDRY_RECIPE_NUTRITION_MODE=combined` and pin its reviewed
 `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION`. A separate retrieval pin is not
-used in this mode. When any USDA ingredient nutrient is missing, nutrient fallback invokes
-that same combined version; no separate web-phase pin is required or used.
+used in this mode. Missing USDA nutrients go directly to the separately pinned,
+tool-free `calorie` source, without a nutrition web search.
 The default `phased` mode remains available for
 existing releases; the phase-specific sections below describe that legacy route.
 
@@ -31,7 +31,7 @@ introduce general web-based recipe inspiration.
 The combined strict output is `combined_recipe_nutrition_v4`, an envelope with
 `recipe`, `calorieEstimates` and `nutrientEstimates`. Recipe generation returns the existing draft
 plus `webClaims` (at most three short claims with `sourceUrl`) inside `recipe`,
-and empty estimate arrays. Nutrient fallback returns `recipe=null`,
+and empty estimate arrays. Legacy web nutrient fallback returns `recipe=null`,
 `calorieEstimates=[]` and cited amounts for every missing nutrient it can support.
 Calorie-only recovery returns `recipe=null`, `nutrientEstimates=[]` and attributed
 estimates for the backend's missing ingredient lines. Nullable references remain
@@ -364,7 +364,7 @@ portions are not interpreted with keyword heuristics. Mappings disclose
 `quantityEstimate`, source quotes, source mass and
 servings, and the assumed gram weight in `conversionBasis`. USDA alone supplies
 nutrient values. When no reliable source weight exists, the missing nutrition
-uses the explicitly attributed web/AI recovery below, without rewriting the amount.
+uses the explicitly attributed AI recovery below, without rewriting the amount.
 Empty comparable-recipe web results do not invent evidence; provider failures
 remain explicit. Older snapshots without quantity assumptions remain readable.
 Rollback to an older strict reader requires compatibility review before exposing
@@ -386,7 +386,7 @@ keyword matching to decide food identity or grams.
 The backend validates exact requested line coverage and candidate membership.
 It then rechecks each selected ID against a fresh USDA search and verifies the
 fetched profile's identity before calculating nutrition. Invalid, timed-out or
-null selections leave gaps for web/AI recovery; they never fall back to the old
+null selections leave gaps for AI recovery; they never fall back to the old
 semantic matcher or fabricate USDA evidence. Standalone grocery lookup and
 explicit source-ID validation retain their existing contracts.
 
@@ -414,7 +414,7 @@ of the user's inventory. Explicit user-provided quantities, units and food-form
 constraints remain unchanged. The model must not invent a gram conversion for
 cups, spoons, pieces or packages, or silently choose an unspecified product form.
 Those ingredients use source-backed quantity assumptions or the full-nutrient
-web/AI recovery; missing source data is not silently treated as zero.
+AI recovery; missing source data is not silently treated as zero.
 
 AI chooses only from the actual USDA candidates; it cannot invent FDC IDs or
 supply USDA nutrient amounts. This consumes one separately bounded model call
@@ -463,7 +463,7 @@ ratios. Source-backed volume weights work for any food; without usable source
 portions, quantity estimates require cited comparable recipe evidence rather
 than a universal mL-to-gram conversion. Unknown package/can sizes and cooking
 yields remain unknown. Missing calories still enter the separately attributed
-web/AI fallback below. Original recipe quantities/units are never rewritten.
+AI fallback below. Original recipe quantities/units are never rewritten.
 Amounts describe the selected food form/ingredient inputs, not an asserted
 laboratory measurement after cooking. Nutrients are energy (kcal), protein,
 carbohydrate, fat, fiber (g) and sodium (mg). An unexpected source unit fails;
@@ -514,21 +514,17 @@ the canonical `https://fdc.nal.usda.gov/food-details/<fdc_id>/nutrients` referen
 and the source data type/publication date (explicitly unspecified when absent).
 Older stored `usda:sr:` citations remain historical evidence and are not rewritten
 or reinterpreted as FDC IDs. A fresh profile must match the selected candidate.
-USDA amounts and mappings never come from model memory. Missing recipe calories
-can instead use the explicitly attributed fallback below; other nutrients and the
-standalone ingredient lookup retain the USDA-only contract.
+USDA amounts and mappings never come from model memory. Missing recipe nutrients
+can instead use the explicitly attributed fallback below; the standalone
+ingredient lookup retains the USDA-only contract.
 
 ### Recipe calorie fallback
 
 USDA is attempted first. Successful ingredient mappings, calories and other
 nutrients are preserved, including when a later ingredient fails. Missing
-calories trigger a web-first invocation of the same combined Recipe + Nutrition
-version (or the web phase in legacy phased mode). If it is rejected, incomplete,
-empty or only covers some ingredients, the backend makes at most one independent,
-tool-free AI-knowledge invocation for the remaining ingredient lines. This is
-not a repeated search and never replaces accepted USDA or web estimates.
-Only recipe ingredient names and quantities enter that invocation; only the
-backend-built public food/calorie query may enter native web search. Safety
+nutrients go directly to a tool-free AI-knowledge invocation. Nutrition recovery
+does not search the web, invoke Grounding with Bing, or use Web IQ. Only recipe
+ingredient names, quantities and missing nutrient names enter the request. Safety
 catalog groups are not nutritionally interchangeable: ingredient names are
 preserved, not replaced by a group's first alias.
 Private profile/history/allergy context is not included. Obvious private identifiers
@@ -539,25 +535,24 @@ food/qualifier allowlist: unfamiliar ingredients retain their actual names and
 food forms. This does not classify unfamiliar foods as allergen-safe or change
 deterministic recipe safety checks.
 
-The web-first calorie task searches once with Foundry's native `WebSearchTool`,
-which uses [Grounding with Bing Search](https://learn.microsoft.com/azure/ai-foundry/agents/how-to/tools/web-search).
-It does not call recipe MCP. It returns kcal for each missing ingredient's
-entire recipe quantity, not per 100 g or per serving. A `web_iq` entry requires
-an actual searched HTTPS URL with a native citation. If source evidence is
-insufficient or the search tool fails, the model may return `ai_knowledge`
-with no citation and explicit assumptions. It cannot claim `usda_mcp`.
-The recovery request has `useWeb=false`. It must return only `ai_knowledge`
+The recovery request has `useWeb=false` and estimates all six requested nutrients
+for each ingredient's entire recipe quantity, not per 100 g or per serving.
+It must return only `ai_knowledge`
 entries with null references, no native citations, and no search or recipe MCP
 calls. A separately pinned immutable `calorie` source on the same specialist
 identity has no tools and `tool_choice=none`. Normal recipe/web sources retain
 `tool_choice=required`; recovery cannot weaken their grounding requirements.
 The backend rejects any unrequested recovery tool call.
-Web pages about USDA are still Bing-grounded web evidence, not a successful MCP lookup.
+The model must estimate from knowledge rather than use missing information as
+evidence for zero. Genuine zeros are allowed when justified by the food and portion.
+The schema allows empty lists; it does not require placeholder objects.
+An unresolved gap fails generation explicitly instead of becoming a false complete result.
 The backend sums ingredient calories and scales by servings; the card labels
 each ingredient **USDA MCP**, **Grounding with Bing** or **AI knowledge**, links available
 references, and warns that fallback values are approximate and not USDA-verified.
-Missing protein/fat/etc. remain unknown. Unknown quantities remain unchanged in
-the recipe; any calorie-portion assumption appears only in the estimate's basis.
+Unknown quantities remain unchanged in the recipe; any assumed weight or portion
+appears only in the estimate's basis. AI estimates are informational approximations,
+not independently verified nutrient measurements.
 
 The persisted `web_iq` source/tool identifiers are retained for compatibility
 with existing recipe history; they identify Bing-grounded web evidence, not a
@@ -568,27 +563,24 @@ and reserves at most half the remaining usable time (capped at 60 seconds) for
 nutrition fallback. USDA gets the other half instead of an already-expired
 deadline when agent generation is slow. Its existing per-lookup timeout still
 applies; unused USDA time remains available to fallback. All fallback invocations share
-a single 60-second ceiling; recovery never resets it. The web call is capped at
-half the available recovery window so tool-free AI still has time to run.
+a single 60-second ceiling; recovery never resets it.
 Fallback leaves the final two seconds
 and never extends the whole-operation deadline. No application input/output token
 ceiling is imposed or sent to the provider, and high reported usage cannot invalidate
 otherwise valid evidence. This does not permit another revision or search.
-Calorie output is bounded by the 30-line schema, 65,536 text characters and
-131,072 native-envelope characters. Up to 30 native citations/search sources
-can support the ingredient estimates.
+Output is bounded by the 30-line schema, 65,536 text characters and
+131,072 response-envelope characters. Recovery rejects searches and native citations.
 If the entire fallback invocation is itself unavailable, the recipe still
 reports missing nutrition honestly; no hardcoded success or fabricated citation
 is substituted. Valid subsets are merged without filling omitted lines or
 turning an empty result into zero calories. Malformed/incomplete responses,
 rejected optional calls and invalid attribution are discarded and logged as
-`calorie_fallback_unavailable`; a failed web-first invocation still permits the
-independent tool-free recovery. If that also fails, the backend must report the
+`calorie_fallback_unavailable`. If recovery fails, the backend must report the
 remaining gap honestly rather than fabricate an amount: generation fails explicitly
-instead of delivering a newly partial recipe. Successful USDA and web values are
+instead of delivering a newly partial recipe. Successful USDA and AI values are
 never overwritten. A valid but partial AI response is retained, and one additional
 tool-free call requests only its remaining ingredient/nutrient pairs within the
-same deadline. Empty or invalid AI responses are not retried, and the three-call
+same deadline. Empty or invalid AI responses are not retried, and the two-call
 recovery limit prevents repeated partial answers from looping. Authentication/configuration
 failures remain explicit.
 Transient USDA API failure after successful MCP initialization is logged but
@@ -597,16 +589,17 @@ fail-closed. Live release smoke requires complete attributed nutrition,
 not USDA coverage for every ingredient. The backend now sends a
 `purpose=nutrition_fallback` request for every ingredient/nutrient gap after USDA,
 including energy, protein, carbohydrate, fat, fiber and sodium. A single bounded
-Bing search supplies only values supported by searched, natively cited sources,
-scaled to the whole specified ingredient quantity. It cannot overwrite a known
-USDA value or use absence as evidence for zero.
+AI-knowledge request estimates the remaining pairs for the whole specified
+ingredient quantity. It cannot overwrite a known USDA value or use absence as
+evidence for zero. Historical saved snapshots are not automatically rewritten.
+
 Non-calorie fallback evidence is stored in `nutrition.nutrientEstimates`, with
 ingredient line IDs, nutrient amount/unit pairs, source and portion assumptions.
 Web entries require HTTPS references; AI knowledge entries require null references
 and are explicitly approximate, never presented as searched evidence. The
 independent tool-free source supports `purpose=nutrition_fallback` for all six
 nutrients, and retains legacy `purpose=calorie_fallback` compatibility.
-Up to 90 persisted records allow disjoint web/AI gaps across the three recovery calls;
+The 90-record persisted bound remains compatible with older web/AI recovery snapshots;
 duplicate ingredient/nutrient pairs are rejected. Energy remains in
 `ingredientCalories`. USDA mappings additionally carry `nutrients` scaled to each
 ingredient's whole recipe quantity, enabling the full ingredient breakdown.
@@ -614,13 +607,13 @@ If any nutrient remains unsupported after fallback, generation fails explicitly
 rather than completing chat with partial nutrition. Historical partial snapshots
 remain readable and retain their original uncertainty labels.
 
-Activation requires publishing and reading back the reviewed `--phase combined`
-and `--phase calorie` sources, then pinning their returned versions in the version-6
-dev manifest alongside the reviewed Orchestrator contract receipt. Delivery verifies
+This routing change retains the reviewed `--phase combined` and `--phase calorie`
+sources. Publish and read back the updated Orchestrator contract and pin its
+source version and receipt in the version-6 dev manifest. Delivery verifies
 and copies both specialist definitions without changing
 identities; readiness verifies their schemas and policy fingerprints. The live
-release smoke accepts complete USDA-first chat with Bing-grounded fallback
-nutrition, and requires complete tool-free calorie recovery.
+release smoke requires complete USDA-first chat with tool-free AI fallback
+nutrition and independently exercises all-six-nutrient AI recovery.
 Historical phased releases remain available for rollback.
 No runtime tool/schema override is used.
 
@@ -633,7 +626,7 @@ and a profile to 256 unique nutrient rows. Timeout, malformed protocol/data,
 oversized output, child exit and source errors produce safe `RecipeToolError`
 categories. Recipe-only transient failures and rejected source data retain
 already validated evidence and leave unverified ingredient values for complete
-web/AI nutrient recovery. Rejected USDA data never becomes a mapping or a zero
+AI nutrient recovery. Rejected USDA data never becomes a mapping or a zero
 placeholder. Invalid startup contracts and exact ingredient lookups still raise
 errors. The authenticated send regression covers malformed search results and
 invalid profile values through durable answer persistence and idempotent replay.
@@ -707,7 +700,7 @@ numbers are rejected, and the adapter validates candidate membership and profile
 provenance. Different selections of the same ingredient name never share a cached
 profile. Chat sets `require_selection=True`; an absent/null ID cannot reactivate
 the legacy approximate matcher. A failed selection is logged and complete
-web/AI recovery remains available. The selector cannot call tools or return
+AI recovery remains available. The selector cannot call tools or return
 nutrition/citations, and its separate allowance cannot fund another specialist
 attempt or consume recovery's reserved calls. Deterministic final declared-list
 allergy checks remain independent of nutrition selection.

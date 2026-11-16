@@ -117,20 +117,19 @@ class ExecutionBudget:
         self.input_tokens += usage.input_tokens
         self.output_tokens += usage.output_tokens
 
-    def tool(self, operation: str, *, calorie_fallback: bool = False) -> None:
+    def reserve_nutrition_recovery(self) -> None:
+        self._check_deadline()
+        if self.calorie_fallback_calls >= POLICY.max_calorie_fallback_calls:
+            self.fail()
+        self.calorie_fallback_calls += 1
+
+    def tool(self, operation: str) -> None:
         self._check_deadline()
         tool = authorize_tool(AgentRole.RECIPE_NUTRITION, operation)
         if self.tool_calls >= POLICY.max_tool_calls:
             self.fail()
         if tool == AgentTool.WEB_IQ:
-            if calorie_fallback:
-                if self.calorie_fallback_calls >= POLICY.max_calorie_fallback_calls:
-                    self.fail()
-                self.calorie_fallback_calls += 1
-            if (
-                not (self.web_allowed or calorie_fallback)
-                or self.web_calls >= POLICY.max_web_calls + self.calorie_fallback_calls
-            ):
+            if not self.web_allowed or self.web_calls >= POLICY.max_web_calls:
                 self.fail()
             self.web_calls += 1
         self.tool_calls += 1

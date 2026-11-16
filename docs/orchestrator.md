@@ -49,30 +49,30 @@ on a revision. The Orchestrator owns fit review; it does not invent nutrition.
 
 ## Backend limits and candidate validation
 
-The frozen policy in `domain/orchestrator.py` is version 11:
+The frozen policy in `domain/orchestrator.py` is version 12:
 
 | Limit | Value |
 | --- | --- |
-| Total model invocations | 4 main calls, one USDA selection per specialist attempt (maximum 2), plus at most 3 nutrition recovery calls |
+| Total model invocations | 4 main calls, one USDA selection per specialist attempt (maximum 2), plus at most 2 tool-free nutrition recovery calls |
 | Specialist invocations | 2: initial plus one revision |
 | Total tool calls, including retries and specialist handoffs | 8 |
-| Grounding with Bing | At most one ordinary search plus one nutrition search; 10-second ordinary search ceiling |
+| Grounding with Bing | At most one ordinary search; no nutrition search; 10-second ordinary search ceiling |
 | Whole-operation deadline | 120 seconds, or the earlier caller deadline |
 | Application input/output token ceilings | None; provider model limits apply |
 
-The nutrition fallback permits one web-first call and one tool-free AI
-recovery for remaining gaps. If a valid AI response fills only some gaps,
+The nutrition fallback goes directly from USDA gaps to one tool-free AI
+knowledge call. If a valid AI response fills only some gaps,
 one further tool-free call requests only the remaining pairs. Empty or invalid
 AI responses do not trigger another attempt. This does not permit additional
 revisions or another search. All recovery calls share up to 60 seconds
 of the remaining operation time, while preserving two seconds for completion.
-The web call gets at most half the available recovery window, leaving time for AI.
+The recovery workflow is reserved independently of web tools and cannot authorize a search.
 The chat send allows 130 seconds for database admission, orchestration and durable
 completion; the browser send and pending-operation polling allow 150 seconds.
 The release dependency smoke allows 150 seconds including cold USDA startup.
 Individual provider timeouts, call limits and validation gates are unchanged.
 USDA selection uses at most half the remaining USDA window, preserving time for
-profile lookup and the independently reserved web/AI recovery. Its allowance
+profile lookup and the independently reserved AI recovery. Its allowance
 cannot fund another generation, review or recovery call.
 
 `ExecutionBudget` is request-local and shared across both specialist attempts.

@@ -4,8 +4,8 @@
   "agents": {
     "orchestrator": {
       "name": "sous-chef-orchestrator-dev",
-      "version": "47",
-      "contract_sha256": "f7d914147b63ebafde3cbebb1be27b2f8bc7bece5be10f32230c4a92b9eff987"
+      "version": "49",
+      "contract_sha256": "71ff681a49516c967ebf79126268b86824b9a85763aa1e0de1af596ebc71865e"
     },
     "recipe_nutrition": {
       "name": "sous-chef-recipe-nutrition-dev",

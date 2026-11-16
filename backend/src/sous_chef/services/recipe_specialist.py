@@ -376,14 +376,12 @@ class RecipeSpecialistService:
                     fallback_deadline = min(
                         deadline - 2, monotonic() + POLICY.calorie_deadline_seconds
                     )
-                    web_deadline = (monotonic() + fallback_deadline) / 2
                     for attempt in range(POLICY.max_calorie_model_calls):
-                        use_web = attempt == 0
                         fallback = nutrient_request(
                             nutrition_request,
                             evidence,
                             operation_id=operation_id,
-                            use_web=use_web,
+                            use_web=False,
                         )
                         if fallback is None:
                             break
@@ -393,13 +391,11 @@ class RecipeSpecialistService:
                                 category=ErrorCategory.FOUNDRY_TIMEOUT,
                             )
                             break
-                        if use_web:
-                            budget.tool(AgentTool.WEB_IQ, calorie_fallback=True)
+                        if attempt == 0:
+                            budget.reserve_nutrition_recovery()
                         budget.model(calorie_fallback=True)
                         try:
-                            async with asyncio.timeout_at(
-                                web_deadline if use_web else fallback_deadline
-                            ):
+                            async with asyncio.timeout_at(fallback_deadline):
                                 (
                                     nutrient_estimates,
                                     fallback_usage,
@@ -411,7 +407,7 @@ class RecipeSpecialistService:
                                     Event.CALORIE_FALLBACK_UNAVAILABLE,
                                     category=ErrorCategory.FOUNDRY_NO_RESULTS,
                                 )
-                            if not use_web and merged == evidence:
+                            if merged == evidence:
                                 break
                             evidence = merged
                         except (TimeoutError, FoundryGatewayError, ValueError) as error:
@@ -435,8 +431,7 @@ class RecipeSpecialistService:
                                 Event.CALORIE_FALLBACK_UNAVAILABLE,
                                 category=ErrorCategory(code.value),
                             )
-                            if not use_web:
-                                break
+                            break
                     if evidence.status != "known":
                         raise FoundryGatewayError(FoundryFailure.NO_RESULTS, request)
                     ingredients, shopping = _inventory(draft.ingredients, context)
