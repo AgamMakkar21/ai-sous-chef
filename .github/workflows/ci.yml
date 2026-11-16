@@ -32,6 +32,7 @@ jobs:
               python -m scripts.evaluate_safety
               python -m pytest
               python -m scripts.evaluate_learning
+              python -m scripts.evaluate_resilience
           - check: build
             command: |
               python -m build --no-isolation
@@ -98,6 +99,14 @@ jobs:
         with:
           name: preference-learning-evaluation
           path: artifacts/learning-evaluation/report.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Retain bounded offline fault and load acceptance
+        if: always() && matrix.check == 'tests'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fault-load-acceptance
+          path: artifacts/resilience/report.json
           if-no-files-found: error
           retention-days: 30
 

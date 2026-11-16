@@ -1,0 +1,875 @@
+{
+  "schema_version": 1,
+  "suite_id": "asc62-fault-load-v1",
+  "measured_at": "2026-11-16T15:46:39.186034+00:00",
+  "synthetic_only": true,
+  "scope": "In-process API and real SDKs over synthetic transports; not live performance.",
+  "python": "3.12.10",
+  "platform": "Windows-11-10.0.26300-SP0",
+  "versions": {
+    "git_commit": "c336ef4350b94b754b84d1ed8c8d4e510882f3f5",
+    "git_worktree_dirty": true,
+    "source_tree_sha256": "d89170d2788c479e24f192359023f40e63ba18f09ff5c7e9fb983895f95b9fa9",
+    "prompt_sha256": {
+      "orchestrator_definition.py": "163c0592801b2569db26d0fda0ab05839d4a02d4ff30fd16e816ffe77d9733fd",
+      "recipe_definition.py": "2873ae13d322ec4033f65d7ece5e552c857ba3cca2a05f17618d7a7f1d7afe66"
+    },
+    "policy_versions": {
+      "orchestrator": 7,
+      "recipe": 8
+    },
+    "sdk": {
+      "azure-ai-projects": "2.8.0",
+      "openai": "3.27.0",
+      "azure-identity": "1.26.0"
+    },
+    "tools": {
+      "foundry_iq": "production validated MCP retrieval envelope",
+      "usda": "production USDA MCP adapter and deterministic serving aggregation",
+      "web_iq": "production minimized public-query policy and native citations",
+      "implementation_sha256": "d89170d2788c479e24f192359023f40e63ba18f09ff5c7e9fb983895f95b9fa9"
+    }
+  },
+  "test_sha256": {
+    "tests/integration/test_learning_telemetry.py": "de96f66aa9399c6580dd081aa8d4e266d051f0917b2714ce28261a2941851415",
+    "tests/integration/test_recipe_chat.py": "7893a65f2be3ea7174bb37b68c38c31ce73fc3f15c10d06f0e8c31d17f514779",
+    "tests/integration/test_resilience_acceptance.py": "c4e05cc16ab9b537c7099c5f469111a63715ef7547361856b9b15b94f648597d",
+    "tests/integration/test_synchronous_telemetry.py": "ac56a8fa72f66474ee8753e6ed7c11996f696231173dba0ac448b03e6cd88fac",
+    "tests/integration/test_web_grounding.py": "063828eaa02e7bab03c3f2e59c67734fc0f082d76fb8db83d5823ada0c3c84e3",
+    "tests/unit/test_chat_api.py": "cf2157d9f23c5c3ddc0720e66c96b416529faa7a7aa4ef2a08570f997f0ddec3",
+    "tests/unit/test_data_retention.py": "8c7426b732e2af33053112dbf9f917a612b528e6ba150e911e70707124c37ac3",
+    "tests/unit/test_feedback.py": "53706ec674b33ffd741003b1e600eaa8211686f7da25608d9fe1e361ea2b8ffc",
+    "tests/unit/test_grocery_api.py": "f650707075f0dcdb02737232da373ff1e6c7ca17a291512475b8208e037d3a05",
+    "tests/unit/test_learning.py": "bcc857b4fd9f3aff1ff69f2ac4419170b4fb5ca4c7e0324b72cc854b9df776b9",
+    "tests/unit/test_learning_recovery.py": "0ce2e4f609bb86fe5f6c473a4a015fd3117c56bd9c3b5cea2d8ef59bb571014b",
+    "tests/unit/test_usda_nutrition.py": "927870fa584e878336876a3229102bcc62933319db00e0336f03d0932069bb3c"
+  },
+  "actual_cloud_spend_usd": 0,
+  "live_performance_verified": false,
+  "live_alert_delivery_verified": false,
+  "runner_interrupted": false,
+  "passed": true,
+  "pytest_exit_code": 0,
+  "required_tests": 31,
+  "executed_tests": 31,
+  "verified_tests": 31,
+  "failed_hard_checks": 0,
+  "outcomes": {
+    "passed": 31
+  },
+  "unexpected_tests": 0,
+  "fixtures": [
+    {
+      "id": "duplicate-sends",
+      "scope": "duplicate-sends",
+      "expected_outcome": "One execution; duplicate pending response and explicit competing-send conflict.",
+      "tests": [
+        "tests/unit/test_chat_api.py::test_parallel_sends_are_serialized_and_pending_duplicates_do_not_execute"
+      ],
+      "passed": true,
+      "results": [
+        {
+          "node_id": "tests/unit/test_chat_api.py::test_parallel_sends_are_serialized_and_pending_duplicates_do_not_execute",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "deletion-during-processing",
+      "scope": "deletion-during-processing",
+      "expected_outcome": "Deletion fences in-flight work and late replay; only permanent guards remain.",
+      "tests": [
+        "tests/unit/test_data_retention.py::test_inflight_extraction_late_feedback_replay_and_poison_cannot_restore_state"
+      ],
+      "passed": true,
+      "results": [
+        {
+          "node_id": "tests/unit/test_data_retention.py::test_inflight_extraction_late_feedback_replay_and_poison_cannot_restore_state",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "duplicate-feedback",
+      "scope": "duplicate-feedback",
+      "expected_outcome": "Duplicate submissions produce one evidence revision; stale competing edits conflict.",
+      "tests": [
+        "tests/unit/test_feedback.py::test_concurrent_requests_cannot_create_two_versions_from_one_etag[False]",
+        "tests/unit/test_feedback.py::test_concurrent_requests_cannot_create_two_versions_from_one_etag[True]"
+      ],
+      "passed": true,
+      "results": [
+        {
+          "node_id": "tests/unit/test_feedback.py::test_concurrent_requests_cannot_create_two_versions_from_one_etag[False]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        },
+        {
+          "node_id": "tests/unit/test_feedback.py::test_concurrent_requests_cannot_create_two_versions_from_one_etag[True]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "profile-concurrency",
+      "scope": "profile-concurrency",
+      "expected_outcome": "Explicit conflict retry preserves inventory and unrelated explicit/learned changes.",
+      "tests": [
+        "tests/unit/test_grocery_api.py::test_concurrent_inventory_and_other_profile_sections_survive_explicit_conflict_retry[explicitPreferences]",
+        "tests/unit/test_grocery_api.py::test_concurrent_inventory_and_other_profile_sections_survive_explicit_conflict_retry[learnedPreferences]"
+      ],
+      "passed": true,
+      "results": [
+        {
+          "node_id": "tests/unit/test_grocery_api.py::test_concurrent_inventory_and_other_profile_sections_survive_explicit_conflict_retry[explicitPreferences]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        },
+        {
+          "node_id": "tests/unit/test_grocery_api.py::test_concurrent_inventory_and_other_profile_sections_survive_explicit_conflict_retry[learnedPreferences]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "worker-interruption",
+      "scope": "worker-interruption",
+      "expected_outcome": "Durable receipts recover three interrupted phases without a second extraction.",
+      "tests": [
+        "tests/unit/test_learning.py::test_durable_receipt_recovers_crashes_without_extraction_or_duplicate_evidence[before_projection]",
+        "tests/unit/test_learning.py::test_durable_receipt_recovers_crashes_without_extraction_or_duplicate_evidence[after_projection]",
+        "tests/unit/test_learning.py::test_durable_receipt_recovers_crashes_without_extraction_or_duplicate_evidence[before_status]"
+      ],
+      "passed": true,
+      "results": [
+        {
+          "node_id": "tests/unit/test_learning.py::test_durable_receipt_recovers_crashes_without_extraction_or_duplicate_evidence[before_projection]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        },
+        {
+          "node_id": "tests/unit/test_learning.py::test_durable_receipt_recovers_crashes_without_extraction_or_duplicate_evidence[after_projection]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        },
+        {
+          "node_id": "tests/unit/test_learning.py::test_durable_receipt_recovers_crashes_without_extraction_or_duplicate_evidence[before_status]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "worker-restart",
+      "scope": "worker-restart",
+      "expected_outcome": "Restart honors durable backoff, preserves ratings and applies evidence once.",
+      "tests": [
+        "tests/unit/test_learning_recovery.py::test_transient_failure_recovers_after_durable_backoff_across_restart[error0]",
+        "tests/unit/test_learning_recovery.py::test_transient_failure_recovers_after_durable_backoff_across_restart[error1]",
+        "tests/unit/test_learning_recovery.py::test_transient_failure_recovers_after_durable_backoff_across_restart[error2]"
+      ],
+      "passed": true,
+      "results": [
+        {
+          "node_id": "tests/unit/test_learning_recovery.py::test_transient_failure_recovers_after_durable_backoff_across_restart[error0]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        },
+        {
+          "node_id": "tests/unit/test_learning_recovery.py::test_transient_failure_recovers_after_durable_backoff_across_restart[error1]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        },
+        {
+          "node_id": "tests/unit/test_learning_recovery.py::test_transient_failure_recovers_after_durable_backoff_across_restart[error2]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "usda-timeout",
+      "scope": "usda-timeout",
+      "expected_outcome": "Timed-out USDA subprocess is cancelled and closed without fabricated nutrition.",
+      "tests": [
+        "tests/unit/test_usda_nutrition.py::test_timeout_and_cancellation_stop_the_child"
+      ],
+      "passed": true,
+      "results": [
+        {
+          "node_id": "tests/unit/test_usda_nutrition.py::test_timeout_and_cancellation_stop_the_child",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "feedback-telemetry",
+      "scope": "feedback-telemetry",
+      "expected_outcome": "Correlated lag, extraction and dedup signals contain no private content.",
+      "tests": [
+        "tests/integration/test_learning_telemetry.py::test_feedback_links_to_one_applied_insight_and_duplicate_is_deduplicated"
+      ],
+      "passed": true,
+      "results": [
+        {
+          "node_id": "tests/integration/test_learning_telemetry.py::test_feedback_links_to_one_applied_insight_and_duplicate_is_deduplicated",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "usda-recovery",
+      "scope": "usda-recovery",
+      "expected_outcome": "Real MCP/USDA retries recover without replaying agents or duplicating stored turns.",
+      "tests": [
+        "tests/integration/test_recipe_chat.py::test_chat_recovers_from_transient_usda_failure_without_replaying_agents[transient_search]",
+        "tests/integration/test_recipe_chat.py::test_chat_recovers_from_transient_usda_failure_without_replaying_agents[transient_profile]"
+      ],
+      "passed": true,
+      "results": [
+        {
+          "node_id": "tests/integration/test_recipe_chat.py::test_chat_recovers_from_transient_usda_failure_without_replaying_agents[transient_search]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        },
+        {
+          "node_id": "tests/integration/test_recipe_chat.py::test_chat_recovers_from_transient_usda_failure_without_replaying_agents[transient_profile]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "agent-failures",
+      "scope": "agent-failures",
+      "expected_outcome": "Safe API errors preserve failed/unknown state; known failures permit explicit retry.",
+      "tests": [
+        "tests/integration/test_recipe_chat.py::test_failed_or_uncertain_agent_execution_preserves_recovery_without_replaying[-function]",
+        "tests/integration/test_recipe_chat.py::test_failed_or_uncertain_agent_execution_preserves_recovery_without_replaying[-mcp]",
+        "tests/integration/test_recipe_chat.py::test_failed_or_uncertain_agent_execution_preserves_recovery_without_replaying[timeout-function]",
+        "tests/integration/test_recipe_chat.py::test_failed_or_uncertain_agent_execution_preserves_recovery_without_replaying[timeout-mcp]",
+        "tests/integration/test_recipe_chat.py::test_failed_or_uncertain_agent_execution_preserves_recovery_without_replaying[connection-function]",
+        "tests/integration/test_recipe_chat.py::test_failed_or_uncertain_agent_execution_preserves_recovery_without_replaying[connection-mcp]"
+      ],
+      "passed": true,
+      "results": [
+        {
+          "node_id": "tests/integration/test_recipe_chat.py::test_failed_or_uncertain_agent_execution_preserves_recovery_without_replaying[-function]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        },
+        {
+          "node_id": "tests/integration/test_recipe_chat.py::test_failed_or_uncertain_agent_execution_preserves_recovery_without_replaying[-mcp]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        },
+        {
+          "node_id": "tests/integration/test_recipe_chat.py::test_failed_or_uncertain_agent_execution_preserves_recovery_without_replaying[timeout-function]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        },
+        {
+          "node_id": "tests/integration/test_recipe_chat.py::test_failed_or_uncertain_agent_execution_preserves_recovery_without_replaying[timeout-mcp]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        },
+        {
+          "node_id": "tests/integration/test_recipe_chat.py::test_failed_or_uncertain_agent_execution_preserves_recovery_without_replaying[connection-function]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        },
+        {
+          "node_id": "tests/integration/test_recipe_chat.py::test_failed_or_uncertain_agent_execution_preserves_recovery_without_replaying[connection-mcp]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "failure-telemetry",
+      "scope": "failure-telemetry",
+      "expected_outcome": "Timeout, structured-output and safety failures emit classified, content-free signals.",
+      "tests": [
+        "tests/integration/test_synchronous_telemetry.py::test_failures_name_the_responsible_operation_without_recording_payloads[timeout-foundry_timeout-504]",
+        "tests/integration/test_synchronous_telemetry.py::test_failures_name_the_responsible_operation_without_recording_payloads[invalid_json-foundry_invalid_result-502]",
+        "tests/integration/test_synchronous_telemetry.py::test_failures_name_the_responsible_operation_without_recording_payloads[safety-recipe_ingredient_rejected-200]"
+      ],
+      "passed": true,
+      "results": [
+        {
+          "node_id": "tests/integration/test_synchronous_telemetry.py::test_failures_name_the_responsible_operation_without_recording_payloads[timeout-foundry_timeout-504]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        },
+        {
+          "node_id": "tests/integration/test_synchronous_telemetry.py::test_failures_name_the_responsible_operation_without_recording_payloads[invalid_json-foundry_invalid_result-502]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        },
+        {
+          "node_id": "tests/integration/test_synchronous_telemetry.py::test_failures_name_the_responsible_operation_without_recording_payloads[safety-recipe_ingredient_rejected-200]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "cosmos-throttling",
+      "scope": "cosmos-throttling",
+      "expected_outcome": "Pinned SDK stops at three attempts and reports recovered and exhausted throttles.",
+      "tests": [
+        "tests/integration/test_synchronous_telemetry.py::test_cosmos_accounts_for_recovered_and_exhausted_throttling[1]",
+        "tests/integration/test_synchronous_telemetry.py::test_cosmos_accounts_for_recovered_and_exhausted_throttling[3]"
+      ],
+      "passed": true,
+      "results": [
+        {
+          "node_id": "tests/integration/test_synchronous_telemetry.py::test_cosmos_accounts_for_recovered_and_exhausted_throttling[1]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        },
+        {
+          "node_id": "tests/integration/test_synchronous_telemetry.py::test_cosmos_accounts_for_recovered_and_exhausted_throttling[3]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "web-deadline",
+      "scope": "web-deadline",
+      "expected_outcome": "Web deadline cancels the dependency without retry or fabricated facts.",
+      "tests": [
+        "tests/integration/test_web_grounding.py::test_web_has_a_short_deadline_and_does_not_retry"
+      ],
+      "passed": true,
+      "results": [
+        {
+          "node_id": "tests/integration/test_web_grounding.py::test_web_has_a_short_deadline_and_does_not_retry",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "web-api-recovery",
+      "scope": "web-api-recovery",
+      "expected_outcome": "Web timeout/invalid output cannot persist a recipe; a recovered dependency works.",
+      "tests": [
+        "tests/integration/test_resilience_acceptance.py::test_web_failure_is_explicit_and_a_fresh_send_recovers[timeout]",
+        "tests/integration/test_resilience_acceptance.py::test_web_failure_is_explicit_and_a_fresh_send_recovers[invalid_json]"
+      ],
+      "passed": true,
+      "results": [
+        {
+          "node_id": "tests/integration/test_resilience_acceptance.py::test_web_failure_is_explicit_and_a_fresh_send_recovers[timeout]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        },
+        {
+          "node_id": "tests/integration/test_resilience_acceptance.py::test_web_failure_is_explicit_and_a_fresh_send_recovers[invalid_json]",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "bounded-load",
+      "scope": "bounded-load",
+      "expected_outcome": "Twelve signed-user requests overlap; measured concurrency, budgets and purge pass.",
+      "tests": [
+        "tests/integration/test_resilience_acceptance.py::test_bounded_chat_load_measures_budgets_and_purges_synthetic_users"
+      ],
+      "passed": true,
+      "results": [
+        {
+          "node_id": "tests/integration/test_resilience_acceptance.py::test_bounded_chat_load_measures_budgets_and_purges_synthetic_users",
+          "expected_test_outcome": "passed",
+          "outcome": "passed",
+          "phases": {
+            "setup": [
+              "passed"
+            ],
+            "call": [
+              "passed"
+            ],
+            "teardown": [
+              "passed"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "load": {
+    "passed": true,
+    "requests": 12,
+    "configured_concurrency": 4,
+    "observed_peak_concurrency": 4,
+    "latency_ms": {
+      "p50": 634.7560000000385,
+      "p95": 814.1552200000319,
+      "p99": 823.6836839999455,
+      "max": 826.0657999999239
+    },
+    "status_counts": {
+      "200": 12
+    },
+    "errors": 0,
+    "error_rate": 0.0,
+    "limits": {
+      "basis": "Proposed offline regression guards, not approved live SLOs",
+      "p95_ms": 15000,
+      "request_deadline_ms": 60000,
+      "context_tokens_including_framing": 4096,
+      "policy": {
+        "version": 7,
+        "max_model_calls": 4,
+        "max_calorie_fallback_calls": 1,
+        "max_calorie_model_calls": 2,
+        "max_specialist_calls": 2,
+        "max_revisions": 1,
+        "max_tool_calls": 8,
+        "max_web_calls": 1,
+        "web_deadline_seconds": 10,
+        "calorie_deadline_seconds": 30,
+        "deadline_seconds": 60
+      }
+    },
+    "budget_breaches": {
+      "p95_latency": 0,
+      "request_deadline": 0,
+      "model_calls": 0,
+      "context_tokens": 0,
+      "concurrency": 0,
+      "cleanup": 0
+    },
+    "visible_input_tokens": 8712,
+    "token_scope": "Locally tokenized Responses input fields only; not provider usage or full-request billing. Instructions, schemas and output are excluded.",
+    "provider_input_tokens": null,
+    "provider_output_tokens": null,
+    "cleanup_complete": true,
+    "samples": [
+      {
+        "latency_ms": 393.01350000005186,
+        "status": 200,
+        "model_calls": 3,
+        "context_tokens": 185,
+        "visible_input_tokens": 726
+      },
+      {
+        "latency_ms": 501.8174000001636,
+        "status": 200,
+        "model_calls": 3,
+        "context_tokens": 185,
+        "visible_input_tokens": 726
+      },
+      {
+        "latency_ms": 660.7492999999067,
+        "status": 200,
+        "model_calls": 3,
+        "context_tokens": 185,
+        "visible_input_tokens": 726
+      },
+      {
+        "latency_ms": 783.3135000000766,
+        "status": 200,
+        "model_calls": 3,
+        "context_tokens": 185,
+        "visible_input_tokens": 726
+      },
+      {
+        "latency_ms": 562.8566000000319,
+        "status": 200,
+        "model_calls": 3,
+        "context_tokens": 185,
+        "visible_input_tokens": 726
+      },
+      {
+        "latency_ms": 622.7687000000515,
+        "status": 200,
+        "model_calls": 3,
+        "context_tokens": 185,
+        "visible_input_tokens": 726
+      },
+      {
+        "latency_ms": 802.2794000000886,
+        "status": 200,
+        "model_calls": 3,
+        "context_tokens": 185,
+        "visible_input_tokens": 726
+      },
+      {
+        "latency_ms": 826.0657999999239,
+        "status": 200,
+        "model_calls": 3,
+        "context_tokens": 185,
+        "visible_input_tokens": 726
+      },
+      {
+        "latency_ms": 804.4102000001203,
+        "status": 200,
+        "model_calls": 3,
+        "context_tokens": 185,
+        "visible_input_tokens": 726
+      },
+      {
+        "latency_ms": 646.7433000000256,
+        "status": 200,
+        "model_calls": 3,
+        "context_tokens": 185,
+        "visible_input_tokens": 726
+      },
+      {
+        "latency_ms": 386.9583999999122,
+        "status": 200,
+        "model_calls": 3,
+        "context_tokens": 185,
+        "visible_input_tokens": 726
+      },
+      {
+        "latency_ms": 306.14680000007866,
+        "status": 200,
+        "model_calls": 3,
+        "context_tokens": 185,
+        "visible_input_tokens": 726
+      }
+    ]
+  }
+}

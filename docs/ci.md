@@ -41,6 +41,13 @@ failed gate runs. It records required IDs, expectations and executed coverage,
 not model-scored grades or universal safety claims. Existing full-suite tests
 and the six required check names remain in place.
 
+`CI / tests` also runs the [bounded offline fault/load matrix](fault-load-acceptance.md)
+and retains `artifacts/resilience/report.json` as `fault-load-acceptance` for 30 days.
+The fixed matrix reuses fault/recovery tests and measures twelve synthetic API
+sends at concurrency four. Failed/missing cases, incomplete measurements, HTTP
+errors, cleanup failures or breached local guards fail the check. It requires no
+cloud credentials and does not claim live capacity or alert-delivery acceptance.
+
 `CI / build` also runs the unprivileged ASC-60 promotion check. PRs into `main`
 must originate from this repository's `dev` branch and contain exact-source,
 artifact/config and evaluation/rehearsal evidence from the
