@@ -320,7 +320,12 @@ Orchestrator without recreating/rebinding its Entra identity:
 The temporary process setting permits source inspection/publication; it does
 not change the App Service runtime flag or release manifest. The command appends
 one version under the existing agent, with policy version, model identifier and
-a SHA-256 fingerprint of the exact source definition. It reports the returned
+a SHA-256 fingerprint of the exact source definition. `asc_contract_sha256` also
+fingerprints the instructions/function schema with normalized deployment/RAI
+identifiers. The version-6 dev manifest records that read-back-verified receipt
+as `contract_sha256`; infrastructure PR checks reject a stale receipt before cloud
+access. Update the receipt and actual numeric source pin together after an intentional
+policy/source change. It reports the returned
 numeric source version without printing the endpoint, credentials or user data.
 It does not invoke models, attach the specialist's tools, or activate a release.
 Publication failures are explicit; do not blindly retry an ambiguous create

@@ -615,8 +615,9 @@ rather than completing chat with partial nutrition. Historical partial snapshots
 remain readable and retain their original uncertainty labels.
 
 Activation requires publishing and reading back the reviewed `--phase combined`
-and `--phase calorie` sources, then pinning their returned versions in the version-5
-dev manifest. Delivery verifies and copies both specialist definitions without changing
+and `--phase calorie` sources, then pinning their returned versions in the version-6
+dev manifest alongside the reviewed Orchestrator contract receipt. Delivery verifies
+and copies both specialist definitions without changing
 identities; readiness verifies their schemas and policy fingerprints. The live
 release smoke accepts complete USDA-first chat with Bing-grounded fallback
 nutrition, and requires complete tool-free calorie recovery.

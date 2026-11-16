@@ -13,6 +13,7 @@ from sous_chef.adapters.agent_identity import resolve_agent_identities
 from sous_chef.adapters.foundry_iq import RecipeKnowledgeConfig, validated_project_resource_id
 from sous_chef.domain.agent_identity import AgentRole, IdentityError
 from sous_chef.orchestrator_definition import (
+    ORCHESTRATOR_RAI_POLICY_NAME,
     build_orchestrator_definition,
     orchestrator_source_metadata,
 )
@@ -63,7 +64,7 @@ def prepare_agent_source(
             "Set ASC_FOUNDRY_RECIPE_NUTRITION_RAI_POLICY_NAME to the approved baseline policy."
         )
     policy_name = (
-        "asc-responsible-ai-v1"
+        ORCHESTRATOR_RAI_POLICY_NAME
         if role == AgentRole.ORCHESTRATOR
         else settings.foundry_recipe_nutrition_rai_policy_name
     )

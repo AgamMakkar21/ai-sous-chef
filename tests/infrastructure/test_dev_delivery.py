@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from dataclasses import replace
 from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
@@ -71,6 +72,60 @@ def orchestrator_source() -> "AgentVersionDetails":
 
 
 class DeliveryTests(unittest.TestCase):
+    def test_manifest_rejects_backend_policy_or_prompt_drift_before_cloud_access(self) -> None:
+        from sous_chef import orchestrator_definition
+        from sous_chef.domain.orchestrator import POLICY
+
+        source = orchestrator_source()
+        data: dict[str, Any] = {
+            "schema_version": 6,
+            "agents_enabled": True,
+            "agents": {
+                "orchestrator": {
+                    "name": source.name,
+                    "version": source.version,
+                    "contract_sha256": source.metadata["asc_contract_sha256"],
+                },
+                "recipe_nutrition": {
+                    "name": "recipe-nutrition",
+                    "version": "4",
+                    "calorie_version": "6",
+                },
+            },
+        }
+        with (
+            patch.object(Path, "read_text", return_value=json.dumps(data)),
+            patch.object(delivery, "az") as azure,
+        ):
+            self.assertEqual(delivery.manifest()["orchestrator"], data["agents"]["orchestrator"])
+            with patch.object(orchestrator_definition, "POLICY", replace(POLICY, version=10)):
+                with self.assertRaisesRegex(delivery.DeliveryError, "fingerprint is stale"):
+                    delivery.manifest()
+            with patch.object(
+                orchestrator_definition,
+                "ORCHESTRATOR_INSTRUCTIONS",
+                orchestrator_definition.ORCHESTRATOR_INSTRUCTIONS + "\nChanged source.",
+            ):
+                with self.assertRaisesRegex(delivery.DeliveryError, "fingerprint is stale"):
+                    delivery.manifest()
+            tool = orchestrator_definition.specialist_tool()
+            tool.parameters["properties"].pop("quantity_ingredients")
+            tool.parameters["required"].remove("quantity_ingredients")
+            with patch.object(orchestrator_definition, "specialist_tool", return_value=tool):
+                with self.assertRaisesRegex(delivery.DeliveryError, "fingerprint is stale"):
+                    delivery.manifest()
+            azure.assert_not_called()
+        for fingerprint in (None, "", "0" * 64):
+            with self.subTest(fingerprint=fingerprint):
+                data["agents"]["orchestrator"]["contract_sha256"] = fingerprint
+                with patch.object(Path, "read_text", return_value=json.dumps(data)):
+                    with self.assertRaises(delivery.DeliveryError):
+                        delivery.manifest()
+        del data["agents"]["orchestrator"]["contract_sha256"]
+        with patch.object(Path, "read_text", return_value=json.dumps(data)):
+            with self.assertRaises(delivery.DeliveryError):
+                delivery.manifest()
+
     def test_combined_release_keeps_both_tools_under_one_specialist_pin(self) -> None:
         from azure.ai.projects.models import AgentVersionDetails
         from sous_chef.recipe_definition import (
