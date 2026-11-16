@@ -157,7 +157,7 @@ class UsdaNutritionTool:
             async with self._session(deadline, ingredient_count=len(names)) as session:
                 for line_id, name in names.items():
                     if name not in cache:
-                        cache[name] = await session.search(name)
+                        cache[name] = await session.search(name, agent_selection=True)
                     found[line_id] = cache[name]
         except RecipeToolError as error:
             operational_event(Event.USDA_FAILED, category=ErrorCategory(error.code.value))
@@ -271,7 +271,10 @@ class UsdaNutritionTool:
                         continue
                     try:
                         profiles[key] = await session.food(
-                            query, food_id=selected, approximate=request.allow_estimates
+                            query,
+                            food_id=selected,
+                            approximate=request.allow_estimates,
+                            agent_selection=request.require_selection,
                         )
                     except RecipeToolError as error:
                         if error.code != FoundryFailure.NO_RESULTS:

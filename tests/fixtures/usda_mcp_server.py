@@ -56,6 +56,7 @@ TOOLS: list[ToolDefinition] = [
             "properties": {
                 "keyword": {"type": "string"},
                 "limit": {"type": "integer", "default": 20},
+                "agent_selection": {"type": "boolean", "default": False},
             },
         },
     },
@@ -101,7 +102,8 @@ def tool_output(request: dict[str, object]) -> str:
     if MODE == "throttled":
         return json.dumps({"error": "throttled"})
     if params["name"] == "search_foods":
-        assert set(arguments) == {"keyword", "limit"} and arguments["limit"] == 20
+        assert set(arguments) == {"keyword", "limit", "agent_selection"}
+        assert arguments["limit"] == 20 and isinstance(arguments["agent_selection"], bool)
         foods = [food for food in FOODS if food["long_desc"] == arguments["keyword"]]
         if MODE in {"candidates", "reordered"}:
             foods = [

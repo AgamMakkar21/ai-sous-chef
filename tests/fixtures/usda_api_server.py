@@ -97,7 +97,7 @@ def respond(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         assert body["dataType"] == ["Foundation", "SR Legacy"]
         assert body["pageSize"] == 20 and body["pageNumber"] == 1
-        words = body["query"].replace("+", "").split()
+        words = body["query"].casefold().replace("+", "").split()
         if mode == "transient_search" and words != ["carrots", "raw"]:
             key = body["query"]
             ATTEMPTS[key] = ATTEMPTS.get(key, 0) + 1

@@ -4,6 +4,7 @@ import asyncio
 import copy
 import json
 from dataclasses import replace
+from decimal import Decimal
 from time import monotonic
 from typing import Any
 from uuid import UUID, uuid4
@@ -1192,8 +1193,10 @@ def test_vague_quantity_uses_one_minimized_native_search_then_real_usda_mcp() ->
     mapping = recipe.nutrition.mappings[0]
     assert mapping.weight_grams == 250 and mapping.quantity_estimate is not None
     assert mapping.quantity_estimate.sources[0].reference == URL
-    assert mapping.usda_food_id == "2345678"
-    assert next(n.amount for n in recipe.nutrition.nutrients if n.name == "energy") == 150
+    assert mapping.usda_food_id == "2345681"
+    assert next(n.amount for n in recipe.nutrition.nutrients if n.name == "energy") == Decimal(
+        "178.75"
+    )
     assert StructuredRecipe.model_validate_json(recipe.model_dump_json(by_alias=True)) == recipe
 
 

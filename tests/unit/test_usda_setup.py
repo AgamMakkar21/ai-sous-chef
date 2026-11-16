@@ -246,6 +246,35 @@ def test_search_preserves_terms_filters_forms_and_ranks_before_requested_result_
     assert json.loads(requests[0].content)["query"] == "+chicken +raw"
 
 
+def test_agent_candidates_preserve_original_query_and_source_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    foods = [
+        dict(FOOD, fdcId=3000000, description="Rice, boiled"),
+        dict(FOOD, fdcId=3000001, description="Rice, raw"),
+        dict(FOOD, fdcId=3000002, description="Barley, cooked"),
+    ]
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert json.loads(request.content)["query"] == "Cooked rice"
+        return httpx.Response(200, json={"totalHits": 3, "foods": foods})
+
+    def reject_keyword_matching(*args: object) -> None:
+        pytest.fail("AI candidates must not use application keyword matching or ranking")
+
+    monkeypatch.setattr("sous_chef.usda_mcp_server._words", reject_keyword_matching)
+    monkeypatch.setattr("sous_chef.usda_mcp_server._rank", reject_keyword_matching)
+
+    async def check() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            api = FoodDataCentral(client, SecretStr("synthetic-private-key"))
+            result = await api.search("Cooked rice", limit=2, agent_selection=True)
+            assert [food.fdc_id for food in result.foods] == ["3000000", "3000001"]
+            assert result.truncated
+
+    asyncio.run(check())
+
+
 @pytest.mark.parametrize("keyword", ["rice", "salt"])
 def test_broad_search_requests_fit_the_existing_response_budget(keyword: str) -> None:
     page_sizes: list[int] = []

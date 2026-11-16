@@ -194,7 +194,7 @@ It replaces the earlier PostgreSQL/SR28 integration: no database, data download,
 upstream executable download, SQL tool or database firewall is needed.
 The server and its pinned MCP/HTTP dependencies ship in the normal Python package.
 
-The only tools are `search_foods(keyword, limit=20)` and
+The only tools are `search_foods(keyword, limit=20, agent_selection=false)` and
 `get_nutrition_profile(fdc_id)`. Identifiers are original **FDC IDs**, not padded
 five-digit NDB numbers. Only Foundation and SR Legacy records are accepted;
 their nutrient amounts use the per-100-g basis. Branded and Survey/FNDDS records
@@ -293,7 +293,7 @@ Only ingredient names/FDC IDs leave the backend, not profile, allergy, history,
 user or conversation metadata. The logical `usda_nutrition` tool is still one
 reserved composite operation and makes no additional model calls.
 
-Search sends all punctuation-separated terms to FDC as required terms. It reads
+Standalone search sends all punctuation-separated terms to FDC as required terms. It reads
 one relevance-ranked page of at most 20 Foundation/SR Legacy records, validates
 it, preserves every term locally, then ranks before the requested candidate limit.
 The smaller source page keeps ordinary broad searches such as rice and salt
@@ -321,7 +321,7 @@ name. Empty searches never broaden by dropping terms; a saturated
 An explicit selected FDC ID must belong to the current search results;
 its detail ID, data type and descriptions must match before values are used.
 Unknown/ambiguous foods have unavailable nutrition rather than an invented mapping.
-Recipe enrichment explicitly enables approximate, source-backed matches. It removes
+Legacy recipe enrichment explicitly enables approximate, source-backed matches. It removes
 non-nutritional preparation words such as sliced, minced, drained, deveined,
 boneless and generic pieces/chunks (without removing an actual breast/thigh cut),
 but preserves raw/cooked, ground meat, fat, skin and other composition qualifiers.
@@ -369,6 +369,12 @@ Empty comparable-recipe web results do not invent evidence; provider failures
 remain explicit. Older snapshots without quantity assumptions remain readable.
 Rollback to an older strict reader requires compatibility review before exposing
 new nullable-quantity mappings or `quantityEstimate` fields to that reader.
+
+Chat uses `agent_selection=true` for both candidate discovery and the fresh
+selected-ID verification search. It sends the original ingredient name as a
+normal USDA query and preserves source order, without forced keyword terms or
+application preparation filters/ranking. Source validation and the 20-row limit
+still apply.
 
 Chat searches USDA using the generated ingredient names unchanged. One bounded
 tool-free AI invocation interprets the returned food descriptions, including

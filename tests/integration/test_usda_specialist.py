@@ -3,6 +3,7 @@
 import asyncio
 import copy
 import json
+from decimal import Decimal
 from pathlib import Path
 from time import monotonic
 from uuid import uuid4
@@ -60,11 +61,13 @@ def test_cited_recipe_quantity_fallback_preserves_original_amount_and_uses_usda(
     assert recipe.ingredients[0].quantity == quantity and recipe.ingredients[0].unit == unit
     mapping = recipe.nutrition.mappings[0]
     assert mapping.weight_grams == 250 and mapping.quantity_estimate is not None
-    assert mapping.usda_food_id == "2345678"
+    assert mapping.usda_food_id == "2345681"
     assert mapping.quantity_estimate.sources[0].reference == source.reference
     assert mapping.quantity_estimate.sources[0].servings == 4
     assert "Assumed 250 g" in (mapping.conversion_basis or "")
-    assert next(n.amount for n in recipe.nutrition.nutrients if n.name == "energy") == 150
+    assert next(n.amount for n in recipe.nutrition.nutrients if n.name == "energy") == Decimal(
+        "178.75"
+    )
     assert StructuredRecipe.model_validate_json(recipe.model_dump_json(by_alias=True)) == recipe
 
 
@@ -391,7 +394,10 @@ def test_recipe_uses_only_readonly_source_nutrition_with_exact_mappings(
     calls = [message["params"] for message in messages if message["method"] == "tools/call"]
     assert len(calls) == 9 and len(model.requests) == 2
     assert {call["name"] for call in calls} == {"search_foods", "get_nutrition_profile"}
-    assert {tuple(call["arguments"]) for call in calls} == {("keyword", "limit"), ("fdc_id",)}
+    assert {tuple(call["arguments"]) for call in calls} == {
+        ("keyword", "limit", "agent_selection"),
+        ("fdc_id",),
+    }
     assert "peanut" not in log.read_text()  # No profile/history/identity enters USDA.
     assert "99901" not in caplog.text and "rice" not in caplog.text
 

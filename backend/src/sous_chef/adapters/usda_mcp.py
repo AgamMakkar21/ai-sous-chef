@@ -26,7 +26,7 @@ MAX_MESSAGE_BYTES = 131_072
 MAX_SESSION_BYTES = 2_097_152
 SEARCH_LIMIT = 20
 TOOLS = {
-    "search_foods": {"keyword": "string", "limit": "integer"},
+    "search_foods": {"keyword": "string", "limit": "integer", "agent_selection": "boolean"},
     "get_nutrition_profile": {"fdc_id": "string"},
 }
 _SEARCH = TypeAdapter(UsdaFoodSearch)
@@ -204,20 +204,28 @@ class UsdaMcpSession:
         return value
 
     @observed(Operation.USDA_SEARCH)
-    async def search(self, name: str) -> UsdaFoodSearch:
+    async def search(self, name: str, *, agent_selection: bool = False) -> UsdaFoodSearch:
         if not name.strip() or len(name) > 100 or any(c in name for c in "%_\x00\r\n"):
             raise RecipeToolError(FoundryFailure.REJECTED)
         result = _SEARCH.validate_json(
-            await self._call("search_foods", {"keyword": name, "limit": SEARCH_LIMIT})
+            await self._call(
+                "search_foods",
+                {"keyword": name, "limit": SEARCH_LIMIT, "agent_selection": agent_selection},
+            )
         )
         if len({food.fdc_id for food in result.foods}) != len(result.foods):
             raise _invalid()
         return result
 
     async def food(
-        self, name: str, *, food_id: str | None = None, approximate: bool = False
+        self,
+        name: str,
+        *,
+        food_id: str | None = None,
+        approximate: bool = False,
+        agent_selection: bool = False,
     ) -> UsdaFoodProfile:
-        search = await self.search(name)
+        search = await self.search(name, agent_selection=agent_selection)
         if food_id is not None:
             if not re.fullmatch(r"[1-9][0-9]{0,9}", food_id):
                 raise RecipeToolError(FoundryFailure.REJECTED)
