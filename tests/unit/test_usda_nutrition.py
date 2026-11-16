@@ -145,6 +145,13 @@ def test_mass_conversion_and_servings_are_deterministic(
     assert evidence.mappings[0].weight_grams == pytest.approx(
         {"g": 1, "kg": 1000, "oz": 28.349523125, "lb": 453.59237}[unit] * quantity
     )
+    assert {item.name for item in evidence.mappings[0].nutrients} == {
+        item.name for item in evidence.nutrients
+    }
+    assert evidence.mappings[0].weight_grams is not None
+    assert evidence.mappings[0].nutrients[0].amount == pytest.approx(
+        evidence.mappings[0].weight_grams * 2
+    )
 
 
 @pytest.mark.parametrize(

@@ -21,18 +21,25 @@ The service rejects request-time tool overrides alongside `agent_reference`;
 see [microsoft/agent-framework#5087](https://github.com/microsoft/agent-framework/issues/5087).
 The current dev design selects `ASC_FOUNDRY_RECIPE_NUTRITION_MODE=combined`:
 one specialist version contains recipe MCP and native web search, with a strict
-`{recipe, calorieEstimates}` output schema. Recipe tasks return a draft (including
-web claims) and no calorie estimates; missing-USDA-calorie tasks return a null
-recipe and attributed estimates through that same version. The legacy `phased` mode uses three versions
+`{recipe, calorieEstimates, nutrientEstimates}` output schema. Recipe tasks return
+a draft (including web claims) and no nutrient estimates; missing-USDA-nutrient
+tasks return a null recipe and attributed estimates through that same version.
+The legacy `phased` mode uses three versions
 under that same identity: tool-free generation, curated retrieval plus generation,
 and isolated Web IQ.
 The native web tool uses Grounding with Bing Search. `web_iq` remains the legacy
 persisted source identifier; it does not select a separate provider. Missing or
-rejected web-first calorie output can be recovered by one `useWeb=false` request
+rejected or partial web-first nutrient output can be recovered by one `useWeb=false` request
 through a separately pinned `calorie` source on the same specialist identity.
 This recovery source has no tools and `tool_choice=none`; recipe and web sources
-retain `tool_choice=required`. Recovery requires explicit AI-knowledge attribution.
+retain `tool_choice=required`. Recovery covers all six requested nutrients and
+requires explicit AI-knowledge attribution, a null citation and portion assumptions.
 The backend selects the phase pin; user input cannot select an agent or version.
+The same tool-free source supports `purpose=usda_selection`: one bounded AI call
+interprets real USDA search candidates, returning only an allowed FDC ID or null
+per ingredient. The backend rejects invented/foreign IDs, extra or duplicate
+lines, tools, citations and unrequested nutrient values. This does not change
+the tool-bound combined/web schemas or permit invocation-time overrides.
 Combined mode pins `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION` and
 `ASC_FOUNDRY_RECIPE_NUTRITION_CALORIE_AGENT_VERSION`; stale legacy
 retrieval/web settings are not used. Web queries and citations are validated

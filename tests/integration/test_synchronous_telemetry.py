@@ -138,7 +138,7 @@ def test_request_spans_correlate_real_agent_tools_cosmos_and_persistence(
         )
         assert "web_iq.skipped" in {event.name for event in by_name[Operation.SPECIALIST].events}
         foundry = [span for span in spans if span.name == Operation.FOUNDRY]
-        assert len(foundry) == len(recipe_transport.requests) == 3
+        assert len(foundry) == len(recipe_transport.requests) == 4
         for request in recipe_transport.requests:
             context = TraceContextTextMapPropagator().extract(dict(request.headers))
             remote = get_current_span(context).get_span_context()

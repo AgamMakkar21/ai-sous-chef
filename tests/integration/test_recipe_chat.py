@@ -61,7 +61,7 @@ class RecipeChatHarness(WebHarness):
             )
             if self.reject_recipe:
                 draft = json.loads(self.recipe["output"][1]["content"][0]["text"])
-                draft["instructions"][0]["text"] = "Cook the rice, then garnish with peanut."
+                draft["ingredients"][0]["name"] = "peanut oil"
                 self.recipe["output"][1]["content"][0]["text"] = json.dumps(draft)
         if kind == "function" and isinstance(payload["input"], list) and self.change_profile:
             self.change_profile["explicitPreferences"]["allergies"].append("rice")
@@ -149,7 +149,7 @@ def test_chat_recovers_from_transient_usda_failure_without_replaying_agents(
             mapping["ingredientLineId"] for mapping in turn["recipe"]["nutrition"]["mappings"]
         } >= {"rice", "carrot"}
         calls = len(recipe_transport.requests)
-        assert calls == 4  # The fixture has no olive oil food, so its nutrients need web fallback.
+        assert calls == 5  # Routing, generation, USDA selection, oil recovery and fit review.
         assert send(client, conversation).json() == response.json()
         assert len(recipe_transport.requests) == calls
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
@@ -282,7 +282,7 @@ def test_chat_persists_complete_web_nutrition_during_usda_outage(
             {"carrot", "oil"} if mode == "fail_carrot" else {"rice", "carrot", "oil"}
         )
         assert "not USDA-verified" in turn["messages"][-1]["content"]
-        assert len(recipe_transport.requests) == 4
+        assert len(recipe_transport.requests) == 4 + int(mode == "fail_carrot")
         if combined:
             assert {
                 json.loads(request.content)["agent_reference"]["version"]
@@ -291,7 +291,7 @@ def test_chat_persists_complete_web_nutrition_during_usda_outage(
             } == {"4"}
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
         assert send(client, conversation).json() == response.json()
-        assert len(recipe_transport.requests) == 4
+        assert len(recipe_transport.requests) == 4 + int(mode == "fail_carrot")
 
 
 @pytest.mark.parametrize(
@@ -350,7 +350,7 @@ def test_incomplete_or_unattributed_web_nutrition_cannot_complete_chat(
         onboard(client)
         conversation = create(client)
         response = send(client, conversation)
-        if fault in {"high_usage", "above_old_output_limit"}:
+        if fault in {"high_usage", "above_old_output_limit", "partial"}:
             assert response.status_code == 200, response.text
             turn = response.json()["data"]
             assert turn["status"] == "completed"
@@ -364,8 +364,8 @@ def test_incomplete_or_unattributed_web_nutrition_cannot_complete_chat(
         assert "private invalid calorie content" not in caplog.text
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
         assert send(client, conversation).status_code == response.status_code
-        assert len(transport.requests) == 4
-        fallback = json.loads(transport.requests[2].content)
+        assert len(transport.requests) == (6 if fault == "partial" else 5)
+        fallback = json.loads(transport.requests[3].content)
         assert "max_output_tokens" not in fallback
 
 
@@ -478,16 +478,16 @@ def test_combined_app_composition_returns_and_persists_a_grounded_recipe(
             "usda",
         }
         assert bool(turn["recipe"]["webGrounding"]) == use_web
-        assert len(transport.requests) == 3
+        assert len(transport.requests) == 4
         combined = json.loads(transport.requests[1].content)
         assert combined["agent_reference"]["version"] == "4"
         assert combined["max_tool_calls"] == (2 if use_web else 1)
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
         assert send(client, conversation, content=content).json() == response.json()
-        assert len(transport.requests) == 3
+        assert len(transport.requests) == 4
     with TestClient(create_app(combined_settings), headers=auth_headers) as restarted:
         assert restarted.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
-    assert len(transport.requests) == 3
+    assert len(transport.requests) == 4
 
 
 def test_combined_chat_keeps_known_components_when_broad_search_details_are_missing(
@@ -539,11 +539,11 @@ def test_combined_chat_keeps_known_components_when_broad_search_details_are_miss
             "curated_recipe",
             "usda",
         }
-        assert len(transport.requests) == 4
+        assert len(transport.requests) == 5
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
 
 
-@pytest.mark.parametrize("allergen_location", ["metadata", "ingredient"])
+@pytest.mark.parametrize("allergen_location", ["alias", "ingredient"])
 def test_combined_revision_preserves_context_and_enriches_only_its_current_ingredients(
     allergen_location: str,
     combined_settings: Settings,
@@ -580,13 +580,14 @@ def test_combined_revision_preserves_context_and_enriches_only_its_current_ingre
                 | {"call_id": "revision"}
             )
             return await Harness.handle(transport, request)
-        else:
+        elif kind == "combined":
             attempts += 1
             current = deepcopy(draft)
             if attempts == 1:
                 current["title"] = "Private rejected peanut skillet"
-                if allergen_location == "ingredient":
-                    current["ingredients"][0]["name"] = "peanut oil"
+                current["ingredients"][0]["name"] = (
+                    "peanut oil" if allergen_location == "ingredient" else "groundnut oil"
+                )
             else:
                 current["ingredients"][0]["quantity"] = 200
             transport.combined["output"][-1]["content"][0]["text"] = json.dumps(current)
@@ -614,22 +615,21 @@ def test_combined_revision_preserves_context_and_enriches_only_its_current_ingre
             if nutrient["name"] == "energy"
         )
         assert energy["amount"] == 360
-        assert [call.args[0].ingredients[0].quantity for call in lookup.call_args_list] == (
-            [100, 200] if allergen_location == "metadata" else [200]
-        )
+        assert [call.args[0].ingredients[0].quantity for call in lookup.call_args_list] == [200]
         assert "Private rejected peanut skillet" not in response.text
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
         assert (
             send(client, conversation, content="Make a 30-minute pantry recipe.").json()
             == response.json()
         )
-    assert attempts == 2 and len(transport.requests) == 4
+    assert attempts == 2 and len(transport.requests) == 5
     requests = [json.loads(request.content) for request in transport.requests]
     assert [transport.request_kind(request) for request in requests] == [
         "function",
         "combined",
         "function",
         "combined",
+        "usda_selection",
     ]
     assert requests[0]["agent_reference"] == requests[2]["agent_reference"]
     assert requests[1]["agent_reference"] == requests[3]["agent_reference"]
@@ -688,7 +688,7 @@ def test_pantry_recipe_returns_and_replays_the_same_grounded_structured_exchange
     assert recipe["nutrition"]["nutrients"][0]["amount"] == 260
     assert {source["kind"] for source in recipe["sources"]} == {"curated_recipe", "usda"}
     assert bool(recipe["webGrounding"]) == use_web
-    assert len(recipe_transport.requests) == 3 + int(use_web)
+    assert len(recipe_transport.requests) == 4 + int(use_web)
     context = recipe_transport.contexts[0]
     assert context.current_request == content
     assert context.explicit_preferences.allergies == ("peanut", "peaches")
@@ -699,7 +699,7 @@ def test_pantry_recipe_returns_and_replays_the_same_grounded_structured_exchange
     with TestClient(create_app(disabled), headers=auth_headers) as restarted:
         replay = send(restarted, conversation, content=content)
         assert replay.status_code == 200 and replay.json() == response.json()
-    assert len(recipe_transport.requests) == 3 + int(use_web)
+    assert len(recipe_transport.requests) == 4 + int(use_web)
     assert len(documents(harness[0], "turn")) == len(documents(harness[0], "sendOperation")) == 1
     assert documents(harness[0], "turn")[0]["generatedRecipeId"] == turn["generatedRecipeId"]
     for private in (content, OWNER.user_id, "hf-food-recipes-1", "resp_synthetic"):
@@ -720,6 +720,7 @@ def test_final_allergen_and_mid_request_profile_change_never_deliver_a_recipe(
     assert "garnish with peanut" not in refused.text
     recipe_transport.reject_recipe = False
     draft = json.loads(recipe_transport.recipe["output"][1]["content"][0]["text"])
+    draft["ingredients"][0]["name"] = "rice"
     draft["instructions"][0]["text"] = "Cook the rice."
     recipe_transport.recipe["output"][1]["content"][0]["text"] = json.dumps(draft)
     recipe_transport.change_profile = document(harness[0])

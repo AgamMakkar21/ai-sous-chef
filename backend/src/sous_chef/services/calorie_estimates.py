@@ -23,6 +23,7 @@ def nutrient_request(
     evidence: NutritionEvidence,
     *,
     operation_id: UUID,
+    use_web: bool = True,
 ) -> NutrientGroundingRequest | None:
     ingredients = []
     gaps = {}
@@ -59,7 +60,7 @@ def nutrient_request(
         prompt=json.dumps(
             {
                 "purpose": "nutrition_fallback",
-                "useWeb": True,
+                "useWeb": use_web,
                 "query": query,
                 "ingredients": ingredients,
             },
@@ -68,6 +69,7 @@ def nutrient_request(
         query=query,
         ingredient_line_ids=tuple(gaps),
         missing_nutrients=gaps,
+        use_web=use_web,
     )
 
 
@@ -88,13 +90,13 @@ def with_nutrient_estimates(
     ]
     if len(pairs) != len(set(pairs)) or not set(pairs) <= missing:
         raise ValueError(
-            "Web nutrients must only fill missing values, never replace USDA evidence."
+            "Fallback nutrients must only fill missing values, never replace source evidence."
         )
     calories = tuple(
         CalorieEstimate(
             ingredient_line_id=estimate.ingredient_line_id,
             amount=item.amount,
-            source="web_iq",
+            source=estimate.source,
             reference=estimate.reference,
             basis=estimate.basis,
         )

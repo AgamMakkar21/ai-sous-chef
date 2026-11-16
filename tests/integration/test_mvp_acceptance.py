@@ -281,7 +281,7 @@ def test_mvp_current_information_uses_web_only_when_justified(
         assert result.status_code == 200, result.text
         recipe = result.json()["data"]["recipe"]
         assert recipe is not None and bool(recipe["webGrounding"]) is use_web
-        assert len(agents.requests) == 3
+        assert len(agents.requests) == 4
         call = json.loads(agents.requests[1].content)
         assert call["max_tool_calls"] == (2 if use_web else 1)
         assert json.loads(
@@ -297,6 +297,7 @@ def test_mvp_known_allergen_is_blocked_before_delivery_or_save(
 ) -> None:
     message = journey_agents.combined["output"][-1]["content"][0]
     draft = json.loads(message["text"])
+    draft["ingredients"][0]["name"] = "peanut oil"
     draft["instructions"][0]["text"] = "Cook the rice, then garnish with peanut."
     message["text"] = json.dumps(draft)
     with TestClient(create_app(combined_settings), headers=auth_headers) as client:

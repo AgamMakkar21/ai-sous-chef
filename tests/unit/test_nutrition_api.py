@@ -61,6 +61,14 @@ def test_authenticated_lookup_returns_real_stdio_calories_per_100_g(
             "conversionBasis": "Measured weight",
             "approximateMatch": False,
             "quantityEstimate": None,
+            "nutrients": [
+                {"name": "energy", "amount": 200, "unit": "kcal"},
+                {"name": "protein", "amount": 4, "unit": "g"},
+                {"name": "carbohydrate", "amount": 30, "unit": "g"},
+                {"name": "fat", "amount": 2, "unit": "g"},
+                {"name": "fiber", "amount": 1, "unit": "g"},
+                {"name": "sodium", "amount": 10, "unit": "mg"},
+            ],
         }
     ]
     assert response.headers["cache-control"] == "no-store"

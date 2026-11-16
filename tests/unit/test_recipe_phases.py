@@ -6,7 +6,7 @@ from azure.ai.projects.models import MCPTool, PromptAgentDefinition
 from sous_chef import publish_orchestrator
 from sous_chef.adapters.foundry_gateway import FoundryGateway
 from sous_chef.domain.agent_identity import AgentRole
-from sous_chef.domain.recipes import CombinedRecipeOutput, RecipeDraft, WebDraft
+from sous_chef.domain.recipes import CombinedRecipeOutput, RecipeDraft, RecoveryDraft, WebDraft
 from sous_chef.publish_orchestrator import prepare_agent_source
 from sous_chef.recipe_definition import RecipePhase, verify_recipe_source
 from sous_chef.settings import ConfigurationError
@@ -20,20 +20,22 @@ def test_persisted_phase_has_only_its_capabilities_and_strict_output(phase: Reci
     assert source.name == "recipe-agent"
     assert source.metadata["asc_recipe_phase"] == phase.value
     assert source.metadata["asc_policy_version"] == (
-        "13"
+        "14"
         if phase == RecipePhase.COMBINED
-        else "12"
+        else "13"
         if phase == RecipePhase.WEB
-        else "3"
+        else "5"
         if phase == RecipePhase.CALORIE
-        else "8"
+        else "9"
     )
     assert definition["text"]["format"]["strict"] is True
     expected_schema = (
         CombinedRecipeOutput
         if phase == RecipePhase.COMBINED
+        else RecoveryDraft
+        if phase == RecipePhase.CALORIE
         else WebDraft
-        if phase in (RecipePhase.WEB, RecipePhase.CALORIE)
+        if phase == RecipePhase.WEB
         else RecipeDraft
     )
     schema = definition["text"]["format"]["schema"]

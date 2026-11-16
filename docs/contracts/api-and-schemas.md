@@ -313,8 +313,9 @@ Ingredient identity has three separate meanings:
 
 Unmatched free-text groceries are allowed without a canonical ingredient ID.
 Their unknown mapping cannot become proof that a generated ingredient is safe
-or that a nutrition quantity is known. The final-recipe safety gate must resolve
-every ingredient and ingredient-bearing instruction before presenting it.
+or that a nutrition quantity is known. Chat allergy checks compare only declared
+ingredient names against stored allergies, including recognized aliases. Unknown
+catalog names, prose and metadata alone do not reject a recipe.
 
 Supported units are `g`, `kg`, `ml`, `l`, `tsp`, `tbsp`, `cup`, `oz`, `lb`, `item`,
 `piece`, `bunch`, `can`, `package`, or `null`. Selecting a unit does not authorize
@@ -333,10 +334,10 @@ Nutrition includes serving basis, nutrient amount/unit, USDA food/source/version
 references, mapped ingredient amounts, and `status: known/partial/unavailable`.
 Known portions of a partial result are labeled partial, not a complete total.
 Missing data is not zero. New chat recipes prefer USDA MCP and use Bing-grounded
-web evidence for missing calories, protein, carbohydrate, fat, fiber and sodium.
-Chat must not deliver a partially calculated recipe when web evidence is also
-insufficient. Historical partial snapshots and standalone USDA lookups retain their
-uncertainty states. The existing AI knowledge recovery remains calorie-only.
+web evidence, then labeled AI knowledge estimates, for missing calories, protein,
+carbohydrate, fat, fiber and sodium. Chat must not deliver a partially calculated
+recipe if all recovery methods are insufficient. Historical partial snapshots
+and standalone USDA lookups retain their uncertainty states.
 The standalone ingredient lookup remains USDA-only.
 All nutrition responses carry `isEstimate: true` and the
 `"Informational estimate, not medical advice."` notice.
@@ -352,10 +353,14 @@ requires `reference: null`. Fallback entries never create USDA mappings.
 Their sum determines energy coverage and the
 displayed per-serving calorie estimate. Stored snapshots may omit this field.
 `nutrientEstimates` separately records whole-recipe, per-ingredient non-calorie
-web values as `nutrients: [{name, amount, unit}]`, with `source: web_iq`,
-`reference` and `basis`. References must be supported by actual searched sources
-and native citations before persistence. These estimates fill only the explicitly
-requested gaps; they never overwrite USDA values. Stored snapshots may omit the
+values as `nutrients: [{name, amount, unit}]`, with `source: web_iq | ai_knowledge`,
+`reference` and `basis`. Web references require actual searched sources and native
+citations; AI knowledge requires a null reference and explicit assumptions.
+Up to 60 records can contain disjoint nutrient pairs for the same ingredient.
+These estimates fill only requested gaps; AI cannot overwrite USDA or web values.
+Optional `mappings.nutrients` contains USDA amounts for each ingredient's entire
+recipe quantity, not per-serving amounts. Totals must match attributed amounts.
+Stored snapshots may omit the
 new field. Complete coverage can therefore be `known` without a USDA mapping for
 every ingredient.
 `mappings.weightGrams`

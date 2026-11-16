@@ -14,7 +14,7 @@ from sous_chef.domain.food_safety import (
     IngredientLine,
     SafetyProfile,
     Verdict,
-    validate_ingredients,
+    validate_declared_allergies,
 )
 from sous_chef.domain.foundry import FoundryFailure, FoundryGatewayError
 from sous_chef.domain.orchestrator import (
@@ -56,6 +56,8 @@ class ExecutionBudget:
         self.web_calls = 0
         self.calorie_fallback_calls = 0
         self.calorie_model_calls = 0
+        self.usda_selection_calls = 0
+        self._selection_specialist = 0
         self.input_tokens = 0
         self.output_tokens = 0
         self.web_allowed = False
@@ -63,11 +65,26 @@ class ExecutionBudget:
     def fail(self) -> None:
         raise OrchestratorError(OrchestratorFailure.BUDGET_EXHAUSTED, self.operation_id)
 
-    def model(self, *, specialist: bool = False, calorie_fallback: bool = False) -> None:
+    def model(
+        self,
+        *,
+        specialist: bool = False,
+        calorie_fallback: bool = False,
+        usda_selection: bool = False,
+    ) -> None:
         self.model_allowance(calorie_fallback=calorie_fallback)
+        if usda_selection and (
+            specialist or calorie_fallback or self._selection_specialist == self.specialist_calls
+        ):
+            self.fail()
         if (
             self.model_calls
-            >= POLICY.max_model_calls + POLICY.max_calorie_model_calls * self.calorie_fallback_calls
+            >= (
+                POLICY.max_model_calls
+                + self.usda_selection_calls
+                + int(usda_selection)
+                + POLICY.max_calorie_model_calls * self.calorie_fallback_calls
+            )
             or calorie_fallback
             and self.calorie_model_calls >= POLICY.max_calorie_model_calls
         ):
@@ -83,6 +100,9 @@ class ExecutionBudget:
         self.model_calls += 1
         if calorie_fallback:
             self.calorie_model_calls += 1
+        if usda_selection:
+            self.usda_selection_calls += 1
+            self._selection_specialist = self.specialist_calls
 
     def model_allowance(self, *, calorie_fallback: bool = False) -> tuple[None, None]:
         self._check_deadline()
@@ -122,11 +142,8 @@ class ExecutionBudget:
 
 def _candidate_status(candidate: RecipeCandidate, context: RequestContext, minutes: int) -> str:
     explicit = context.explicit_preferences
-    safety = validate_ingredients(
-        SafetyProfile(
-            allergies=explicit.allergies,
-            dislikes=explicit.dislikes,
-        ),
+    safety = validate_declared_allergies(
+        explicit.allergies,
         tuple(
             IngredientLine(line_id=line.line_id, name=line.name) for line in candidate.ingredients
         ),

@@ -19,7 +19,7 @@ from sous_chef.domain.recipe_safety import POLICY_VERSION
 from sous_chef.domain.recipes import StructuredRecipe
 
 ROOT = Path(__file__).resolve().parents[1]
-MANIFEST = ROOT / "tests" / "fixtures" / "hard-safety-v2.json"
+MANIFEST = ROOT / "tests" / "fixtures" / "hard-safety-v3.json"
 SCOPES = {
     "peanut-oil",
     "hidden-allergens",
@@ -49,7 +49,7 @@ class Suite(BaseModel):
 
     schema_version: Literal[1]
     suite_id: Literal["asc55-hard-safety"]
-    version: Literal[2]
+    version: Literal[3]
     fixtures: tuple[Fixture, ...] = Field(min_length=1)
 
     @model_validator(mode="after")

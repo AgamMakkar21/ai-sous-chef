@@ -1,15 +1,18 @@
 """Deterministic recipe estimates from attributed FoodData Central evidence."""
 
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from decimal import ROUND_HALF_UP, Decimal
 from time import monotonic
 from typing import Literal
+from uuid import UUID
 
 from opentelemetry import trace
 from pydantic import ValidationError
 
 from sous_chef.adapters.usda_mcp import UsdaMcpClient, UsdaMcpConfig, UsdaMcpSession, open_usda
+from sous_chef.domain.agent_identity import AgentRole
 from sous_chef.domain.foundry import FoundryFailure
 from sous_chef.domain.nutrition import UsdaFoodProfile, UsdaFoodSearch
 from sous_chef.domain.nutrition_inputs import MASS, VOLUME, ingredient_weight, recipe_food_query
@@ -24,7 +27,9 @@ from sous_chef.domain.recipes import (
     NutritionUnknownComponent,
     RecipeSource,
     RecipeToolError,
+    UsdaSelectionRequest,
 )
+from sous_chef.services.web_grounding import public_ingredient_name
 from sous_chef.settings import ConfigurationError, Settings
 from sous_chef.telemetry import ErrorCategory, Event, operational_event
 from sous_chef.tracing import Operation, observed
@@ -47,6 +52,51 @@ TRANSIENT_USDA_FAILURES = {
 
 def _rounded(value: Decimal) -> float:
     return float(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def food_selection_request(
+    request: NutritionRequest, candidates: dict[str, UsdaFoodSearch], *, operation_id: UUID
+) -> UsdaSelectionRequest | None:
+    ingredients = [
+        {
+            "ingredientLineId": line.line_id,
+            "name": line.name,
+            "quantity": float(line.quantity) if line.quantity is not None else None,
+            "unit": line.unit,
+            "candidates": [
+                {
+                    "fdcId": food.fdc_id,
+                    "description": food.long_desc,
+                    "foodGroup": food.food_group,
+                    "dataType": food.data_type,
+                }
+                for food in candidates[line.line_id].foods
+            ],
+        }
+        for line in request.ingredients
+        if line.line_id in candidates and candidates[line.line_id].foods
+    ]
+    if not ingredients:
+        return None
+    return UsdaSelectionRequest(
+        role=AgentRole.RECIPE_NUTRITION,
+        operation_id=operation_id,
+        prompt=json.dumps(
+            {"purpose": "usda_selection", "useWeb": False, "ingredients": ingredients},
+            separators=(",", ":"),
+        ),
+        query="Select USDA records for the supplied ingredient list.",
+        ingredient_line_ids=tuple(
+            line.line_id
+            for line in request.ingredients
+            if line.line_id in candidates and candidates[line.line_id].foods
+        ),
+        allowed_food_ids={
+            line_id: tuple(food.fdc_id for food in candidates[line_id].foods)
+            for line_id in candidates
+            if candidates[line_id].foods
+        },
+    )
 
 
 class UsdaNutritionTool:
@@ -89,6 +139,31 @@ class UsdaNutritionTool:
         except RecipeToolError as error:
             operational_event(Event.USDA_FAILED, category=ErrorCategory(error.code.value))
             raise
+
+    async def candidates(
+        self, request: NutritionRequest, *, deadline: float
+    ) -> dict[str, UsdaFoodSearch]:
+        names = {
+            line.line_id: name
+            for line in request.ingredients
+            if line.line_id not in request.selected_food_ids
+            and (name := public_ingredient_name(line.name)) is not None
+        }
+        found: dict[str, UsdaFoodSearch] = {}
+        cache: dict[str, UsdaFoodSearch] = {}
+        if not names:
+            return found
+        try:
+            async with self._session(deadline, ingredient_count=len(names)) as session:
+                for line_id, name in names.items():
+                    if name not in cache:
+                        cache[name] = await session.search(name)
+                    found[line_id] = cache[name]
+        except RecipeToolError as error:
+            operational_event(Event.USDA_FAILED, category=ErrorCategory(error.code.value))
+            if error.code not in TRANSIENT_USDA_FAILURES:
+                raise
+        return found
 
     async def check(self, *, startup: bool = False) -> None:
         """Check public food data, not just MCP initialization."""
@@ -173,6 +248,13 @@ class UsdaNutritionTool:
                     )
                     continue
                 selected = request.selected_food_ids.get(line.line_id)
+                if request.require_selection and selected is None:
+                    unknown.append(
+                        NutritionUnknownComponent(
+                            ingredient_line_id=line.line_id, reason="food_unavailable"
+                        )
+                    )
+                    continue
                 query = (
                     recipe_food_query(line.name)
                     if request.allow_estimates and selected is None
@@ -204,14 +286,21 @@ class UsdaNutritionTool:
                     )
                     continue
                 weight = (
-                    ingredient_weight(
+                    (
+                        line.quantity * MASS[line.unit],
+                        f"{line.quantity.normalize():f} {line.unit} converted using mass units.",
+                    )
+                    if request.require_selection and line.quantity is not None and line.unit in MASS
+                    else ingredient_weight(
                         line.name,
                         line.quantity,
                         line.unit,
                         profile,
                         estimates=request.allow_estimates,
                     )
-                    if line.quantity is not None and line.unit is not None
+                    if line.quantity is not None
+                    and line.unit is not None
+                    and not request.require_selection
                     else None
                 )
                 applied_estimate = None
@@ -284,6 +373,15 @@ class UsdaNutritionTool:
                         conversion_basis=conversion_basis,
                         approximate_match=request.allow_estimates and selected is None,
                         quantity_estimate=applied_estimate,
+                        nutrients=tuple(
+                            Nutrient(
+                                name=name,
+                                amount=float(values[label] * grams / Decimal(100)),
+                                unit=unit,
+                            )
+                            for label, name, unit in _NUTRIENTS
+                            if label in values
+                        ),
                     )
                 )
                 if "Energy" in values:

@@ -17,9 +17,9 @@ entire deployment payload.
 
 Agent-enabled smoke checks also execute one synthetic Orchestrator -> Recipe +
 Nutrition -> USDA request using the deployed agent pins and protected USDA key.
-They require a structured recipe with complete, source-backed nutrition for every
+They require a structured recipe with complete, attributed nutrition for every
 ingredient; a healthy `/ready` response, clarification or missing nutrient evidence
-cannot pass. Nutrition can combine USDA MCP with Bing-grounded evidence; it does
+cannot pass. Nutrition can combine USDA MCP, Bing-grounded evidence and labeled AI estimates; it does
 not require every ingredient or nutrient to be covered by USDA.
 The synthetic request is not retried as a whole and reads/writes no consumer
 documents. It runs under the delivery identity, not the App Service identity,
@@ -32,12 +32,16 @@ recipe MCP and native web search. That same version handles calorie fallback;
 an extra `recipe_nutrition.web_version` is rejected in combined mode.
 USDA is queried first. Missing calories, protein, carbohydrate, fat, fiber and
 sodium are requested from Grounding with Bing for the specified recipe quantities.
-Only natively cited, searched sources can fill missing nutrients. Existing USDA
-values are preserved. The existing tool-free recovery remains calorie-only;
-it cannot invent missing non-calorie nutrients. These attributed estimates satisfy
+Web values require natively cited, searched sources. Existing USDA values are
+preserved. Tool-free AI knowledge fills any remaining nutrient gaps, explicitly
+labeled approximate with null references and portion assumptions, not fabricated
+USDA records, web citations or placeholder zeros. These attributed estimates satisfy
 release smoke without requiring every ingredient to have USDA MCP calorie evidence.
-If USDA and web evidence cannot complete the nutrition, chat fails explicitly
+If USDA, web and AI recovery cannot complete the nutrition, chat fails explicitly
 instead of delivering a partially calculated recipe.
+The independent recovery smoke checks all six nutrients for every ingredient.
+The allergy check compares declared ingredient names with stored allergies,
+including recognized aliases; it does not reject prose or unknown catalog names.
 
 Run `43656633821` deployed the app successfully, then failed this check after a
 USDA timeout and an invalid web fallback response. The fixed 30-second fallback
@@ -183,8 +187,9 @@ PostgreSQL, import USDA data, register API keys or copy developer credentials.
    | `ASC_FOUNDRY_PROJECT_NAME` | Existing dev project name |
 
 5. Review the explicit stage in `deploy/agents.dev.json`. The current candidate
-   enables combined-mode chat with the read-back-verified Orchestrator source 36
-   and Recipe + Nutrition combined source 44. This is release configuration,
+   enables combined-mode chat with the read-back-verified Orchestrator source 45,
+   Recipe + Nutrition combined source 58 and tool-free selection/nutrition recovery source 62.
+   This is release configuration,
    not evidence that the candidate has been deployed or passed live UI acceptance.
    Agent-enabled releases pin the **actual approved agent versions**.
    Both agents must already have separate, enabled Entra Agent identities.

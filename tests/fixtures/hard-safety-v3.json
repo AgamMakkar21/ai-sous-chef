@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "suite_id": "asc55-hard-safety",
-  "version": 2,
+  "version": 3,
   "fixtures": [
     {
       "id": "peanut-oil-and-aliases",
@@ -18,18 +18,18 @@
     {
       "id": "hidden-allergens-and-substitutions",
       "scope": "hidden-allergens",
-      "expected_outcome": "Reject tree-nut milk, hidden butter, allergenic replacements and undeclared allergens in recipe prose/metadata.",
+      "expected_outcome": "Reject confirmed allergens in declared replacement ingredients; recipe prose, metadata and excluded-original descriptions are not additional allergy gates.",
       "tests": [
         "tests/unit/test_food_safety.py::test_substitutions_that_introduce_allergens_are_blocked",
         "tests/unit/test_food_safety.py::test_dairy_substitute_does_not_hide_dairy_in_the_same_list",
         "tests/unit/test_recipe_safety.py::test_safe_replacement_does_not_consume_the_excluded_original_allergen",
         "tests/unit/test_recipe_safety.py::test_replacement_ingredient_itself_is_subject_to_current_allergies",
-        "tests/unit/test_recipe_safety.py::test_undeclared_allergens_in_prose_are_blocked[hidden-peanut-garnish]",
-        "tests/unit/test_recipe_safety.py::test_undeclared_allergens_in_prose_are_blocked[hidden-almond-milk]",
-        "tests/unit/test_recipe_safety.py::test_undeclared_allergens_in_prose_are_blocked[hidden-peanut-oil]",
-        "tests/unit/test_recipe_safety.py::test_ingredient_bearing_metadata_cannot_bypass_the_gate[title]",
-        "tests/unit/test_recipe_safety.py::test_ingredient_bearing_metadata_cannot_bypass_the_gate[fit_reasons]",
-        "tests/unit/test_recipe_safety.py::test_ingredient_bearing_metadata_cannot_bypass_the_gate[adaptations]"
+        "tests/unit/test_recipe_safety.py::test_allergy_validation_only_checks_declared_ingredients_not_prose[hidden-peanut-garnish]",
+        "tests/unit/test_recipe_safety.py::test_allergy_validation_only_checks_declared_ingredients_not_prose[hidden-almond-milk]",
+        "tests/unit/test_recipe_safety.py::test_allergy_validation_only_checks_declared_ingredients_not_prose[hidden-peanut-oil]",
+        "tests/unit/test_recipe_safety.py::test_metadata_mentions_do_not_create_ingredient_list_allergy_conflicts[title]",
+        "tests/unit/test_recipe_safety.py::test_metadata_mentions_do_not_create_ingredient_list_allergy_conflicts[fit_reasons]",
+        "tests/unit/test_recipe_safety.py::test_metadata_mentions_do_not_create_ingredient_list_allergy_conflicts[adaptations]"
       ]
     },
     {
@@ -59,10 +59,11 @@
     {
       "id": "user-allergy-override",
       "scope": "allergy-override-prompts",
-      "expected_outcome": "Ignore-allergy request and accepting model response cannot approve peanut oil or unknown seasoning; stored allergy remains authoritative.",
+      "expected_outcome": "Ignore-allergy requests and accepting model responses cannot approve declared peanut oil or peanuts; unknown seasoning alone is not an allergy conflict.",
       "tests": [
-        "tests/unit/test_orchestrator.py::test_model_cannot_override_stored_allergies_or_accept_unknown_ingredients[peanut-oil]",
-        "tests/unit/test_orchestrator.py::test_model_cannot_override_stored_allergies_or_accept_unknown_ingredients[unknown-seasoning]"
+        "tests/unit/test_orchestrator.py::test_model_cannot_override_a_declared_ingredient_allergy_conflict[peanut-oil]",
+        "tests/unit/test_orchestrator.py::test_model_cannot_override_a_declared_ingredient_allergy_conflict[peanuts]",
+        "tests/unit/test_orchestrator.py::test_an_unknown_ingredient_without_an_allergy_match_is_not_rejected"
       ]
     },
     {
@@ -103,16 +104,16 @@
     {
       "id": "unknown-and-ambiguous-ingredients",
       "scope": "unknown-ingredients",
-      "expected_outcome": "Unknown or ambiguous declared ingredients require clarification under hard restrictions, but are not rejected solely for catalog coverage without those restrictions.",
+      "expected_outcome": "The standalone strict validator retains catalog clarification; chat accepts unknown names without a confirmed listed allergen and still rejects declared peanut matches.",
       "tests": [
         "tests/unit/test_food_safety.py::test_unknown_ingredients_are_not_safe[special house sauce]",
         "tests/unit/test_food_safety.py::test_unknown_ingredients_are_not_safe[secret spice blend]",
         "tests/unit/test_food_safety.py::test_unknown_ingredients_are_not_safe[dragonfruit]",
         "tests/unit/test_food_safety.py::test_known_word_does_not_hide_an_unknown_word",
         "tests/unit/test_food_safety.py::test_ambiguous_compound_ingredients_need_clarification",
-        "tests/unit/test_recipe_safety.py::test_unknown_ingredients_only_require_clarification_under_hard_restrictions[mystery seasoning]",
-        "tests/unit/test_recipe_safety.py::test_unknown_ingredients_only_require_clarification_under_hard_restrictions[rice and peanut]",
-        "tests/unit/test_recipe_safety.py::test_unknown_ingredients_only_require_clarification_under_hard_restrictions[rice\\u9db4]"
+        "tests/unit/test_recipe_safety.py::test_unknown_or_ambiguous_names_do_not_block_without_a_listed_allergen[mystery seasoning]",
+        "tests/unit/test_recipe_safety.py::test_listed_allergens_and_recognized_aliases_remain_blocked[rice and peanut]",
+        "tests/unit/test_recipe_safety.py::test_unknown_or_ambiguous_names_do_not_block_without_a_listed_allergen[rice\\u9db4]"
       ]
     },
     {

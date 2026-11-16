@@ -8,6 +8,7 @@ from time import monotonic
 from typing import Any
 from uuid import uuid4
 
+import httpx2
 import pytest
 from pydantic import ValidationError
 from sous_chef.adapters.foundry_gateway import FoundryGateway
@@ -15,6 +16,7 @@ from sous_chef.domain.agent_identity import AgentRole, IdentityError
 from sous_chef.domain.context import RequestContext
 from sous_chef.domain.foundry import FoundryFailure, FoundryGatewayError
 from sous_chef.domain.groceries import GroceryRow
+from sous_chef.domain.nutrition import UsdaFoodSearch
 from sous_chef.domain.orchestrator import (
     POLICY,
     OrchestratorError,
@@ -74,6 +76,11 @@ class FixtureTools:
             raise
         return self.grounding
 
+    async def candidates(
+        self, request: NutritionRequest, *, deadline: float
+    ) -> dict[str, UsdaFoodSearch]:
+        return {}
+
     async def lookup(self, request: NutritionRequest, *, deadline: float) -> NutritionEvidence:
         assert monotonic() < deadline
         self.nutrition_requests.append(request)
@@ -114,10 +121,72 @@ def setup(
 ) -> tuple[RecipeSpecialistService, FixtureTools, Harness]:
     message = response_body()["output"][0]
     message["content"][0]["text"] = json.dumps(FIXTURE["draft"] if draft is None else draft)
-    transport = Harness(body=body(message) if response is None else response)
+    transport = RecipeHarness(body=body(message) if response is None else response)
     tools = FixtureTools()
     gateway = FoundryGateway(coordination_settings(), client_factory=transport.factory)
     return RecipeSpecialistService(gateway, tools, tools), tools, transport
+
+
+class RecipeHarness(Harness):
+    recover_nutrition = True
+
+    async def handle(self, request: httpx2.Request) -> httpx2.Response:
+        payload = json.loads(request.content)
+        if not isinstance(payload["input"], str) or not payload["input"].startswith(
+            ('{"purpose":"usda_selection"', '{"purpose":"nutrition_fallback"')
+        ):
+            return await super().handle(request)
+        prompt = json.loads(payload["input"])
+        if prompt["purpose"] == "nutrition_fallback" and not self.recover_nutrition:
+            return await super().handle(request)
+        message = response_body()["output"][0]
+        if prompt["purpose"] == "usda_selection":
+            output = {
+                "claims": [],
+                "calorieEstimates": [],
+                "nutrientEstimates": [],
+                "foodSelections": [
+                    {
+                        "ingredientLineId": item["ingredientLineId"],
+                        "usdaFoodId": item["candidates"][0]["fdcId"],
+                    }
+                    for item in prompt["ingredients"]
+                ],
+            }
+        else:
+            output = {
+                "claims": [],
+                "calorieEstimates": [],
+                "foodSelections": [],
+                "nutrientEstimates": [
+                    {
+                        "ingredientLineId": item["ingredientLineId"],
+                        "nutrients": [
+                            {
+                                "name": name,
+                                "amount": 100 if name == "energy" else 3,
+                                "unit": "kcal"
+                                if name == "energy"
+                                else "mg"
+                                if name == "sodium"
+                                else "g",
+                            }
+                            for name in item["missingNutrients"]
+                        ],
+                        "source": "ai_knowledge",
+                        "reference": None,
+                        "basis": "Synthetic fixture nutrients for the whole specified portion.",
+                    }
+                    for item in prompt["ingredients"]
+                ],
+            }
+        message["content"][0]["text"] = json.dumps(output)
+        original = self.body
+        self.body = body(message)
+        try:
+            return await super().handle(request)
+        finally:
+            self.body = original
 
 
 def run(
@@ -130,6 +199,9 @@ def run(
     selected_food_ids: dict[str, str] | None = None,
 ) -> SpecialistResult:
     operation = uuid4() if budget is None else budget.operation_id
+    if budget is None:
+        budget = ExecutionBudget(operation)
+        budget.model(specialist=True)
     return asyncio.run(
         service.generate(
             cooking_context() if data is None else data,
@@ -137,7 +209,7 @@ def run(
                 requirements="A mild rice dinner.", time_budget_minutes=30, use_web=False
             ),
             operation_id=operation,
-            budget=ExecutionBudget(operation) if budget is None else budget,
+            budget=budget,
             max_input_tokens=max_input_tokens,
             max_output_tokens=None,
             deadline=monotonic() + 60 if deadline is None else deadline,
@@ -667,7 +739,7 @@ def test_recipe_publication_versions_the_existing_distinct_identity_without_acti
     invocation = client.agents.create_version.call_args.kwargs
     assert invocation["agent_name"] == "recipe-agent"
     assert invocation["metadata"]["asc_model"] == "gpt-5.4"
-    assert invocation["metadata"]["asc_policy_version"] == "8"
+    assert invocation["metadata"]["asc_policy_version"] == "9"
     assert invocation["metadata"]["asc_recipe_phase"] == "generation"
     assert invocation["definition"].as_dict()["rai_config"] == {
         "rai_policy_name": (
