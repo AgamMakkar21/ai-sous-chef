@@ -214,6 +214,30 @@ def test_empty_malformed_and_failed_retrieval_never_reach_nutrition(
     assert "private" not in str(caught.value)
 
 
+@pytest.mark.parametrize(
+    ("output", "stage", "code"),
+    [
+        ("\n", "empty", FoundryFailure.NO_RESULTS),
+        ("PRIVATE_CANARY", "output_json", FoundryFailure.INVALID_RESULT),
+    ],
+)
+def test_native_grounding_failure_logs_only_its_allowlisted_stage(
+    output: str, stage: str, code: FoundryFailure, caplog: pytest.LogCaptureFixture
+) -> None:
+    configure_safe_telemetry()
+    service, tools, harness = live_setup()
+    harness.body["output"][0]["output"] = output
+    with pytest.raises(FoundryGatewayError) as caught:
+        run(service)
+    assert caught.value.code == code
+    assert not tools.nutrition_requests and len(harness.requests) == 1
+    events = [json.loads(record.getMessage()) for record in caplog.records]
+    grounding = next(event for event in events if event["event"] == "recipe_grounding_failed")
+    assert grounding["grounding_stage"] == stage
+    assert grounding["error_category"] == code
+    assert "PRIVATE_CANARY" not in caplog.text
+
+
 def test_mcp_transport_error_is_not_an_empty_index_or_a_memory_fallback() -> None:
     service, tools, harness = live_setup(
         error={"type": "mcp_protocol_error", "code": -32603, "message": "private upstream error"}
@@ -866,27 +890,43 @@ def test_malicious_retrieval_does_not_override_hard_restrictions(instruction: st
 
 def test_queries_include_constraints_and_groceries_but_no_history_or_user_keys() -> None:
     data = cooking_context()
-    shaped = json.loads(query())
-    assert shaped["groceries"] == ["rice", "carrot"]
-    assert shaped["timeBudgetMinutes"] == 30
-    assert shaped["allergies"] == ["peanut", "milk"]
-    assert shaped["dietaryRestrictions"] == list(data.explicit_preferences.dietary_restrictions)
+    data = data.model_copy(
+        update={
+            "explicit_preferences": data.explicit_preferences.model_copy(
+                update={"dietary_restrictions": ("vegetarian",)}
+            )
+        }
+    )
+    shaped = retrieval_query(
+        data,
+        SpecialistArguments(
+            requirements="A mild rice dinner.", time_budget_minutes=30, use_web=False
+        ),
+    )
+    assert shaped.startswith("A mild rice dinner.\n")
+    assert "Available ingredients: rice, carrot." in shaped
+    assert "Time budget: 30 minutes." in shaped
+    assert "Cooking skill: beginner." in shaped
+    assert "Allergies to avoid: peanut, milk." in shaped
+    assert "Dietary preferences: vegetarian." in shaped
     assert "history" not in shaped and "userId" not in shaped and "learnedPreferences" not in shaped
-    assert data.current_request not in query()
+    assert data.current_request not in shaped
 
 
-def test_oversized_queries_fail_without_dropping_hard_constraints() -> None:
+def test_large_pantry_bounds_retrieval_hints_but_preserves_full_generation_context() -> None:
     data = cooking_context()
     rows = tuple(
         data.groceries[0].model_copy(update={"name": "synthetic ingredient " + str(number) * 30})
-        for number in range(100)
+        for number in range(35)
     )
-    with pytest.raises(RecipeToolError) as caught:
-        retrieval_query(
-            data.model_copy(update={"groceries": rows}),
-            SpecialistArguments(requirements="rice", time_budget_minutes=30, use_web=False),
-        )
-    assert caught.value.code == FoundryFailure.REJECTED
+    data = data.model_copy(update={"groceries": rows})
+    arguments = SpecialistArguments(requirements="rice", time_budget_minutes=30, use_web=False)
+    query = retrieval_query(data, arguments)
+    assert len(query) <= 2000
+    assert "Allergies to avoid: peanut, milk." in query
+    assert rows[-1].name not in query
+    assert len(data.groceries) == 35 and rows[-1].name in data.prompt
+    assert data.explicit_preferences.allergies == ("peanut", "milk")
 
 
 def test_large_source_is_excerpted_without_losing_its_version_or_reference() -> None:

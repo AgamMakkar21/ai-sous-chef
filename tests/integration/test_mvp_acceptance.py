@@ -281,7 +281,7 @@ def test_mvp_current_information_uses_web_only_when_justified(
         assert result.status_code == 200, result.text
         recipe = result.json()["data"]["recipe"]
         assert recipe is not None and bool(recipe["webGrounding"]) is use_web
-        assert len(agents.requests) == 4
+        assert len(agents.requests) == 3
         call = json.loads(agents.requests[1].content)
         assert call["max_tool_calls"] == (2 if use_web else 1)
         assert json.loads(

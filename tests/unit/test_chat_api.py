@@ -647,6 +647,77 @@ def test_atomic_admission_lost_response_never_reinvokes(
     assert not executor.calls
 
 
+@pytest.mark.parametrize("admission_only", [True, False])
+def test_abandoned_operation_is_discoverable_and_closes_without_replaying_generation(
+    admission_only: bool,
+    chat_api: TestClient,
+    executor: FakeExecutor,
+    harness: tuple[Transport, SyntheticCredential],
+) -> None:
+    transport = harness[0]
+    conversation = create(chat_api)
+    if admission_only:
+        transport.write_then_disconnect = True
+    else:
+        executor.mode = "timeout"
+    initial = send(chat_api, conversation)
+    assert initial.status_code in {503, 504}
+    transport.write_then_disconnect = False
+    operation = documents(transport, "sendOperation")[0]
+    endpoint = f"{BASE}/{conversation}/operations/{operation['id']}/close"
+    headers = {"Idempotency-Key": operation["id"]}
+    if admission_only:
+        assert chat_api.post(endpoint, headers=headers).status_code == 409
+        operation["expiresAt"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+    turn = chat_api.get(f"{BASE}/{conversation}/turns").json()["items"][0]
+    assert turn["operationId"] == operation["id"]
+    before = len(executor.calls)
+    closed = chat_api.post(endpoint, headers=headers)
+    assert closed.status_code == 200, closed.text
+    state = closed.json()["data"]
+    assert state["status"] == state["turn"]["status"] == "failed"
+    assert state["failureCode"] == "execution_closed"
+    assert len(state["turn"]["messages"]) == 1
+    assert chat_api.post(endpoint, headers=headers).json() == closed.json()
+    assert send(chat_api, conversation).status_code == 502
+    assert len(executor.calls) == before
+    executor.mode = "success"
+    retried = send(chat_api, conversation, key="explicit-retry", retry=turn["turnId"])
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["data"]["turnId"] == turn["turnId"]
+    assert len(executor.calls) == before + 1
+    assert documents(transport, "conversation")[0]["activeOperationId"] is None
+
+
+def test_explicit_close_fences_a_late_completion_after_a_new_attempt_succeeds(
+    chat_api: TestClient,
+    executor: FakeExecutor,
+    harness: tuple[Transport, SyntheticCredential],
+) -> None:
+    conversation = create(chat_api)
+    executor.block = True
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(send, chat_api, conversation)
+        try:
+            assert executor.started.wait(10)
+            operation = documents(harness[0], "sendOperation")[0]
+            operation["expiresAt"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+            closed = chat_api.post(
+                f"{BASE}/{conversation}/operations/{operation['id']}/close",
+                headers={"Idempotency-Key": operation["id"]},
+            )
+            assert closed.status_code == 200
+            executor.block = False
+            second = send(chat_api, conversation, key="new-attempt", retry=operation["turnId"])
+            assert second.status_code == 200
+        finally:
+            executor.release.set()
+        assert first.result(timeout=10).status_code == 502
+    saved = chat_api.get(f"{BASE}/{conversation}/turns").json()["items"]
+    assert len(saved) == 1 and saved[0] == second.json()["data"]
+    assert len(saved[0]["messages"]) == 2 and len(executor.calls) == 2
+
+
 @pytest.mark.parametrize("mode", ["timeout", "crash", "unavailable_completion"])
 def test_uncertain_execution_is_visible_and_never_blindly_retried(
     mode: str,
@@ -740,6 +811,18 @@ def test_user_and_conversation_isolation(
     assert denied.status_code == 404
     assert denied.json()["code"] == missing.json()["code"] == "not_found"
     assert chat_api.get(completed.headers["location"], headers=other_headers).status_code == 404
+    close_path = f"{BASE}/{conversation}/operations/{operation_id}/close"
+    assert (
+        chat_api.post(close_path, headers={**other_headers, "Idempotency-Key": "close"}).status_code
+        == 404
+    )
+    assert (
+        chat_api.post(
+            f"{BASE}/{second}/operations/{operation_id}/close",
+            headers={"Idempotency-Key": "close"},
+        ).status_code
+        == 404
+    )
     assert len(executor.calls) == 1
 
 

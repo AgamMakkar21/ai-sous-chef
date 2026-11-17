@@ -64,6 +64,14 @@ def test_dairy_substitute_does_not_hide_dairy_in_the_same_list() -> None:
     assert result.verdict is Verdict.BLOCKED
 
 
+def test_cashew_milk_is_not_dairy_but_remains_a_tree_nut() -> None:
+    assert check(SafetyProfile(allergies=("milk",)), "cashew milk").verdict is Verdict.PASS
+    assert check(SafetyProfile(allergies=("tree nuts",)), "cashew milk").verdict is Verdict.BLOCKED
+    assert (
+        check(SafetyProfile(allergies=("milk",)), "cashew milk", "whey").verdict is Verdict.BLOCKED
+    )
+
+
 @pytest.mark.parametrize("name", ["special house sauce", "secret spice blend", "dragonfruit"])
 def test_unknown_ingredients_are_not_safe(name: str) -> None:
     result = check(PEANUT, "salt", name)

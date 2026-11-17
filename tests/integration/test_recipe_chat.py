@@ -5,6 +5,7 @@ import json
 import sys
 from collections.abc import Iterator
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -17,7 +18,9 @@ from pydantic import SecretStr
 from sous_chef.adapters import foundry_gateway
 from sous_chef.app import create_app
 from sous_chef.domain.context import RequestContext, ResolvedPreference
+from sous_chef.domain.orchestrator import POLICY
 from sous_chef.domain.recipe_safety import UNABLE
+from sous_chef.services import recipe_specialist
 from sous_chef.services.nutrition import UsdaNutritionTool
 from sous_chef.services.recipe_chat import RecipeChatExecutor
 from sous_chef.services.recipe_grounding import retrieval_query
@@ -28,11 +31,12 @@ from test_conversation_api import BASE, OWNER, create
 from test_conversation_api import conversation_settings as conversation_settings
 from test_cosmos_repository import SyntheticCredential, Transport
 from test_cosmos_repository import harness as harness
-from test_foundry_gateway import Harness
+from test_foundry_gateway import Harness, response_body
 from test_grocery_api import add
 from test_grounded_specialist import configuration, native_mcp_result
 from test_orchestrator_gateway import body, function_output
 from test_profile_api import document, onboard, preferences
+from test_recipe_specialist import FIXTURE as RECIPE_FIXTURE
 from test_usda_nutrition import SERVER
 from test_web_grounding import CombinedHarness, WebHarness, prompt_context
 
@@ -63,11 +67,253 @@ class RecipeChatHarness(WebHarness):
                 draft = json.loads(self.recipe["output"][1]["content"][0]["text"])
                 draft["ingredients"][0]["name"] = "peanut oil"
                 self.recipe["output"][1]["content"][0]["text"] = json.dumps(draft)
-        if kind == "function" and isinstance(payload["input"], list) and self.change_profile:
+        if kind == "mcp" and self.change_profile:
             self.change_profile["explicitPreferences"]["allergies"].append("rice")
         self.status = self.response_status if kind == self.fail_at else 200
         self.fault = self.response_fault if kind == self.fail_at else ""
         return await super().handle(request)
+
+
+class RecipeRecoveryHarness(CombinedHarness):
+    ai_version = "99"
+
+    def __init__(self, failure: str = "empty") -> None:
+        super().__init__(use_web=False)
+        self.failure = failure
+        self.ai_failure = ""
+        self.ai_calls = 0
+        self.correct_allergy = False
+        self.ai_recipe = deepcopy(RECIPE_FIXTURE["draft"])
+        self.ai_recipe.update(
+            title="Yogurt bowl",
+            totalMinutes=5,
+            sourceIds=[],
+            sourceClaims=[],
+            substitutions=[],
+            adaptations=[],
+            fitReasons=["The requested no-cook bowl fits a beginner's time budget."],
+            ingredients=[
+                {
+                    "lineId": "yogurt",
+                    "name": "plain Greek yogurt, 2% fat",
+                    "quantity": 200,
+                    "unit": "g",
+                },
+                {"lineId": "berries", "name": "berries", "quantity": 80, "unit": "g"},
+                {"lineId": "oats", "name": "oats", "quantity": 30, "unit": "g"},
+            ],
+            instructions=[
+                {
+                    "step": 1,
+                    "text": "Add the yogurt, berries and oats to a bowl and mix.",
+                    "ingredientLineIds": ["yogurt", "berries", "oats"],
+                }
+            ],
+        )
+
+    @staticmethod
+    def request_kind(payload: dict[str, Any]) -> str:
+        if payload["agent_reference"]["version"] == RecipeRecoveryHarness.ai_version:
+            return "ai_recipe"
+        return CombinedHarness.request_kind(payload)
+
+    async def handle(self, request: httpx2.Request) -> httpx2.Response:
+        payload = json.loads(request.content)
+        kind = self.request_kind(payload)
+        self.status, self.fault = 200, ""
+        self.hang = False
+        if kind == "ai_recipe":
+            self.ai_calls += 1
+            draft = deepcopy(self.ai_recipe)
+            if self.correct_allergy and self.ai_calls == 1:
+                draft["ingredients"][0]["name"] = "peanut butter"
+            if self.ai_failure == "citation":
+                draft["sourceIds"] = ["invented-source"]
+            message = response_body()["output"][0]
+            message["content"][0]["text"] = json.dumps(draft)
+            self.body = body(message)
+            if self.ai_failure == "tool":
+                self.body["output"].insert(0, deepcopy(self.combined["output"][0]))
+            if self.ai_failure == "timeout":
+                self.fault = "timeout"
+            return await Harness.handle(self, request)
+        if kind == "function" and isinstance(payload["input"], list) and self.correct_allergy:
+            feedback = json.loads(payload["input"][-1]["output"])
+            assert feedback["status"] == "safety_rejected"
+            self.body = body(
+                function_output(arguments=self.arguments.model_dump_json())
+                | {"call_id": "allergy-correction"}
+            )
+            return await Harness.handle(self, request)
+        if kind == "combined":
+            if self.failure == "hang":
+                self.hang = True
+                return await Harness.handle(self, request)
+            if self.failure in {"unavailable", "timeout"}:
+                self.status = 503 if self.failure == "unavailable" else 200
+                self.fault = "timeout" if self.failure == "timeout" else ""
+                self.body = {"error": {"message": "Synthetic recipe source unavailable"}}
+                return await Harness.handle(self, request)
+            if self.failure == "empty":
+                self.combined["output"][0]["output"] = "\n"
+            elif self.failure == "invalid":
+                content = self.combined["output"][-1]["content"][0]
+                draft = json.loads(content["text"])
+                draft["totalMinutes"] = -1
+                content["text"] = json.dumps(draft)
+        return await super().handle(request)
+
+
+@pytest.mark.parametrize("failure", ["empty", "unavailable", "timeout", "invalid", "hang"])
+def test_mcp_failure_saves_a_labelled_ai_recipe_with_complete_nutrition_without_replay(
+    failure: str,
+    combined_settings: Settings,
+    auth_headers: dict[str, str],
+    harness: tuple[Transport, SyntheticCredential],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = RecipeRecoveryHarness(failure)
+    if failure == "hang":
+        monkeypatch.setattr(
+            recipe_specialist,
+            "POLICY",
+            replace(POLICY, recipe_grounding_deadline_seconds=0.05),
+        )
+    monkeypatch.setattr(foundry_gateway, "_project_client", transport.factory)
+    settings = combined_settings.model_copy(
+        update={"foundry_recipe_nutrition_ai_recipe_agent_version": transport.ai_version}
+    )
+    with TestClient(create_app(settings), headers=auth_headers) as client:
+        onboard(client)
+        conversation = create(client)
+        response = send(client, conversation, content="Make a yogurt bowl with 2% Greek yogurt.")
+        assert response.status_code == 200, response.text
+        turn = response.json()["data"]
+        recipe = turn["recipe"]
+        assert turn["status"] == "completed" and turn["generatedRecipeId"]
+        assert recipe["generationSource"] == "ai_knowledge"
+        assert recipe["sourceIds"] == recipe["sourceClaims"] == recipe["sources"] == []
+        assert recipe["webGrounding"] is None
+        assert recipe["nutrition"]["status"] == "known"
+        assert len(recipe["nutrition"]["nutrients"]) == 6
+        assert not recipe["nutrition"]["unknownComponents"]
+        assert {item["source"] for item in recipe["nutrition"]["ingredientCalories"]} == {
+            "ai_knowledge"
+        }
+        assert "AI-knowledge recipe" in turn["messages"][1]["content"]
+        assert transport.ai_calls == 1
+        assert transport.cancelled == (failure == "hang")
+        count = len(transport.requests)
+        assert (
+            send(client, conversation, content="Make a yogurt bowl with 2% Greek yogurt.").json()
+            == response.json()
+        )
+        assert len(transport.requests) == count
+        assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
+    ai_request = next(
+        json.loads(request.content)
+        for request in transport.requests
+        if transport.request_kind(json.loads(request.content)) == "ai_recipe"
+    )
+    assert not set(ai_request) & {"tools", "tool_choice", "text", "instructions"}
+
+
+@pytest.mark.parametrize("current_information", [False, True])
+def test_ai_recipe_opt_in_preserves_mcp_priority_and_required_current_information(
+    current_information: bool,
+    combined_settings: Settings,
+    auth_headers: dict[str, str],
+    harness: tuple[Transport, SyntheticCredential],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = RecipeRecoveryHarness("unavailable" if current_information else "none")
+    if current_information:
+        transport.arguments = transport.arguments.model_copy(
+            update={"use_web": True, "web_query": "rice"}
+        )
+    monkeypatch.setattr(foundry_gateway, "_project_client", transport.factory)
+    settings = combined_settings.model_copy(
+        update={"foundry_recipe_nutrition_ai_recipe_agent_version": transport.ai_version}
+    )
+    with TestClient(create_app(settings), headers=auth_headers) as client:
+        onboard(client)
+        conversation = create(client)
+        response = send(client, conversation, content="Make a rice dinner.")
+        if current_information:
+            assert response.status_code == 504, response.text
+            assert response.json()["code"] == "execution_outcome_unknown"
+            turn = client.get(f"{BASE}/{conversation}/turns").json()["items"][0]
+            assert turn["status"] == "outcomeUnknown" and turn["recipe"] is None
+        else:
+            assert response.status_code == 200, response.text
+            assert response.json()["data"]["recipe"]["generationSource"] == "curated_recipe"
+        assert transport.ai_calls == 0
+
+
+@pytest.mark.parametrize("failure", ["citation", "tool", "timeout"])
+def test_invalid_or_uncertain_ai_recipe_is_not_saved_or_retried(
+    failure: str,
+    combined_settings: Settings,
+    auth_headers: dict[str, str],
+    harness: tuple[Transport, SyntheticCredential],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = RecipeRecoveryHarness()
+    transport.ai_failure = failure
+    monkeypatch.setattr(foundry_gateway, "_project_client", transport.factory)
+    settings = combined_settings.model_copy(
+        update={"foundry_recipe_nutrition_ai_recipe_agent_version": transport.ai_version}
+    )
+    with TestClient(create_app(settings), headers=auth_headers) as client:
+        onboard(client)
+        conversation = create(client)
+        response = send(client, conversation)
+        assert response.status_code == (504 if failure == "timeout" else 502)
+        saved = client.get(f"{BASE}/{conversation}/turns").json()["items"][0]
+        assert saved["recipe"] is None and len(saved["messages"]) == 1
+        assert transport.ai_calls == 1
+        send(client, conversation)
+        assert transport.ai_calls == 1
+
+
+def test_ai_recipe_recovery_preserves_allergy_correction_and_the_complete_long_recipe_card(
+    combined_settings: Settings,
+    auth_headers: dict[str, str],
+    harness: tuple[Transport, SyntheticCredential],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = RecipeRecoveryHarness()
+    transport.correct_allergy = True
+    transport.ai_recipe["instructions"] = [
+        {
+            "step": index + 1,
+            "text": ("Mix the yogurt, berries and oats gently in the bowl. " * 9).strip(),
+            "ingredientLineIds": ["yogurt", "berries", "oats"],
+        }
+        for index in range(9)
+    ]
+    monkeypatch.setattr(foundry_gateway, "_project_client", transport.factory)
+    settings = combined_settings.model_copy(
+        update={"foundry_recipe_nutrition_ai_recipe_agent_version": transport.ai_version}
+    )
+    app = create_app(settings)
+    with TestClient(app, headers=auth_headers) as client:
+        onboard(client)
+        conversation = create(client)
+        with patch.object(
+            app.state.nutrition, "lookup", wraps=app.state.nutrition.lookup
+        ) as lookup:
+            response = send(client, conversation, content="Make a yogurt bowl.")
+        assert response.status_code == 200, response.text
+        turn = response.json()["data"]
+        assert transport.ai_calls == 2 and lookup.call_count == 1
+        assert turn["recipe"]["nutrition"]["status"] == "known"
+        assert turn["recipe"]["instructions"] == transport.ai_recipe["instructions"]
+        assert "peanut butter" not in response.text
+        assert len(turn["messages"][1]["content"]) <= 4000
+        assert "AI-knowledge recipe" in turn["messages"][1]["content"]
+        assert "recipe card" in turn["messages"][1]["content"]
+        assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
 
 
 @pytest.fixture
@@ -149,7 +395,7 @@ def test_chat_recovers_from_transient_usda_failure_without_replaying_agents(
             mapping["ingredientLineId"] for mapping in turn["recipe"]["nutrition"]["mappings"]
         } >= {"rice", "carrot"}
         calls = len(recipe_transport.requests)
-        assert calls == 5  # Routing, generation, USDA selection, oil recovery and fit review.
+        assert calls == 4  # Routing, generation, USDA selection and oil recovery.
         assert send(client, conversation).json() == response.json()
         assert len(recipe_transport.requests) == calls
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
@@ -284,6 +530,7 @@ def test_release_chat_check_requires_live_recipe_and_attributed_calories(
             assert [context.current_request for context in recipe_transport.contexts] == [
                 "Give me a recipe for a yogurt bowl.",
                 "Give me a recipe for a chicken dinner.",
+                "Make rice and beans using 1 cup dry rice and 1 can black beans.",
             ]
             recovery = json.loads(recipe_transport.requests[-1].content)
             assert recovery["agent_reference"]["version"] == (
@@ -291,6 +538,37 @@ def test_release_chat_check_requires_live_recipe_and_attributed_calories(
             )
             assert json.loads(recovery["input"])["useWeb"] is False
         assert client.call_args.args[0].environment == "dev"
+
+
+@pytest.mark.parametrize("invalid_ai", [False, True])
+def test_release_smoke_exercises_mcp_first_and_the_real_tool_free_recipe_recovery_route(
+    invalid_ai: bool,
+    combined_settings: Settings,
+) -> None:
+    transport = RecipeRecoveryHarness("none")
+    if invalid_ai:
+        transport.ai_failure = "citation"
+    settings = combined_settings.model_copy(
+        update={"foundry_recipe_nutrition_ai_recipe_agent_version": transport.ai_version}
+    )
+    deployed = {
+        f"ASC_{name.upper()}": str(value)
+        for name, value in settings.model_dump().items()
+        if value is not None
+    } | {"ASC_USDA_API_KEY": "synthetic-key", "ASC_ENVIRONMENT": "dev"}
+    nutrition = UsdaNutritionTool.from_settings(settings)
+    with (
+        patch.object(UsdaNutritionTool, "from_settings", return_value=nutrition),
+        patch.object(delivery, "_release_project_client", transport.factory),
+    ):
+        if invalid_ai:
+            with pytest.raises(delivery.DeliveryError, match="Live chat dependency"):
+                asyncio.run(delivery.chat_smoke(deployed))
+        else:
+            asyncio.run(delivery.chat_smoke(deployed))
+    kinds = [transport.request_kind(json.loads(request.content)) for request in transport.requests]
+    assert kinds.count("combined") == 3
+    assert kinds.count("ai_recipe") == transport.ai_calls == 1
 
 
 @pytest.mark.parametrize(
@@ -523,7 +801,7 @@ def test_chat_persists_complete_ai_nutrition_during_usda_outage(
             {"carrot", "oil"} if mode == "fail_carrot" else {"rice", "carrot", "oil"}
         )
         assert "not USDA-verified" in turn["messages"][-1]["content"]
-        assert len(recipe_transport.requests) == 4 + int(mode == "fail_carrot")
+        assert len(recipe_transport.requests) == 3 + int(mode == "fail_carrot")
         if combined:
             assert {
                 json.loads(request.content)["agent_reference"]["version"]
@@ -532,7 +810,7 @@ def test_chat_persists_complete_ai_nutrition_during_usda_outage(
             } == {"4", "6"}
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
         assert send(client, conversation).json() == response.json()
-        assert len(recipe_transport.requests) == 4 + int(mode == "fail_carrot")
+        assert len(recipe_transport.requests) == 3 + int(mode == "fail_carrot")
 
 
 @pytest.mark.parametrize(
@@ -606,9 +884,9 @@ def test_incomplete_or_falsely_cited_ai_nutrition_cannot_complete_chat(
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
         assert send(client, conversation).status_code == response.status_code
         assert len(transport.requests) == (
-            6
+            5
             if fault == "partial"
-            else 5
+            else 4
             if fault in {"high_usage", "above_old_output_limit"}
             else 4
         )
@@ -725,16 +1003,16 @@ def test_combined_app_composition_returns_and_persists_a_grounded_recipe(
             "usda",
         }
         assert bool(turn["recipe"]["webGrounding"]) == use_web
-        assert len(transport.requests) == 4
+        assert len(transport.requests) == 3
         combined = json.loads(transport.requests[1].content)
         assert combined["agent_reference"]["version"] == "4"
         assert combined["max_tool_calls"] == (2 if use_web else 1)
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
         assert send(client, conversation, content=content).json() == response.json()
-        assert len(transport.requests) == 4
+        assert len(transport.requests) == 3
     with TestClient(create_app(combined_settings), headers=auth_headers) as restarted:
         assert restarted.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
-    assert len(transport.requests) == 4
+    assert len(transport.requests) == 3
 
 
 def test_combined_chat_keeps_known_components_when_broad_search_details_are_missing(
@@ -786,19 +1064,25 @@ def test_combined_chat_keeps_known_components_when_broad_search_details_are_miss
             "curated_recipe",
             "usda",
         }
-        assert len(transport.requests) == 5
+        assert len(transport.requests) == 4
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
 
 
+@pytest.mark.parametrize("quantity_hints", [False, True])
 @pytest.mark.parametrize("allergen_location", ["alias", "ingredient"])
 def test_combined_revision_preserves_context_and_enriches_only_its_current_ingredients(
     allergen_location: str,
+    quantity_hints: bool,
     combined_settings: Settings,
     auth_headers: dict[str, str],
     harness: tuple[Transport, SyntheticCredential],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     transport = CombinedHarness(use_web=False)
+    if quantity_hints:
+        transport.arguments = transport.arguments.model_copy(
+            update={"quantity_ingredients": ("rice",)}
+        )
     original_handle = transport.handle
     draft = json.loads(transport.combined["output"][-1]["content"][0]["text"])
     attempts = 0
@@ -852,7 +1136,12 @@ def test_combined_revision_preserves_context_and_enriches_only_its_current_ingre
         conversation = create(client)
         nutrition = app.state.nutrition
         with patch.object(nutrition, "lookup", wraps=nutrition.lookup) as lookup:
-            response = send(client, conversation, content="Make a 30-minute pantry recipe.")
+            content = (
+                "Make a 30-minute pantry recipe with two handfuls of rice."
+                if quantity_hints
+                else "Make a 30-minute pantry recipe."
+            )
+            response = send(client, conversation, content=content)
         assert response.status_code == 200, response.text
         turn = response.json()["data"]
         assert turn["recipe"]["ingredients"][0]["quantity"] == 200
@@ -865,12 +1154,13 @@ def test_combined_revision_preserves_context_and_enriches_only_its_current_ingre
         assert [call.args[0].ingredients[0].quantity for call in lookup.call_args_list] == [200]
         assert "Private rejected peanut skillet" not in response.text
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
-        assert (
-            send(client, conversation, content="Make a 30-minute pantry recipe.").json()
-            == response.json()
-        )
+        assert send(client, conversation, content=content).json() == response.json()
     assert attempts == 2 and len(transport.requests) == 5
     requests = [json.loads(request.content) for request in transport.requests]
+    generations = [request for request in requests if transport.request_kind(request) == "combined"]
+    assert [request["max_tool_calls"] for request in generations] == (
+        [2, 1] if quantity_hints else [1, 1]
+    )
     assert [transport.request_kind(request) for request in requests] == [
         "function",
         "combined",
@@ -883,7 +1173,6 @@ def test_combined_revision_preserves_context_and_enriches_only_its_current_ingre
     for request in (requests[1], requests[3]):
         assert request["input"].startswith(transport.data.prompt)
         assert request["store"] is False
-        assert request["max_tool_calls"] == 1
         assert '"time_budget_minutes":30' in request["input"]
     assert correction in requests[3]["input"]
 
@@ -935,7 +1224,7 @@ def test_pantry_recipe_returns_and_replays_the_same_grounded_structured_exchange
     assert recipe["nutrition"]["nutrients"][0]["amount"] == 260
     assert {source["kind"] for source in recipe["sources"]} == {"curated_recipe", "usda"}
     assert bool(recipe["webGrounding"]) == use_web
-    assert len(recipe_transport.requests) == 4 + int(use_web)
+    assert len(recipe_transport.requests) == 3 + int(use_web)
     context = recipe_transport.contexts[0]
     assert context.current_request == content
     assert context.explicit_preferences.allergies == ("peanut", "peaches")
@@ -946,7 +1235,7 @@ def test_pantry_recipe_returns_and_replays_the_same_grounded_structured_exchange
     with TestClient(create_app(disabled), headers=auth_headers) as restarted:
         replay = send(restarted, conversation, content=content)
         assert replay.status_code == 200 and replay.json() == response.json()
-    assert len(recipe_transport.requests) == 4 + int(use_web)
+    assert len(recipe_transport.requests) == 3 + int(use_web)
     assert len(documents(harness[0], "turn")) == len(documents(harness[0], "sendOperation")) == 1
     assert documents(harness[0], "turn")[0]["generatedRecipeId"] == turn["generatedRecipeId"]
     for private in (content, OWNER.user_id, "hf-food-recipes-1", "resp_synthetic"):

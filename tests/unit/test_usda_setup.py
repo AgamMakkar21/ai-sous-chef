@@ -275,6 +275,25 @@ def test_agent_candidates_preserve_original_query_and_source_order(
     asyncio.run(check())
 
 
+@pytest.mark.parametrize("keyword", ["plain Greek yogurt, 2% fat", "ground beef, 85% lean"])
+def test_percentage_label_is_forwarded_to_food_data_central(keyword: str) -> None:
+    seen: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content)["query"])
+        return httpx.Response(200, json={"totalHits": 0, "foods": []})
+
+    async def check() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            result = await FoodDataCentral(client, SecretStr("synthetic-private-key")).search(
+                keyword, agent_selection=True
+            )
+            assert not result.foods
+
+    asyncio.run(check())
+    assert seen == [keyword]
+
+
 @pytest.mark.parametrize("keyword", ["rice", "salt"])
 def test_broad_search_requests_fit_the_existing_response_budget(keyword: str) -> None:
     page_sizes: list[int] = []

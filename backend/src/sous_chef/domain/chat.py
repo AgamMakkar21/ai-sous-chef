@@ -87,15 +87,20 @@ class SendConflict(ValueError):
     """Another operation owns the conversation, or this turn is not retryable."""
 
 
+FailureCode = Literal[
+    "execution_failed",
+    "execution_closed",
+    "invalid_assistant_response",
+    "execution_outcome_unknown",
+]
+
+
 class OperationView(ConversationModel):
     operation_id: UUID4
     conversation_id: UUID4
     turn_id: UUID4
     status: TurnStatus
-    failure_code: (
-        Literal["execution_failed", "invalid_assistant_response", "execution_outcome_unknown"]
-        | None
-    ) = None
+    failure_code: FailureCode | None = None
     turn: ConversationTurn
 
 

@@ -216,7 +216,7 @@ uses the server-derived `/userId` partition, a record-kind filter and a bounded
 SDK page. Listing summaries never enumerates the transcript.
 
 Each public turn has `turnId`, `conversationId`, `turnIndex`, `status`,
-`messages`, `createdAt`, `updatedAt`, `generatedRecipeId`, `recipe`, `occasionId`
+`operationId`, `messages`, `createdAt`, `updatedAt`, `generatedRecipeId`, `recipe`, `occasionId`
 and `supersedesRecipeId`. The recipe and generated reference are null for
 non-recipe replies and incomplete turns.
 A completed recipe exposes the full validated `StructuredRecipe`: ingredients,
@@ -232,6 +232,10 @@ one validated assistant message in that order. Each message exposes only
 `messageId`, `role`, `entityId`, `content` and `timestamp`; content is bounded
 at 4,000 characters. Invalid stored exchange/state combinations return a safe
 502 rather than a false empty/successful history.
+Long valid recipes use a compact transcript and retain their complete recipe card;
+the transcript ceiling does not reject the structured recipe.
+The owned turn's current `operationId` supports recovery after browser storage
+is lost; historical records without it remain readable.
 
 Internal prompts, provider response IDs, operation records and raw Cosmos
 metadata never enter these responses. Structured recipes use the strict public
@@ -245,8 +249,10 @@ The read endpoints do not invoke agents.
 | --- | --- | --- |
 | `POST /api/v1/conversations/{conversationId}/turns` | Required `Idempotency-Key`; `{ "content": "Suggest dinner" }` | 200 `{ "data": turn }` only after atomic completion; pending duplicate returns 202 `{ "data": operation }` |
 | `GET /api/v1/conversations/{conversationId}/operations/{operationId}` | Owned UUIDv4 references; no query parameters | 200 `{ "data": operation }`; never invokes the executor |
+| `POST /api/v1/conversations/{conversationId}/operations/{operationId}/close` | Owned UUIDv4 references, required `Idempotency-Key`, no body or query parameters | 200 terminal operation; closes only interrupted/expired work, without generation |
 
-Both require the existing authentication/CSRF boundary and return `no-store`.
+All require verified authentication and return `no-store`; mutations require
+the existing same-origin/CSRF protections.
 Send responses include `Location` pointing to the operation, including known
 execution failures. Pending responses include `Retry-After: 2`.
 An operation view contains `operationId`, `conversationId`, `turnId`, `status`,
@@ -326,12 +332,19 @@ field reflects the latest state of that same turn, possibly completed by a retry
 A timeout returns 504 `execution_outcome_unknown`, retains a user-only turn and
 holds the conversation guard. An interrupted worker or uncertain database write
 can leave a `pending` operation. Polling its operation or replaying its key after
-the persisted 60-second expiry conditionally marks it `outcomeUnknown`, without
+the persisted execution expiry conditionally marks it `outcomeUnknown`, without
 invoking anything. Late completions cannot overwrite that terminal state.
-Unknown outcomes cannot be explicitly retried or bypassed with a new send.
-This intentionally fails closed: the real pipeline must reconcile a provider
-response before allowing further execution; there is no recovery worker or
-automatic model replay in this issue.
+Unknown outcomes cannot be directly retried or bypassed with a new send.
+
+After inspecting status, the user may explicitly close interrupted work through
+the `/close` action. A fresh pending operation returns 409. An expired pending or
+outcome-unknown operation is atomically marked failed with `execution_closed`,
+retaining its user message and releasing the conversation guard. Closing a
+completed/failed operation is idempotent and does not erase its result.
+Close never invokes a model, proves remote cancellation or automatically retries.
+Conditional operation/turn/conversation fences discard any late old completion,
+including after a subsequent explicit retry has succeeded. Retry remains a
+separate deliberate action with the original content and a new send key.
 
 Database failures use the shared safe Cosmos problem envelope. If admission
 may have committed, repeat the same payload/key to inspect its state. If
@@ -360,9 +373,10 @@ Use the reviewed [agent pins and identity setup](orchestrator.md) and
 distinct workload/agent principal IDs, complete recipe knowledge settings and
 the protected USDA MCP configuration are required. Incomplete enabled configuration
 fails startup; enabled USDA also retains its source-backed startup check.
-No new environment variables, credentials or provider fallback are introduced.
-The checked-in dev agent manifest remains disabled; publish/pin reviewed agent
-definitions and explicitly activate the release through the existing review process.
+The optional `ASC_FOUNDRY_RECIPE_NUTRITION_AI_RECIPE_AGENT_VERSION` enables
+labelled, tool-free recipe recovery on the same specialist identity; no new
+provider or credentials are introduced. Publish/read back reviewed definitions
+and activate their pins only through the existing review process.
 This implementation does not deploy or assert live dev acceptance.
 
 Known provider/validation failures become recoverable failed turns. Coordinator

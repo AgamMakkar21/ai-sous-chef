@@ -286,11 +286,46 @@ def test_cookie_mutations_require_origin_and_csrf(session_settings: Settings) ->
         assert client.post("/api/v1/not-implemented").status_code == 403
         headers = {"Origin": ORIGIN, "X-CSRF-Token": response.json()["csrfToken"]}
         assert client.post("/api/v1/not-implemented", headers=headers).status_code == 404
+        close = (
+            "/api/v1/conversations/11111111-1111-4111-8111-111111111111"
+            "/operations/22222222-2222-4222-8222-222222222222/close"
+        )
+        assert client.post(close, headers={"Origin": ORIGIN}).status_code == 403
         headers["Origin"] = "https://attacker.invalid"
         assert client.post("/api/v1/not-implemented", headers=headers).status_code == 403
+        assert client.post(close, headers=headers).status_code == 403
         logout = client.get("/auth/logout", follow_redirects=False)
         assert "__Host-asc-csrf" in logout.headers["set-cookie"]
         assert "Max-Age=0" in logout.headers["set-cookie"]
+
+
+def test_initial_session_reads_share_a_token_and_other_sessions_cannot_reuse_it(
+    session_settings: Settings,
+) -> None:
+    with (
+        patch.object(
+            AppServiceSessionVerifier,
+            "verify",
+            new_callable=AsyncMock,
+            return_value=verified_session_identity(identity(), ORIGIN),
+        ),
+        TestClient(create_app(session_settings), base_url=ORIGIN) as first,
+        TestClient(create_app(session_settings), base_url=ORIGIN) as second,
+    ):
+        for client in (first, second):
+            client.cookies.set("AppServiceAuthSession", "same-synthetic-session")
+        initial = first.get("/auth/session").json()["csrfToken"]
+        parallel = second.get("/auth/session").json()["csrfToken"]
+        assert initial == parallel
+        assert first.get("/auth/session").json()["csrfToken"] == initial
+        headers = {"Origin": ORIGIN, "X-CSRF-Token": initial}
+        assert second.post("/api/v1/not-implemented", headers=headers).status_code == 404
+        second.cookies.set("AppServiceAuthSession", "different-synthetic-session")
+        changed = second.get("/auth/session").json()["csrfToken"]
+        assert changed != initial
+        assert second.post("/api/v1/not-implemented", headers=headers).status_code == 403
+        headers["X-CSRF-Token"] = changed
+        assert second.post("/api/v1/not-implemented", headers=headers).status_code == 404
 
 
 @pytest.mark.parametrize(

@@ -64,6 +64,7 @@ def nutrient_request(
                 "query": query,
                 "ingredients": ingredients,
             },
+            ensure_ascii=False,
             separators=(",", ":"),
         ),
         query=query,
@@ -129,7 +130,26 @@ def with_nutrient_estimates(
         unknown = tuple(
             line_id for line_id in item.unknown_ingredient_line_ids if line_id not in covered
         )
-        total = round((item.whole_recipe_amount or 0) + sum(row.amount for _, row in additions), 2)
+        attributed = {
+            mapping.ingredient_line_id: nutrient.amount
+            for mapping in evidence.mappings
+            for nutrient in mapping.nutrients
+            if nutrient.name == item.name
+        }
+        attributed.update(
+            (estimate.ingredient_line_id, nutrient.amount)
+            for estimate in (*evidence.nutrient_estimates, *non_energy)
+            for nutrient in estimate.nutrients
+            if nutrient.name == item.name
+        )
+        if set(covered) <= attributed.keys():
+            total = round(sum(attributed[line_id] for line_id in covered), 2)
+        else:
+            # Historical USDA mappings can omit raw nutrients; retain their verified aggregates.
+            total = round(
+                (item.whole_recipe_amount or 0) + sum(nutrient.amount for _, nutrient in additions),
+                2,
+            )
         coverage.append(
             NutrientCoverage(
                 name=item.name,

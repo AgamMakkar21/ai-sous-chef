@@ -176,6 +176,7 @@ def tool_output(request: dict[str, object]) -> str:
             MODE == "mixed_nutrients"
             and (food["fdc_id"], name) in {("99901", "Protein"), ("99902", "Fiber, total dietary")}
         )
+        and not (MODE == "partial_protein" and food["fdc_id"] != "99901" and name == "Protein")
     ]
     if MODE == "wrong_food":
         rows[0]["long_desc"] = "different food"
@@ -197,7 +198,15 @@ def tool_output(request: dict[str, object]) -> str:
             dict(rows[0], nutrdesc=f"Other fixture nutrient {index}", sr_order=index)
             for index in range(len(rows), count)
         )
-    return json.dumps({"food": dict(food, data_type="SR Legacy"), "nutrients": rows})
+    result: dict[str, object] = {
+        "food": dict(food, data_type="SR Legacy"),
+        "nutrients": rows,
+    }
+    if MODE == "volume_portion":
+        result["portions"] = [
+            {"amount": "1", "gram_weight": "158", "measure_unit": "cup", "modifier": None}
+        ]
+    return json.dumps(result)
 
 
 for line in sys.stdin:

@@ -51,6 +51,11 @@ INSPECT_CASE = EndpointCase(
     BASE + "/{conversation_id}/operations/{operation_id}",
     guarded_record="conversation",
 )
+CLOSE_CASE = EndpointCase(
+    "POST",
+    BASE + "/{conversation_id}/operations/{operation_id}/close",
+    guarded_record="conversation",
+)
 SAVE_CASE = EndpointCase(
     "POST",
     "/api/v1/recipes",
@@ -96,6 +101,7 @@ CASES = (
     EndpointCase("GET", BASE + "/{conversation_id}/turns", guarded_record="conversation"),
     SEND_CASE,
     INSPECT_CASE,
+    CLOSE_CASE,
     SAVE_CASE,
     COOK_CASE,
     FEEDBACK_CASE,

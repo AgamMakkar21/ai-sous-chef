@@ -222,7 +222,7 @@ def test_dry_and_cooked_rice_keep_different_source_forms_and_portion_weights(
 
 
 @pytest.mark.parametrize("household_units", [False, True])
-def test_chat_uses_mass_sources_or_complete_fallback_without_household_keyword_matching(
+def test_chat_uses_mass_or_factual_portions_without_household_keyword_matching(
     household_units: bool,
 ) -> None:
     draft = copy.deepcopy(FIXTURE["draft"])
@@ -299,8 +299,20 @@ def test_chat_uses_mass_sources_or_complete_fallback_without_household_keyword_m
     assert recipe.nutrition.status == "known"
     if household_units:
         assert json.loads(json.loads(model.requests[-1].content)["input"])["useWeb"] is False
-        assert not recipe.nutrition.mappings and not recipe.nutrition.sources
-        assert len(recipe.nutrition.nutrient_estimates) == 5
+        assert {item.ingredient_line_id for item in recipe.nutrition.mappings} == {
+            "food1",
+            "food2",
+            "food3",
+            "food4",
+        }
+        assert len(recipe.nutrition.sources) == 4
+        assert all(
+            item.conversion_basis and "USDA" in item.conversion_basis
+            for item in recipe.nutrition.mappings
+        )
+        assert [item.ingredient_line_id for item in recipe.nutrition.nutrient_estimates] == [
+            "food0"
+        ]
         assert all(
             item.source == "ai_knowledge" and item.reference is None and len(item.nutrients) == 5
             for item in recipe.nutrition.nutrient_estimates

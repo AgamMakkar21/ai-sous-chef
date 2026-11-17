@@ -2,7 +2,6 @@
 
 import json
 import re
-from typing import Literal
 
 from pydantic import (
     AliasChoices,
@@ -24,6 +23,7 @@ from sous_chef.domain.recipes import (
     RecipeToolError,
 )
 from sous_chef.services.recipe_indexing import RecipeIndexingError, search_document
+from sous_chef.telemetry import GroundingStage
 
 MCP_MAX_OUTPUT_CHARACTERS = 16000
 DEV_MCP_MAX_OUTPUT_CHARACTERS = 65_536
@@ -33,45 +33,32 @@ DEV_MCP_MAX_CONTEXT_TOKENS = 16000
 def retrieval_query(context: RequestContext, arguments: SpecialistArguments) -> str:
     """Never include user IDs, conversation history or learned profile evidence."""
     preferences = context.explicit_preferences
-    data = {
-        "requirements": arguments.requirements,
-        "timeBudgetMinutes": arguments.time_budget_minutes,
-        "allergies": preferences.allergies,
-        "dietaryRestrictions": preferences.dietary_restrictions,
-        "cookingSkill": preferences.cooking_skill,
-        "groceries": [row.name for row in context.groceries],
-    }
-    query = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-    if len(query) > 2000:
-        # Do not silently drop mandatory restrictions to satisfy a query limit.
-        raise RecipeToolError(FoundryFailure.REJECTED)
-    return query
+    parts = [
+        arguments.requirements,
+        f"Time budget: {arguments.time_budget_minutes} minutes.",
+        f"Cooking skill: {preferences.cooking_skill}.",
+    ]
+    for label, values in (
+        ("Allergies to avoid", preferences.allergies),
+        ("Dietary preferences", preferences.dietary_restrictions),
+        ("Available ingredients", tuple(row.name for row in context.groceries)),
+    ):
+        included: list[str] = []
+        for value in values:
+            section = f"{label}: {', '.join((*included, value))}."
+            if len("\n".join((*parts, section))) > 2000:
+                break
+            included.append(value)
+        if included:
+            parts.append(f"{label}: {', '.join(included)}.")
+    # Retrieval hints are bounded independently; generation and allergy validation retain
+    # the complete request context, including every omitted pantry name and restriction.
+    return "\n".join(parts)
 
 
 def recipe_knowledge_arguments(query: str) -> dict[str, list[str]]:
     """Search MCP receives exactly one unchanged backend query, not model variants."""
     return {"query_variants": [query]}
-
-
-GroundingStage = Literal[
-    "output_size",
-    "output_json",
-    "mcp_envelope",
-    "document_schema",
-    "document_source",
-    "mcp_tool_error",
-    "chunk_json",
-    "chunk_list",
-    "chunk_count",
-    "chunk_schema",
-    "duplicate_reference",
-    "recipe_schema",
-    "provenance",
-    "source_set",
-    "reference_count",
-    "reference_schema",
-    "reference_match",
-]
 
 
 class McpGroundingError(RecipeToolError):
@@ -174,6 +161,8 @@ def parse_mcp_grounding(
     """
     if len(output) > max_output_characters:
         raise McpGroundingError("output_size")
+    if not output.strip():
+        return RecipeGrounding(status="empty", recipes=())
     stage: GroundingStage = "output_json"
     try:
         chunks = json.loads(output)

@@ -18,6 +18,7 @@ from sous_chef.domain.chat import (
     ChatExecution,
     ChatExecutor,
     ExecutionFailed,
+    FailureCode,
     OperationView,
     SendConflict,
     SendMessage,
@@ -47,7 +48,6 @@ from sous_chef.tracing import Operation, observed
 
 CHAT = ProductContainer.CHAT_HISTORY
 SEND_TIMEOUT_SECONDS = POLICY.deadline_seconds + 10
-FailureCode = Literal["execution_failed", "invalid_assistant_response", "execution_outcome_unknown"]
 
 
 class StoredOperation(ConversationModel):
@@ -138,15 +138,21 @@ class ChatService:
         status: TurnStatus,
         reply: ValidatedReply | None = None,
         failure: FailureCode | None = None,
+        resolve_unknown: bool = False,
     ) -> OperationView:
         operation = _operation(operation_record, conversation_id)
         conversation = await _owned(repository, user, operation.conversation_id)
         turn = await _turn(repository, user, operation)
-        if operation.status != "pending":
+        if operation.status != "pending" and not (
+            resolve_unknown and operation.status == "outcomeUnknown" and status == "failed"
+        ):
             return _view(operation_record, turn, operation.conversation_id)
         if conversation.body.get("activeOperationId") != str(operation.id) or turn.body.get(
             "currentOperationId"
         ) != str(operation.id):
+            saved = await repository.read(user, CHAT, str(operation.id))
+            if saved is not None and _operation(saved, conversation_id).status != "pending":
+                return _view(saved, await _turn(repository, user, operation), conversation_id)
             raise CosmosError(CosmosFailure.INVALID_RESULT, uuid4())
         public_turn = ConversationService._turn(turn, operation.conversation_id)
         messages = public_turn.messages
@@ -272,6 +278,30 @@ class ChatService:
             if record is None or record.body.get("conversationId") != str(conversation_id):
                 raise OwnedResourceNotFound
             return await self._existing(repository, user, record, conversation_id)
+
+    async def close(
+        self, user: AuthenticatedUser, conversation_id: UUID4, operation_id: UUID4
+    ) -> OperationView:
+        """Explicitly close an ended/expired attempt; never invoke or replay generation."""
+        async with open_cosmos(self.settings) as repository:
+            await _owned(repository, user, conversation_id)
+            record = await repository.read(user, CHAT, str(operation_id))
+            if record is None or record.body.get("conversationId") != str(conversation_id):
+                raise OwnedResourceNotFound
+            operation = _operation(record, conversation_id)
+            if operation.status in {"completed", "failed"}:
+                return _view(record, await _turn(repository, user, operation), conversation_id)
+            if operation.status == "pending" and datetime.now(UTC) < operation.expires_at:
+                raise SendConflict
+            return await self._finish(
+                repository,
+                user,
+                record,
+                conversation_id,
+                status="failed",
+                failure="execution_closed",
+                resolve_unknown=True,
+            )
 
     async def send(
         self,

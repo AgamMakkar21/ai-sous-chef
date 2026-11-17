@@ -7,6 +7,10 @@ from azure.core.exceptions import HttpResponseError
 from sous_chef.adapters.foundry_iq import RecipeKnowledgeConfig
 from sous_chef.adapters.readiness import LiveReadinessProbe
 from sous_chef.domain.readiness import DependencyUnavailable
+from sous_chef.orchestrator_definition import (
+    build_orchestrator_definition,
+    orchestrator_source_metadata,
+)
 from sous_chef.recipe_definition import (
     RecipePhase,
     build_recipe_definition,
@@ -50,13 +54,32 @@ def settings() -> Settings:
     )
 
 
+def orchestrator_source() -> AgentVersionDetails:
+    definition = build_orchestrator_definition("orchestrator", "approved-policy")
+    return AgentVersionDetails(
+        {
+            "name": "orchestrator",
+            "version": "2",
+            "status": "active",
+            "draft": False,
+            "definition": definition.as_dict(),
+            "metadata": orchestrator_source_metadata(definition),
+        }
+    )
+
+
 @pytest.mark.parametrize("drift", [False, True])
-def test_combined_readiness_checks_only_the_single_reviewed_specialist_source(drift: bool) -> None:
+@pytest.mark.parametrize("recovery", [False, True])
+def test_combined_readiness_checks_the_reviewed_primary_and_configured_recovery_sources(
+    drift: bool, recovery: bool
+) -> None:
     config = settings().model_copy(
         update={
             "foundry_recipe_nutrition_mode": "combined",
             "foundry_recipe_nutrition_retrieval_agent_version": None,
             "foundry_recipe_nutrition_web_agent_version": None,
+            "foundry_recipe_nutrition_calorie_agent_version": "6" if recovery else None,
+            "foundry_recipe_nutrition_ai_recipe_agent_version": "7" if recovery else None,
         }
     )
     knowledge = RecipeKnowledgeConfig.from_settings(config)
@@ -92,7 +115,23 @@ def test_combined_readiness_checks_only_the_single_reviewed_specialist_source(dr
         agent.instance_identity.client_id = role + "-client"
         details.append(agent)
     project.agents.get = AsyncMock(side_effect=details)
-    project.agents.get_version = AsyncMock(side_effect=[MagicMock(), source])
+    sources = [orchestrator_source(), source]
+    if recovery:
+        for version, phase in (("6", RecipePhase.CALORIE), ("7", RecipePhase.AI_RECIPE)):
+            definition = build_recipe_definition("recipe-nutrition", "approved-policy", phase=phase)
+            sources.append(
+                AgentVersionDetails(
+                    {
+                        "name": "recipe",
+                        "version": version,
+                        "status": "active",
+                        "draft": False,
+                        "definition": definition.as_dict(),
+                        "metadata": recipe_source_metadata(definition, phase),
+                    }
+                )
+            )
+    project.agents.get_version = AsyncMock(side_effect=sources)
     with (
         patch("sous_chef.adapters.readiness.build_async_credential", return_value=credential),
         patch("sous_chef.adapters.readiness.CosmosClient", return_value=cosmos_context),
@@ -103,16 +142,32 @@ def test_combined_readiness_checks_only_the_single_reviewed_specialist_source(dr
                 asyncio.run(LiveReadinessProbe(config).check())
         else:
             asyncio.run(LiveReadinessProbe(config).check())
-    assert project.agents.get_version.await_count == 2
+    assert project.agents.get_version.await_count == (4 if recovery and not drift else 2)
     project.get_openai_client.assert_not_called()
 
 
 @pytest.mark.parametrize(
-    "failure", ["none", "cosmos", "foundry", "shared", "disabled", "pinned", "phase"]
+    "failure",
+    [
+        "none",
+        "cosmos",
+        "foundry",
+        "shared",
+        "disabled",
+        "pinned",
+        "phase",
+        "orchestrator",
+        "ai_recipe",
+    ],
 )
 @pytest.mark.parametrize("session_auth", [False, True])
 def test_live_probe_reads_only_metadata_and_fails_closed(failure: str, session_auth: bool) -> None:
-    config = settings()
+    config = settings().model_copy(
+        update={
+            "foundry_recipe_nutrition_calorie_agent_version": "6",
+            "foundry_recipe_nutrition_ai_recipe_agent_version": "7",
+        }
+    )
     if session_auth:
         config = Settings(
             **(
@@ -148,29 +203,18 @@ def test_live_probe_reads_only_metadata_and_fails_closed(failure: str, session_a
         agent.instance_identity.client_id = role + "-client"
         details.append(agent)
     project.agents.get = AsyncMock(side_effect=details)
-    sources = [
-        AgentVersionDetails(
-            {
-                "name": "orchestrator",
-                "version": "2",
-                "status": "active",
-                "draft": False,
-                "definition": {
-                    "kind": "prompt",
-                    "model": "orchestrator",
-                    "instructions": "approved",
-                },
-                "metadata": {},
-            }
-        )
-    ]
+    sources = [orchestrator_source()]
+    if failure == "orchestrator":
+        sources[0].metadata["asc_contract_sha256"] = "0" * 64
     knowledge = RecipeKnowledgeConfig.from_settings(config)
     for number, phase in zip(
-        ("3", "4", "5"),
+        ("3", "4", "5", "6", "7"),
         (
             RecipePhase.GENERATION,
             RecipePhase.RETRIEVAL,
             RecipePhase.WEB,
+            RecipePhase.CALORIE,
+            RecipePhase.AI_RECIPE,
         ),
         strict=True,
     ):
@@ -185,6 +229,8 @@ def test_live_probe_reads_only_metadata_and_fails_closed(failure: str, session_a
         metadata = recipe_source_metadata(definition, phase)
         if failure == "phase" and phase == RecipePhase.RETRIEVAL:
             metadata["asc_recipe_phase"] = "generation"
+        if failure == "ai_recipe" and phase == RecipePhase.AI_RECIPE:
+            metadata["asc_recipe_phase"] = "calorie"
         sources.append(
             AgentVersionDetails(
                 {
@@ -218,6 +264,8 @@ def test_live_probe_reads_only_metadata_and_fails_closed(failure: str, session_a
                 ("recipe", "3"),
                 ("recipe", "4"),
                 ("recipe", "5"),
+                ("recipe", "6"),
+                ("recipe", "7"),
             ]
         else:
             with pytest.raises(DependencyUnavailable, match="verification failed"):

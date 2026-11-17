@@ -53,6 +53,7 @@ type IngredientNutrientEstimate = {
 };
 export type StructuredRecipe = {
   schemaVersion: 2;
+  generationSource?: "curated_recipe" | "ai_knowledge";
   title: string;
   totalMinutes: number;
   servings: number;
@@ -230,6 +231,9 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
   if (
     !isRecord(value) ||
     value.schemaVersion !== 2 ||
+    (value.generationSource !== undefined &&
+      value.generationSource !== "curated_recipe" &&
+      value.generationSource !== "ai_knowledge") ||
     !text(value.title, 160) ||
     !Number.isInteger(value.servings) ||
     !number(value.servings, 1, 20) ||
@@ -277,14 +281,24 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
         lineId(item.ingredientLineId) &&
         shortText(item.reason),
     ) ||
-    !list(value.sourceIds, 3, referenceId, 1) ||
+    !list(
+      value.sourceIds,
+      3,
+      referenceId,
+      value.generationSource === "ai_knowledge" ? 0 : 1,
+    ) ||
     !list(
       value.sourceClaims,
       10,
       (item): item is StructuredRecipe["sourceClaims"][number] =>
         isRecord(item) && referenceId(item.sourceId) && shortText(item.quote),
     ) ||
-    !list(value.sources, 33, source, 1)
+    !list(
+      value.sources,
+      33,
+      source,
+      value.generationSource === "ai_knowledge" ? 0 : 1,
+    )
   )
     return false;
 
@@ -292,6 +306,14 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
   const sourceIds = value.sourceIds;
   const sources = value.sources;
   const ids = ingredients.map((item) => item.lineId);
+  if (
+    value.generationSource === "ai_knowledge" &&
+    (sourceIds.length ||
+      value.sourceClaims.length ||
+      sources.some((item) => item.kind === "curated_recipe") ||
+      value.webGrounding !== null)
+  )
+    return false;
   if (
     !unique(ids) ||
     !unique(value.sources.map((item) => item.sourceId)) ||

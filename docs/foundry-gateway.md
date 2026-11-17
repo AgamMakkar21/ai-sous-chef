@@ -36,13 +36,20 @@ requires explicit AI-knowledge attribution, a null citation and portion assumpti
 One additional residual-only call is permitted after a valid, progressing partial
 AI response, within the same recovery deadline. Empty or invalid responses stop.
 The backend selects the phase pin; user input cannot select an agent or version.
+An optional, distinct `ai_recipe` pin enables one tool-free AI-knowledge recipe
+composition after unusable MCP retrieval. It uses `ai_recipe_draft_v1`, empty
+recipe source IDs/claims and an explicit unverified-recipe label. It cannot
+recover required current-information requests, authentication failures or
+rejected requests. Nutrition still follows USDA-first lookup and the separate
+tool-free nutrition recovery phase; no nutrition web search is introduced.
 The same tool-free source supports `purpose=usda_selection`: one bounded AI call
 interprets real USDA search candidates, returning only an allowed FDC ID or null
 per ingredient. The backend rejects invented/foreign IDs, extra or duplicate
 lines, tools, citations and unrequested nutrient values. This does not change
 the tool-bound combined/web schemas or permit invocation-time overrides.
 Combined mode pins `ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION` and
-`ASC_FOUNDRY_RECIPE_NUTRITION_CALORIE_AGENT_VERSION`; stale legacy
+`ASC_FOUNDRY_RECIPE_NUTRITION_CALORIE_AGENT_VERSION`, and optionally
+`ASC_FOUNDRY_RECIPE_NUTRITION_AI_RECIPE_AGENT_VERSION`; stale legacy
 retrieval/web settings are not used. Web queries and citations are validated
 after native execution; this mode does not guarantee pre-search privacy isolation.
 See [combined boundaries](recipe-specialist.md#combined-recipe-agent-with-native-web-search).
@@ -72,6 +79,7 @@ Gateway construction requires `ASC_ADAPTER_MODE=live` and these values:
 | `ASC_FOUNDRY_RECIPE_NUTRITION_RETRIEVAL_AGENT_VERSION` | Required only in phased mode |
 | `ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION` | Required only in phased mode |
 | `ASC_FOUNDRY_RECIPE_NUTRITION_CALORIE_AGENT_VERSION` | Separate tool-free recovery source; required by version-5 combined releases |
+| `ASC_FOUNDRY_RECIPE_NUTRITION_AI_RECIPE_AGENT_VERSION` | Optional tool-free recipe composition source; required by version-7 combined releases; distinct from every other specialist phase |
 | `ASC_FOUNDRY_INVOCATION_TIMEOUT_SECONDS` | Positive finite total deadline, at most 120 seconds; default 60 |
 | `AZURE_CLIENT_ID` | Required in dev/prod: App Service user-assigned managed identity client ID |
 
@@ -81,9 +89,11 @@ silently upgraded at invocation time.
 In phased mode the three specialist versions must differ. Live readiness reads all three pins
 and verifies their current source fingerprints, policy/phase metadata, exact
 tool configuration and output schemas without invoking a model.
-Combined readiness instead reads the single specialist pin and verifies its
-policy-11 definition, both tools, combined output schema and fingerprint. Merely
+Combined readiness reads the primary specialist pin and every configured
+tool-free recovery pin, verifying each exact phase, schema and fingerprint.
+The primary definition must retain both tools and its combined output schema. Merely
 adding web search to a policy-5 retrieval source cannot pass those checks.
+Readiness also verifies the pinned Orchestrator definition and policy receipt.
 
 ASC-25 additionally exposes `coordinate()` for the Orchestrator's strict
 `recipe_specialist` function handoff. Unlike the original text-only `invoke()`,
@@ -93,7 +103,7 @@ pins. It is stateless and records safe pinned identity attribution. See
 [Orchestrator policy, bounds and source publication](orchestrator.md); it does not
 wire live recipe chat or change the existing `invoke()` contract.
 
-The [staged dev release](dev-delivery.md#release-stages) currently sets
+An [app-only release](dev-delivery.md#release-stages) sets
 `ASC_AGENTS_ENABLED=false` from its reviewed manifest. It deploys the backend
 without publishing agents or probing Foundry agent metadata; Cosmos and
 authentication checks remain required. The gateway refuses invocation rather
@@ -167,15 +177,16 @@ Do not serialize the raw SDK exception, service body or traceback to a user.
 
 The total async deadline covers credential/client setup, the network operation
 and response handling. Both Azure SDK and OpenAI automatic retries are disabled.
-No invocation is automatically replayed, even for throttling or an ambiguous
-connection failure. Any future retries require a proven safe/idempotent operation
-and backend operation-state handling.
+No failed invocation is automatically replayed. When explicitly configured,
+recipe recovery is a separately budgeted invocation of the tool-free `ai_recipe`
+source, not another attempt at the failed MCP/native-web invocation. It receives
+the original authorized context, never the failed source's snippets.
 
 Cancel the awaiting task to cancel local in-flight work. `asyncio.CancelledError`
 propagates unchanged, clients/credentials close, and no replacement run starts.
 Cancellation or timeout does **not** prove that a remote agent stopped or never
-started; do not blindly resend. Remote run lifecycle/reconciliation belongs to
-the later chat integration.
+started; do not blindly resend. The [chat operation fence](conversations.md#failure-and-explicit-retry)
+and explicit close action prevent late output from overwriting a newer attempt.
 
 Known failures log only an allowlisted category, operation correlation and
 duration; cancellation and success have separate events. Programming errors are

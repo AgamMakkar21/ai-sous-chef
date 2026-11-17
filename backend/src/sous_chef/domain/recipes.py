@@ -143,6 +143,11 @@ class RecipeIngredient(DraftIngredient):
     grocery_ids: tuple[UUID, ...] = Field(max_length=200)
 
 
+class AiRecipeDraft(RecipeDraft):
+    source_ids: tuple[ReferenceId, ...] = Field(max_length=0)
+    source_claims: tuple[RecipeSourceClaim, ...] = Field(max_length=0, repr=False)
+
+
 class ShoppingItem(RecipeModel):
     ingredient_line_id: LineId
     quantity: MeasuredQuantity | None
@@ -601,7 +606,9 @@ class StructuredRecipe(RecipeDraft):
     ingredients: tuple[RecipeIngredient, ...] = Field(min_length=1, max_length=30, repr=False)
     shopping_items: tuple[ShoppingItem, ...] = Field(max_length=30, repr=False)
     nutrition: RecipeNutrition = Field(repr=False)
-    sources: tuple[RecipeSource, ...] = Field(min_length=1, max_length=33)
+    generation_source: Literal["curated_recipe", "ai_knowledge"] = "curated_recipe"
+    source_ids: tuple[ReferenceId, ...] = Field(max_length=3)
+    sources: tuple[RecipeSource, ...] = Field(max_length=33)
     web_grounding: WebGrounding | None = Field(repr=False)
 
     @model_validator(mode="after")
@@ -611,6 +618,11 @@ class StructuredRecipe(RecipeDraft):
         shopping = [item.ingredient_line_id for item in self.shopping_items]
         recipe_sources = tuple(source for source in self.sources if source.kind == "curated_recipe")
         nutrition_sources = tuple(source for source in self.sources if source.kind == "usda")
+        if self.generation_source == "ai_knowledge":
+            if self.source_ids or self.source_claims or recipe_sources or self.web_grounding:
+                raise ValueError("AI-knowledge recipes cannot claim retrieved recipe evidence.")
+        elif not self.source_ids:
+            raise ValueError("Curated recipes require actual retrieved recipe sources.")
         if (
             set(shopping) != missing
             or len(shopping) != len(missing)
@@ -696,6 +708,10 @@ class GroundedRecipeGenerationRequest(RecipeGenerationRequest):
     retrieval_query: str = Field(min_length=1, max_length=2000, repr=False)
 
 
+class AiRecipeGenerationRequest(RecipeGenerationRequest):
+    pass
+
+
 class CombinedRecipeGenerationRequest(GroundedRecipeGenerationRequest):
     web_query: str | None = Field(min_length=1, max_length=240, default=None, repr=False)
     allow_empty_web: bool = False
@@ -779,6 +795,13 @@ class CombinedRecipeGenerator(Protocol):
         self,
         request: CombinedRecipeGenerationRequest,
     ) -> tuple[RecipeDraft, RecipeGrounding, WebGrounding | None, TokenUsage]: ...
+
+
+@runtime_checkable
+class RecipeRecoveryGenerator(Protocol):
+    async def generate_ai_recipe(
+        self, request: AiRecipeGenerationRequest
+    ) -> tuple[AiRecipeDraft, TokenUsage]: ...
 
 
 class NutritionTool(Protocol):

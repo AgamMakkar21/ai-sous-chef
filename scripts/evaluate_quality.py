@@ -107,6 +107,8 @@ def configured_agents(settings: Settings) -> dict[str, Any]:
             "generation": settings.foundry_recipe_nutrition_agent_version,
             "retrieval": settings.foundry_recipe_nutrition_retrieval_agent_version,
             "web": settings.foundry_recipe_nutrition_web_agent_version,
+            "calorie": settings.foundry_recipe_nutrition_calorie_agent_version,
+            "ai_recipe": settings.foundry_recipe_nutrition_ai_recipe_agent_version,
         },
     }
 

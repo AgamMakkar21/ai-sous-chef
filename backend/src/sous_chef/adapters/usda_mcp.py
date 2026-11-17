@@ -205,7 +205,7 @@ class UsdaMcpSession:
 
     @observed(Operation.USDA_SEARCH)
     async def search(self, name: str, *, agent_selection: bool = False) -> UsdaFoodSearch:
-        if not name.strip() or len(name) > 100 or any(c in name for c in "%_\x00\r\n"):
+        if not name.strip() or len(name) > 100 or any(c in name for c in "\x00\r\n"):
             raise RecipeToolError(FoundryFailure.REJECTED)
         result = _SEARCH.validate_json(
             await self._call(

@@ -6,7 +6,13 @@ from azure.ai.projects.models import MCPTool, PromptAgentDefinition
 from sous_chef import publish_orchestrator
 from sous_chef.adapters.foundry_gateway import FoundryGateway
 from sous_chef.domain.agent_identity import AgentRole
-from sous_chef.domain.recipes import CombinedRecipeOutput, RecipeDraft, RecoveryDraft, WebDraft
+from sous_chef.domain.recipes import (
+    AiRecipeDraft,
+    CombinedRecipeOutput,
+    RecipeDraft,
+    RecoveryDraft,
+    WebDraft,
+)
 from sous_chef.publish_orchestrator import prepare_agent_source
 from sous_chef.recipe_definition import RecipePhase, verify_recipe_source
 from sous_chef.settings import ConfigurationError
@@ -26,6 +32,8 @@ def test_persisted_phase_has_only_its_capabilities_and_strict_output(phase: Reci
         if phase == RecipePhase.WEB
         else "5"
         if phase == RecipePhase.CALORIE
+        else "1"
+        if phase == RecipePhase.AI_RECIPE
         else "9"
     )
     assert definition["text"]["format"]["strict"] is True
@@ -34,6 +42,8 @@ def test_persisted_phase_has_only_its_capabilities_and_strict_output(phase: Reci
         if phase == RecipePhase.COMBINED
         else RecoveryDraft
         if phase == RecipePhase.CALORIE
+        else AiRecipeDraft
+        if phase == RecipePhase.AI_RECIPE
         else WebDraft
         if phase == RecipePhase.WEB
         else RecipeDraft
@@ -41,17 +51,20 @@ def test_persisted_phase_has_only_its_capabilities_and_strict_output(phase: Reci
     schema = definition["text"]["format"]["schema"]
     assert schema == expected_schema.model_json_schema(
         mode="serialization"
-        if phase in (RecipePhase.COMBINED, RecipePhase.WEB, RecipePhase.CALORIE)
+        if phase
+        in (RecipePhase.COMBINED, RecipePhase.WEB, RecipePhase.CALORIE, RecipePhase.AI_RECIPE)
         else "validation"
     )
-    if phase in (RecipePhase.COMBINED, RecipePhase.WEB, RecipePhase.CALORIE):
+    if phase in (RecipePhase.COMBINED, RecipePhase.WEB, RecipePhase.CALORIE, RecipePhase.AI_RECIPE):
         objects = [schema, *schema["$defs"].values()]
         for item in objects:
             if item.get("type") == "object":
                 assert set(item["required"]) == set(item["properties"])
                 assert item["additionalProperties"] is False
     assert definition["tool_choice"] == (
-        "none" if phase in (RecipePhase.GENERATION, RecipePhase.CALORIE) else "required"
+        "none"
+        if phase in (RecipePhase.GENERATION, RecipePhase.CALORIE, RecipePhase.AI_RECIPE)
+        else "required"
     )
     expected_type = {
         RecipePhase.GENERATION: [],
@@ -59,6 +72,7 @@ def test_persisted_phase_has_only_its_capabilities_and_strict_output(phase: Reci
         RecipePhase.WEB: ["web_search"],
         RecipePhase.COMBINED: ["mcp", "web_search"],
         RecipePhase.CALORIE: [],
+        RecipePhase.AI_RECIPE: [],
     }[phase]
     assert [tool["type"] for tool in definition["tools"]] == expected_type
     tool = None

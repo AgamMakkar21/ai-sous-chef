@@ -1,5 +1,5 @@
 {
   "schema_version": 1,
-  "data_contract": 1,
+  "data_contract": 2,
   "rollback_safe": true
 }

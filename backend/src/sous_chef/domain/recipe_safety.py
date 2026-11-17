@@ -24,6 +24,10 @@ HANDLING_NOTICE = (
     "separate from ready-to-eat foods. Refrigerate perishables in shallow containers within "
     "2 hours (1 hour above 90 F); keep the refrigerator at 40 F or below."
 )
+AI_RECIPE_NOTICE = (
+    "AI-knowledge recipe: recipe sources were unavailable. "
+    "This recipe is not externally verified; nutrition sources are listed separately."
+)
 
 
 class RecipeSafetyFailure(StrEnum):
@@ -74,6 +78,8 @@ def render_recipe(recipe: StructuredRecipe) -> str:
         f"{recipe.title}\n{recipe.servings} servings; {recipe.total_minutes} minutes.\n\n"
         f"Ingredients\n{ingredients}\n\nInstructions\n{steps}\n\n{HANDLING_NOTICE}"
     )
+    if recipe.generation_source == "ai_knowledge":
+        text = f"{AI_RECIPE_NOTICE}\n\n{text}"
     if any(item.source != "usda_mcp" for item in recipe.nutrition.ingredient_calories):
         energy = next(item for item in recipe.nutrition.nutrients if item.name == "energy")
         labels = {"web_iq": "Grounding with Bing", "ai_knowledge": "AI knowledge"}
@@ -105,5 +111,10 @@ def render_recipe(recipe: StructuredRecipe) -> str:
         if len(text) + len(summary) <= 4000:
             text += summary
     if len(text) > 4000:
-        _reject(RecipeSafetyFailure.STRUCTURE)
+        text = (
+            (f"{AI_RECIPE_NOTICE}\n\n" if recipe.generation_source == "ai_knowledge" else "")
+            + f"{recipe.title}\n{recipe.servings} servings; {recipe.total_minutes} minutes.\n\n"
+            "See the recipe card for the complete ingredients, instructions, nutrition "
+            f"and sources.\n\n{HANDLING_NOTICE}"
+        )
     return text

@@ -68,6 +68,44 @@ def test_agents_can_search_then_select_a_real_candidate_with_original_source_id(
     asyncio.run(check())
 
 
+@pytest.mark.parametrize(
+    "name", ["plain Greek yogurt, 2% fat", "ground beef, 85% lean", "milk, 1% fat"]
+)
+def test_percentage_food_names_reach_mcp_unchanged(name: str, tmp_path: Path) -> None:
+    log = tmp_path / "percentage-food.jsonl"
+
+    async def check() -> None:
+        async with open_usda(config(log=log), deadline=monotonic() + 10) as session:
+            found = await session.search(name, agent_selection=True)
+            assert not found.foods
+
+    asyncio.run(check())
+    arguments = [
+        message["params"]["arguments"]
+        for message in map(json.loads, log.read_text().splitlines())
+        if message["method"] == "tools/call"
+    ]
+    assert arguments == [{"keyword": name, "limit": 20, "agent_selection": True}]
+
+
+def test_chat_uses_source_backed_volume_portions_in_selection_mode() -> None:
+    payload = NutritionRequest(
+        servings=1,
+        ingredients=(ingredient(quantity=1, unit="cup"),),
+        selected_food_ids={"rice": "99901"},
+        allow_estimates=True,
+        require_selection=True,
+    )
+    evidence = asyncio.run(
+        UsdaNutritionTool(config("volume_portion")).lookup(payload, deadline=monotonic() + 10)
+    )
+    assert evidence.status == "known" and not evidence.unknown_components
+    assert evidence.mappings[0].weight_grams == 158
+    assert "USDA" in (evidence.mappings[0].conversion_basis or "")
+    assert evidence.nutrients[0].amount == 316
+    assert not evidence.nutrient_estimates
+
+
 def test_unambiguous_reordered_words_resolve_without_choosing_a_different_food_form() -> None:
     tool = UsdaNutritionTool(config("reordered"))
     known = asyncio.run(tool.lookup(request(ingredient("raw rice")), deadline=monotonic() + 10))

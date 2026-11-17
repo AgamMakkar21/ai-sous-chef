@@ -225,7 +225,7 @@ class FoodDataCentral:
             or not agent_selection
             and not words
             or len(keyword) > 100
-            or any(c in keyword for c in "%_\x00\r\n")
+            or any(c in keyword for c in "\x00\r\n")
             or not 1 <= limit <= 20
         ):
             raise FdcError("rejected")

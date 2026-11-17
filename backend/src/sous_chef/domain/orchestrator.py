@@ -14,7 +14,7 @@ from sous_chef.domain.recipes import StructuredRecipe
 
 @dataclass(frozen=True)
 class OrchestratorPolicy:
-    version: int = 12
+    version: int = 13
     max_model_calls: int = 4
     max_calorie_fallback_calls: int = 1
     max_calorie_model_calls: int = 2
@@ -24,6 +24,8 @@ class OrchestratorPolicy:
     max_web_calls: int = 1
     web_deadline_seconds: float = 10
     calorie_deadline_seconds: float = 60
+    recipe_grounding_deadline_seconds: float = 45
+    recipe_recovery_deadline_seconds: float = 30
     deadline_seconds: int = 120
 
 
@@ -49,6 +51,20 @@ class RecipeAllergyError(FoundryGatewayError):
 
     def __init__(self, request: FoundryRequest, usage: TokenUsage) -> None:
         self.usage = usage
+        super().__init__(FoundryFailure.REJECTED, request)
+
+
+class RecipeFitError(FoundryGatewayError):
+    """A completed draft needs a time or skill correction, not a generation replay."""
+
+    def __init__(
+        self,
+        request: FoundryRequest,
+        usage: TokenUsage,
+        status: Literal["time_rejected", "skill_rejected"],
+    ) -> None:
+        self.usage = usage
+        self.status = status
         super().__init__(FoundryFailure.REJECTED, request)
 
 
@@ -197,6 +213,10 @@ class Coordinator(Protocol):
 
 
 class SpecialistBudget(Protocol):
+    def can_search_web(self) -> bool:
+        """Check optional search headroom without consuming required recipe-tool slots."""
+        ...
+
     def reserve_nutrition_recovery(self) -> None:
         """Reserve one bounded tool-free nutrition workflow without authorizing search."""
         ...
@@ -205,7 +225,13 @@ class SpecialistBudget(Protocol):
         """Check the deadline and reservation; leave token limits to the provider."""
         ...
 
-    def model(self, *, calorie_fallback: bool = False, usda_selection: bool = False) -> None:
+    def model(
+        self,
+        *,
+        calorie_fallback: bool = False,
+        usda_selection: bool = False,
+        recipe_recovery: bool = False,
+    ) -> None:
         """Reserve any additional model invocation before executing it."""
         ...
 

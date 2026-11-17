@@ -132,6 +132,37 @@ async function open(page: Page) {
 const card = (page: Page) =>
   page.getByRole("region", { name: "Simple carrot rice", exact: true });
 
+test("AI recipe attribution survives history reload without claiming curated evidence", async ({
+  page,
+}) => {
+  const turn = recipeTurn();
+  const recipe = turn.recipe!;
+  const curated = recipe.sources.find(
+    (source) => source.kind === "curated_recipe",
+  )!;
+  recipe.generationSource = "ai_knowledge";
+  recipe.sourceIds = [];
+  recipe.sourceClaims = [];
+  recipe.sources = recipe.sources.filter(
+    (source) => source.kind !== "curated_recipe",
+  );
+  recipe.webGrounding = null;
+  expect(isStructuredRecipe(recipe)).toBe(true);
+  const falseAttribution = structuredClone(recipe);
+  falseAttribution.sourceIds = [curated.sourceId];
+  falseAttribution.sources.push(curated);
+  expect(isStructuredRecipe(falseAttribution)).toBe(false);
+  await recipeBackend(page, [turn]);
+  await open(page);
+  await expect(card(page)).toContainText("AI-knowledge recipe");
+  await expect(card(page)).toContainText("not externally verified");
+  await page.reload();
+  await expect(card(page)).toContainText("AI-knowledge recipe");
+  await expect(
+    card(page).getByRole("link", { name: /USDA/i }).first(),
+  ).toBeVisible();
+});
+
 for (const backup of ["web_iq", "ai_knowledge"] as const) {
   test(`${backup} fills missing nutrients alongside USDA ingredient breakdowns`, async ({
     page,
@@ -251,7 +282,10 @@ test("thirty ingredients retain disjoint web, AI and residual repair nutrient re
   const n = recipe.nutrition;
   n.mappings = [];
   n.sources = [];
-  recipe.sources = recipe.sources.filter((source) => source.kind !== "usda");
+  recipe.generationSource = "ai_knowledge";
+  recipe.sourceIds = [];
+  recipe.sourceClaims = [];
+  recipe.sources = [];
   n.ingredientCalories = ids.map((ingredientLineId) => ({
     ingredientLineId,
     amount: 10,

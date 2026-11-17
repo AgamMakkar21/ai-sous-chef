@@ -41,6 +41,7 @@ class RecipeChatExecutor:
             None,
             nutrition,
             combined=settings.foundry_recipe_nutrition_mode == "combined",
+            allow_ai_recipes=settings.foundry_recipe_nutrition_ai_recipe_agent_version is not None,
         )
         assert settings.foundry_orchestrator_agent_name is not None
         return cls(

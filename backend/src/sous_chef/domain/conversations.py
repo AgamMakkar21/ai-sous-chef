@@ -5,6 +5,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import (
     UUID4,
+    AliasChoices,
     AwareDatetime,
     BaseModel,
     ConfigDict,
@@ -83,6 +84,9 @@ class ConversationTurn(ConversationModel):
     conversation_id: UUID4
     turn_index: int = Field(ge=0, strict=True)
     status: Literal["pending", "completed", "failed", "outcomeUnknown"]
+    operation_id: UUID4 | None = Field(
+        default=None, validation_alias=AliasChoices("operationId", "currentOperationId")
+    )
     messages: tuple[TurnMessage, ...] = Field(min_length=1, max_length=2, repr=False)
     created_at: AwareDatetime
     updated_at: AwareDatetime

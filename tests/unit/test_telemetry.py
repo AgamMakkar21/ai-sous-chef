@@ -5,7 +5,13 @@ import pytest
 from fastapi.testclient import TestClient
 from opentelemetry import trace
 from sous_chef.settings import ConfigurationError
-from sous_chef.telemetry import Event, configure_safe_telemetry, operational_event, trace_id
+from sous_chef.telemetry import (
+    Event,
+    GroundingStage,
+    configure_safe_telemetry,
+    operational_event,
+    trace_id,
+)
 
 
 def test_preinitialized_tracing_blocks_startup(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -46,6 +52,22 @@ def test_invalid_log_status_is_rejected(status: int) -> None:
 def test_invalid_log_duration_is_rejected(duration: float) -> None:
     with pytest.raises(ValueError, match="duration"):
         operational_event(Event.REQUEST_COMPLETED, duration_ms=duration)
+
+
+@pytest.mark.parametrize(
+    ("event", "stage"),
+    [
+        (Event.RECIPE_GROUNDING_FAILED, "PRIVATE_CANARY"),
+        (Event.RECIPE_GROUNDING_FAILED, None),
+        (Event.REQUEST_FAILED, "output_json"),
+    ],
+)
+def test_grounding_diagnostics_cannot_log_arbitrary_content(
+    event: Event, stage: GroundingStage | None, caplog: pytest.LogCaptureFixture
+) -> None:
+    with pytest.raises(ValueError, match="stage"):
+        operational_event(event, grounding_stage=stage)
+    assert "PRIVATE_CANARY" not in caplog.text
 
 
 def test_request_context_is_reset_after_requests(client: TestClient) -> None:

@@ -20,6 +20,8 @@ from sous_chef.domain.groceries import GroceryRow
 from sous_chef.domain.nutrition import UsdaFoodSearch
 from sous_chef.domain.orchestrator import (
     POLICY,
+    CoordinationRequest,
+    CoordinationStep,
     OrchestratorError,
     OrchestratorFailure,
     SpecialistArguments,
@@ -27,6 +29,8 @@ from sous_chef.domain.orchestrator import (
     TokenUsage,
 )
 from sous_chef.domain.recipes import (
+    IngredientNutrientEstimate,
+    NutrientGroundingRequest,
     NutritionEvidence,
     NutritionRequest,
     RecipeDraft,
@@ -681,14 +685,69 @@ def test_tool_failures_are_explicit_and_never_retried(failure: FoundryFailure) -
     assert len(tools.queries) == 1 and not transport.requests
 
 
-def test_orchestrator_preserves_full_recipe_but_reviews_only_bounded_projection() -> None:
+def test_orchestrator_delivers_validated_recipe_without_a_redundant_final_model_call() -> None:
     service, _, _ = setup()
     coordinator = Coordinator(call(), answer())
     result = asyncio.run(OrchestratorService(coordinator, service).run(cooking_context()))
     assert result.recipe is not None and result.candidate is not None
     assert result.recipe.title == result.candidate.title
     assert result.status == "candidate"
-    assert "nutrition" not in json.loads(coordinator.requests[1].tool_output or "")["candidate"]
+    assert len(coordinator.requests) == 1
+
+
+def test_complete_six_nutrient_recipe_is_delivered_near_the_operation_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sous_chef.services import orchestrator, recipe_specialist
+    from sous_chef.services.nutrition import UsdaNutritionTool
+    from test_usda_nutrition import config
+
+    service, tools, _ = setup()
+    draft = RecipeDraft.model_validate_json(json.dumps(FIXTURE["draft"]))
+    tools.evidence = asyncio.run(
+        UsdaNutritionTool(config("no_food")).lookup(
+            NutritionRequest(servings=draft.servings, ingredients=draft.ingredients),
+            deadline=monotonic() + 10,
+        )
+    )
+    started = float(ceil(monotonic()))
+    clock = started
+    monkeypatch.setattr(orchestrator, "monotonic", lambda: clock)
+    monkeypatch.setattr(recipe_specialist, "monotonic", lambda: clock)
+    lookup = tools.lookup
+    estimate = service._generator.estimate_nutrients
+    coordinator = Coordinator(call(), answer())
+    coordinate = coordinator.coordinate
+
+    async def slow_lookup(request: NutritionRequest, *, deadline: float) -> NutritionEvidence:
+        nonlocal clock
+        result = await lookup(request, deadline=deadline)
+        clock += 58.5
+        return result
+
+    async def slow_estimate(
+        request: NutrientGroundingRequest,
+    ) -> tuple[tuple[IngredientNutrientEstimate, ...], TokenUsage]:
+        nonlocal clock
+        result = await estimate(request)
+        clock += 59
+        return result
+
+    async def redundant_review(request: CoordinationRequest) -> CoordinationStep:
+        nonlocal clock
+        result = await coordinate(request)
+        if len(coordinator.requests) > 1:
+            clock += 3
+        return result
+
+    monkeypatch.setattr(tools, "lookup", slow_lookup)
+    monkeypatch.setattr(service._generator, "estimate_nutrients", slow_estimate)
+    monkeypatch.setattr(coordinator, "coordinate", redundant_review)
+    result = asyncio.run(OrchestratorService(coordinator, service).run(cooking_context()))
+    assert result.recipe is not None and result.recipe.nutrition.status == "known"
+    assert len(result.recipe.nutrition.nutrients) == 6
+    assert clock - started == 117.5
+    assert len(coordinator.requests) == 1
 
 
 def test_last_allowed_revision_preserves_the_full_recipe() -> None:
@@ -696,6 +755,38 @@ def test_last_allowed_revision_preserves_the_full_recipe() -> None:
     coordinator = Coordinator(call(), call(call_id="revision"))
     result = asyncio.run(OrchestratorService(coordinator, service).run(cooking_context()))
     assert result.status == "candidate" and result.recipe is not None
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "status"),
+    [
+        ("total_minutes", 31, "time_rejected"),
+        ("skill", "intermediate", "skill_rejected"),
+    ],
+)
+def test_real_specialist_time_and_skill_rejections_reach_the_correction_loop(
+    field: str, value: str | int, status: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, tools, transport = setup()
+    gateway = service._generator
+    original = gateway.generate_recipe
+    generations = 0
+
+    async def generate(request: RecipeGenerationRequest) -> tuple[RecipeDraft, TokenUsage]:
+        nonlocal generations
+        draft, usage = await original(request)
+        generations += 1
+        return (draft.model_copy(update={field: value}) if generations == 1 else draft), usage
+
+    monkeypatch.setattr(gateway, "generate_recipe", generate)
+    coordinator = Coordinator(call(), call(call_id="correction"))
+    result = asyncio.run(OrchestratorService(coordinator, service).run(cooking_context()))
+    assert result.status == "candidate" and result.recipe is not None
+    assert generations == len(transport.requests) == 2
+    assert len(tools.nutrition_requests) == 1
+    feedback = json.loads(coordinator.requests[1].tool_output or "")
+    assert feedback["status"] == status
+    assert result.recipe.total_minutes <= 30 and result.recipe.skill == "beginner"
 
 
 def test_source_definition_uses_reviewed_safety_policy_and_strict_schema() -> None:

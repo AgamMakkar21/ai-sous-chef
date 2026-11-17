@@ -49,6 +49,8 @@ from sous_chef.domain.orchestrator import (
     TokenUsage,
 )
 from sous_chef.domain.recipes import (
+    AiRecipeDraft,
+    AiRecipeGenerationRequest,
     CalorieEstimate,
     CalorieGroundingRequest,
     CombinedRecipeDraft,
@@ -196,6 +198,11 @@ class FoundryGateway:
                 settings.foundry_recipe_nutrition_agent_name,
                 settings.foundry_recipe_nutrition_calorie_agent_version,
             )
+        if settings.foundry_recipe_nutrition_ai_recipe_agent_version is not None:
+            self._recipe_targets[RecipePhase.AI_RECIPE] = AgentTarget(
+                settings.foundry_recipe_nutrition_agent_name,
+                settings.foundry_recipe_nutrition_ai_recipe_agent_version,
+            )
         if settings.foundry_recipe_nutrition_mode == "phased":
             assert settings.foundry_recipe_nutrition_retrieval_agent_version is not None
             assert settings.foundry_recipe_nutrition_web_agent_version is not None
@@ -264,6 +271,16 @@ class FoundryGateway:
         self._require_agent_pins()
         return await self._execute(request, self._combined_recipe_result)
 
+    async def generate_ai_recipe(
+        self, request: AiRecipeGenerationRequest
+    ) -> tuple[AiRecipeDraft, TokenUsage]:
+        self._require_agent_pins()
+        if RecipePhase.AI_RECIPE not in self._recipe_targets:
+            raise FoundryGatewayError(FoundryFailure.UNAVAILABLE, request)
+        draft, usage = await self._execute(request, self._recipe_result)
+        assert isinstance(draft, AiRecipeDraft)
+        return draft, usage
+
     async def ground_web(
         self, request: WebGroundingRequest
     ) -> tuple[WebGrounding | None, TokenUsage]:
@@ -303,7 +320,9 @@ class FoundryGateway:
         coordination: CoordinationRequest | None = None,
     ) -> Result:
         target = (
-            self._recipe_targets[RecipePhase.CALORIE]
+            self._recipe_targets[RecipePhase.AI_RECIPE]
+            if isinstance(request, AiRecipeGenerationRequest)
+            else self._recipe_targets[RecipePhase.CALORIE]
             if isinstance(request, CalorieGroundingRequest) and not request.use_web
             else self._recipe_targets[RecipePhase.COMBINED]
             if isinstance(request, CombinedRecipeGenerationRequest)
@@ -331,7 +350,9 @@ class FoundryGateway:
             span.set_attribute("gen_ai.request.model", model)
         span.set_attribute(
             "asc.foundry.phase",
-            "combined"
+            "ai_recipe"
+            if isinstance(request, AiRecipeGenerationRequest)
+            else "combined"
             if isinstance(request, CombinedRecipeGenerationRequest)
             else "web"
             if isinstance(request, WebGroundingRequest)
@@ -699,6 +720,10 @@ class FoundryGateway:
                 or actions[0].status != "completed"
                 or len(actions[0].content) != 1
                 or actions[0].content[0].type != "output_text"
+                or (
+                    isinstance(request, AiRecipeGenerationRequest)
+                    and actions[0].content[0].annotations
+                )
             ):
                 raise ValueError
             payload = json.loads(response.output_text)
@@ -737,7 +762,9 @@ class FoundryGateway:
                     operational_event(Event.RECIPE_ATTRIBUTION_NORMALIZED)
                 payload.update(sourceIds=list(sources), sourceClaims=verified)
             model = (
-                CombinedRecipeDraft
+                AiRecipeDraft
+                if isinstance(request, AiRecipeGenerationRequest)
+                else CombinedRecipeDraft
                 if isinstance(request, CombinedRecipeGenerationRequest)
                 else RecipeDraft
             )
@@ -746,11 +773,15 @@ class FoundryGateway:
                 TokenUsage(input_tokens=usage.input_tokens, output_tokens=usage.output_tokens),
             )
         except ValueError:
+            operational_event(
+                Event.RECIPE_DRAFT_REJECTED, category=ErrorCategory.FOUNDRY_INVALID_RESULT
+            )
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request) from None
 
     def _recipe_grounding(self, request: FoundryRequest, response: Response) -> RecipeGrounding:
         from sous_chef.recipe_definition import RECIPE_KNOWLEDGE_LABEL, RECIPE_KNOWLEDGE_TOOL
         from sous_chef.services.recipe_grounding import (
+            McpGroundingError,
             parse_mcp_grounding,
             recipe_knowledge_arguments,
         )
@@ -770,6 +801,11 @@ class FoundryGateway:
                 for item in listings
             )
         ):
+            operational_event(
+                Event.RECIPE_GROUNDING_FAILED,
+                category=ErrorCategory.FOUNDRY_INVALID_RESULT,
+                grounding_stage="mcp_envelope",
+            )
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
         knowledge = RecipeKnowledgeConfig.from_settings(self._settings)
         try:
@@ -779,15 +815,30 @@ class FoundryGateway:
                 max_tool_result_tokens=knowledge.mcp_max_context_tokens,
             )
         except ValueError:
+            operational_event(
+                Event.RECIPE_GROUNDING_FAILED,
+                category=ErrorCategory.FOUNDRY_INVALID_RESULT,
+                grounding_stage="output_size",
+            )
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request) from None
         call = calls[0]
         if call.server_label != RECIPE_KNOWLEDGE_LABEL or call.name != RECIPE_KNOWLEDGE_TOOL:
+            operational_event(
+                Event.RECIPE_GROUNDING_FAILED,
+                category=ErrorCategory.FOUNDRY_INVALID_RESULT,
+                grounding_stage="mcp_envelope",
+            )
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
         if call.error is not None:
             code = (
                 self._http_failure(call.error.code)
                 if call.error.type == "http_error"
                 else FoundryFailure.UNAVAILABLE
+            )
+            operational_event(
+                Event.RECIPE_GROUNDING_FAILED,
+                category=ErrorCategory(code.value),
+                grounding_stage="mcp_tool_error",
             )
             raise FoundryGatewayError(code, request)
         try:
@@ -796,14 +847,32 @@ class FoundryGateway:
             ):
                 raise ValueError
         except ValueError:
+            operational_event(
+                Event.RECIPE_GROUNDING_FAILED,
+                category=ErrorCategory.FOUNDRY_INVALID_RESULT,
+                grounding_stage="tool_arguments",
+            )
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request) from None
-        grounding = parse_mcp_grounding(
-            call.output,
-            max_results=knowledge.max_results,
-            max_context_tokens=knowledge.mcp_max_context_tokens,
-            max_output_characters=knowledge.mcp_max_output_characters,
-        )
+        try:
+            grounding = parse_mcp_grounding(
+                call.output,
+                max_results=knowledge.max_results,
+                max_context_tokens=knowledge.mcp_max_context_tokens,
+                max_output_characters=knowledge.mcp_max_output_characters,
+            )
+        except McpGroundingError as error:
+            operational_event(
+                Event.RECIPE_GROUNDING_FAILED,
+                category=ErrorCategory(error.code.value),
+                grounding_stage=error.stage,
+            )
+            raise
         if grounding.status == "empty":
+            operational_event(
+                Event.RECIPE_GROUNDING_FAILED,
+                category=ErrorCategory.FOUNDRY_NO_RESULTS,
+                grounding_stage="empty",
+            )
             raise FoundryGatewayError(FoundryFailure.NO_RESULTS, request)
         return grounding
 
@@ -886,6 +955,9 @@ class FoundryGateway:
             draft = RecipeDraft.model_validate(combined.model_dump(exclude={"web_claims"}))
             return draft, grounding, web, usage
         except ValueError:
+            operational_event(
+                Event.RECIPE_WEB_REJECTED, category=ErrorCategory.FOUNDRY_INVALID_RESULT
+            )
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request) from None
 
     @staticmethod
@@ -994,6 +1066,9 @@ class FoundryGateway:
                 for part in item.content
             )
         ):
+            operational_event(
+                Event.FOUNDRY_RESPONSE_REJECTED, category=ErrorCategory.FOUNDRY_INVALID_RESULT
+            )
             raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
 
     @staticmethod

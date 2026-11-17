@@ -461,6 +461,7 @@ def test_release_smoke_requires_complete_tool_free_recovery(
         ] == [
             "Give me a recipe for a yogurt bowl.",
             "Give me a recipe for a chicken dinner.",
+            "Make rice and beans using 1 cup dry rice and 1 can black beans.",
         ]
     else:
         with pytest.raises(deploy_dev.DeliveryError):
@@ -1276,7 +1277,7 @@ def test_vague_quantity_uses_one_minimized_native_search_then_real_usda_mcp() ->
     result = asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
     assert result.status == "candidate" and result.recipe is not None
     recipe = result.recipe
-    assert len(harness.requests) == 4  # One USDA selection, no separate quantity model call.
+    assert len(harness.requests) == 3  # One USDA selection, no separate quantity/review call.
     assert recipe.nutrition.status == "known"
     assert recipe.ingredients[0].quantity is None and recipe.ingredients[0].unit is None
     mapping = recipe.nutrition.mappings[0]
@@ -1384,6 +1385,53 @@ def test_current_information_search_cannot_be_skipped_even_without_web_claims() 
     assert len(harness.requests) == 1 and not harness.tools.nutrition_requests
 
 
+@pytest.mark.parametrize(
+    ("boundary", "event"),
+    [
+        ("completion", "foundry_response_rejected"),
+        ("tool_arguments", "recipe_grounding_failed"),
+        ("draft", "recipe_draft_rejected"),
+        ("web", "recipe_web_rejected"),
+    ],
+)
+def test_recipe_rejections_identify_the_boundary_without_logging_content(
+    boundary: str, event: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    configure_safe_telemetry()
+    harness = CombinedHarness(use_web=False)
+    content = harness.combined["output"][-1]["content"][0]
+    if boundary == "completion":
+        harness.combined.update(
+            status="incomplete", incomplete_details={"reason": "max_output_tokens"}
+        )
+    elif boundary == "tool_arguments":
+        call = next(item for item in harness.combined["output"] if item["type"] == "mcp_call")
+        call["arguments"] = json.dumps({"query_variants": ["PRIVATE_CANARY"]})
+    elif boundary == "draft":
+        draft = json.loads(content["text"])
+        draft.update(servings=0, title="PRIVATE_CANARY")
+        content["text"] = json.dumps(draft)
+    else:
+        content["annotations"] = [
+            {
+                "type": "url_citation",
+                "url": URL,
+                "title": "PRIVATE_CANARY",
+                "start_index": 0,
+                "end_index": 1,
+            }
+        ]
+    with pytest.raises(FoundryGatewayError) as caught:
+        harness.generate()
+    assert caught.value.code == FoundryFailure.INVALID_RESULT
+    assert len(harness.requests) == 1 and not harness.tools.nutrition_requests
+    events = [json.loads(record.getMessage()) for record in caplog.records]
+    assert any(item["event"] == event for item in events)
+    if boundary == "tool_arguments":
+        assert any(item.get("grounding_stage") == "tool_arguments" for item in events)
+    assert "PRIVATE_CANARY" not in caplog.text
+
+
 def test_calorie_generation_has_its_own_deadline_for_larger_responses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1444,14 +1492,13 @@ def test_combined_recipe_uses_one_version_and_keeps_usda_and_native_attribution(
     }
 
 
-def test_combined_orchestration_reviews_recipe_and_enforces_final_safety() -> None:
+def test_combined_orchestration_delivers_validated_recipe_without_a_final_review() -> None:
     harness = CombinedHarness()
     result = asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
     assert result.recipe is not None and result.status == "candidate"
     assert [harness.request_kind(json.loads(request.content)) for request in harness.requests] == [
         "function",
         "combined",
-        "function",
     ]
     assert result.recipe.web_grounding is not None and len(harness.tools.nutrition_requests) == 1
 
@@ -1621,7 +1668,7 @@ def test_native_routing_preserves_citations_without_exposing_private_context(
     assert StructuredRecipe.model_validate_json(recipe.model_dump_json(by_alias=True)) == recipe
     assert len(budgets) == 1
     budget = budgets[0]
-    assert budget.model_calls == len(harness.requests) == 3 + int(use_web)
+    assert budget.model_calls == len(harness.requests) == 2 + int(use_web)
     assert budget.web_calls == int(use_web) and budget.tool_calls == 3 + int(use_web)
     assert budget.input_tokens == 400 * budget.model_calls
     assert budget.output_tokens == 200 * budget.model_calls
@@ -1805,7 +1852,7 @@ def test_web_final_gate_does_not_scan_prose_for_undeclared_allergens() -> None:
     result = asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
     assert result.status == "candidate" and result.recipe is not None
     assert all("peanut" not in item.name for item in result.recipe.ingredients)
-    assert len(harness.requests) == 4 and len(harness.tools.nutrition_requests) == 1
+    assert len(harness.requests) == 3 and len(harness.tools.nutrition_requests) == 1
 
 
 def test_web_recipe_accepts_natural_cooking_prose() -> None:
@@ -1817,7 +1864,7 @@ def test_web_recipe_accepts_natural_cooking_prose() -> None:
     result = asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
     assert result.status == "candidate" and result.recipe is not None
     assert result.recipe.instructions[-1].text == "Stir gently until tender, then serve warm."
-    assert len(harness.requests) == 4 and len(harness.tools.nutrition_requests) == 1
+    assert len(harness.requests) == 3 and len(harness.tools.nutrition_requests) == 1
 
 
 @pytest.mark.parametrize("limit", ["model_calls", "tool_calls", "web_calls"])
@@ -1839,10 +1886,13 @@ def test_shared_limits_stop_web_before_it_runs(limit: str) -> None:
 def test_web_cannot_create_an_extra_model_allowance_for_a_revision() -> None:
     harness = WebHarness()
     harness.revision = True
-    with pytest.raises(OrchestratorError) as caught:
-        asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
-    assert caught.value.code == OrchestratorFailure.BUDGET_EXHAUSTED
-    assert len(harness.requests) == 4 and len(harness.tools.nutrition_requests) == 1
+    content = harness.recipe["output"][1]["content"][0]
+    draft = json.loads(content["text"])
+    draft["totalMinutes"] = harness.arguments.time_budget_minutes + 1
+    content["text"] = json.dumps(draft)
+    result = asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
+    assert result.status == "unable" and result.recipe is None
+    assert len(harness.requests) == 4 and not harness.tools.nutrition_requests
 
 
 def test_nested_usage_does_not_exhaust_recipe_token_headroom() -> None:
