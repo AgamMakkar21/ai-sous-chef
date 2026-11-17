@@ -14,7 +14,7 @@ from sous_chef.domain.recipes import StructuredRecipe
 
 @dataclass(frozen=True)
 class OrchestratorPolicy:
-    version: int = 13
+    version: int = 15
     max_model_calls: int = 4
     max_calorie_fallback_calls: int = 1
     max_calorie_model_calls: int = 2
@@ -51,20 +51,6 @@ class RecipeAllergyError(FoundryGatewayError):
 
     def __init__(self, request: FoundryRequest, usage: TokenUsage) -> None:
         self.usage = usage
-        super().__init__(FoundryFailure.REJECTED, request)
-
-
-class RecipeFitError(FoundryGatewayError):
-    """A completed draft needs a time or skill correction, not a generation replay."""
-
-    def __init__(
-        self,
-        request: FoundryRequest,
-        usage: TokenUsage,
-        status: Literal["time_rejected", "skill_rejected"],
-    ) -> None:
-        self.usage = usage
-        self.status = status
         super().__init__(FoundryFailure.REJECTED, request)
 
 

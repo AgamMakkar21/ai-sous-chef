@@ -38,9 +38,9 @@ const unknownReasons: Record<string, string> = {
   service_unavailable: "USDA temporarily unavailable",
 };
 const calorieSources = {
-  usda_mcp: "USDA MCP",
-  web_iq: "Grounding with Bing",
-  ai_knowledge: "AI knowledge",
+  usda_mcp: "USDA",
+  web_iq: "Web estimate",
+  ai_knowledge: "AI estimate",
 };
 
 export default function RecipeCard({
@@ -80,6 +80,11 @@ export default function RecipeCard({
       })),
     ...(nutrition.nutrientEstimates ?? []),
   ];
+  const nutritionSources = new Set([
+    ...(nutrition.mappings.length ? (["usda_mcp"] as const) : []),
+    ...(nutrition.ingredientCalories ?? []).map((item) => item.source),
+    ...(nutrition.nutrientEstimates ?? []).map((item) => item.source),
+  ]);
 
   return (
     <section className="recipe-card" aria-labelledby={`${id}-title`}>
@@ -106,6 +111,17 @@ export default function RecipeCard({
           </div>
         </dl>
       </header>
+
+      {!!recipe.fitNotes?.length && (
+        <section aria-labelledby={`${id}-notes`}>
+          <h4 id={`${id}-notes`}>Recipe notes</h4>
+          {recipe.fitNotes.map((note, index) => (
+            <p className="notice" key={index}>
+              {note}
+            </p>
+          ))}
+        </section>
+      )}
 
       <section aria-labelledby={`${id}-fit`}>
         <h4 id={`${id}-fit`}>Why this fits</h4>
@@ -186,24 +202,27 @@ export default function RecipeCard({
             : "Whole recipe"}{" "}
           / {recipe.servings} servings
         </p>
-        {nutrition.status === "partial" && (
-          <p>
-            Incomplete estimate. Partial amounts cover only known ingredients,
-            not the full recipe.
-          </p>
-        )}
-        {nutrition.status === "unavailable" && (
-          <p>Nutrition is unavailable. Missing values are not zero.</p>
-        )}
-        {nutrition.ingredientCalories?.some(
-          (item) => item.source !== "usda_mcp",
-        ) && (
-          <p>
-            Some calories use Grounding with Bing or AI knowledge estimates
-            because USDA evidence was unavailable. These are approximate, not
-            USDA-verified.
-          </p>
-        )}
+        <div
+          className="recipe-nutrition-tags"
+          role="group"
+          aria-label="Nutrition sources"
+        >
+          {[...nutritionSources].map((source) => (
+            <span className="recipe-source-tag" key={source}>
+              {calorieSources[source]}
+            </span>
+          ))}
+          {nutrition.status !== "known" && (
+            <span className="recipe-source-tag">
+              {nutrition.status === "partial"
+                ? "Partial estimate"
+                : "Nutrition unavailable"}
+            </span>
+          )}
+          {nutrition.mappings.some((item) => item.quantityEstimate) && (
+            <span className="recipe-source-tag">Estimated quantities</span>
+          )}
+        </div>
         <dl className="recipe-nutrients">
           {Object.entries(nutrientLabels).map(([name, label]) => {
             const nutrient = nutrition.nutrients.find(
@@ -227,153 +246,151 @@ export default function RecipeCard({
             );
           })}
         </dl>
-        {!!nutrition.ingredientCalories?.length && (
-          <>
-            <h5>Calories by ingredient (whole recipe)</h5>
-            <ul>
-              {nutrition.ingredientCalories.map((item) => (
-                <li key={item.ingredientLineId}>
-                  {ingredientName(item.ingredientLineId)}:{" "}
-                  {item.amount.toLocaleString(undefined, {
-                    maximumFractionDigits: 2,
-                  })}{" "}
-                  kcal
-                  {" / "}
-                  {item.reference ? (
-                    <Reference
-                      reference={item.reference}
-                      label={calorieSources[item.source]}
-                    />
-                  ) : (
-                    calorieSources[item.source]
-                  )}
-                  {item.source !== "usda_mcp" && " (approximate)"}
-                  {" / "}
-                  {item.basis}
-                </li>
-              ))}
+        <details className="recipe-nutrition-details">
+          <summary>Nutrition details</summary>
+          {!!nutrition.ingredientCalories?.length && (
+            <>
+              <h5>Calories by ingredient (whole recipe)</h5>
+              <ul>
+                {nutrition.ingredientCalories.map((item) => (
+                  <li key={item.ingredientLineId}>
+                    {ingredientName(item.ingredientLineId)}:{" "}
+                    {item.amount.toLocaleString(undefined, {
+                      maximumFractionDigits: 2,
+                    })}{" "}
+                    kcal
+                    {" / "}
+                    {item.reference ? (
+                      <Reference
+                        reference={item.reference}
+                        label={calorieSources[item.source]}
+                      />
+                    ) : (
+                      calorieSources[item.source]
+                    )}
+                    {" / "}
+                    {item.basis}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {!!ingredientNutrients.length && (
+            <>
+              <h5>Nutrition by ingredient (whole recipe)</h5>
+              <ul>
+                {ingredientNutrients.map((item, index) => (
+                  <li key={`${item.ingredientLineId}:${item.source}:${index}`}>
+                    {ingredientName(item.ingredientLineId)}:{" "}
+                    {item.nutrients
+                      .map(
+                        (nutrient) =>
+                          `${nutrientLabels[nutrient.name]}: ${nutrient.amount.toLocaleString()} ${nutrient.unit}`,
+                      )
+                      .join(", ")}
+                    {" / "}
+                    {item.reference ? (
+                      <Reference
+                        reference={item.reference}
+                        label={calorieSources[item.source]}
+                      />
+                    ) : (
+                      calorieSources[item.source]
+                    )}
+                    {" / "}
+                    {item.basis}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {!!nutrition.coverage?.some(
+            (item) => item.unknownIngredientLineIds.length,
+          ) && (
+            <ul className="recipe-coverage">
+              {nutrition.coverage
+                .filter((item) => item.unknownIngredientLineIds.length)
+                .map((item) => (
+                  <li key={item.name}>
+                    {nutrientLabels[item.name]} unavailable for:{" "}
+                    {item.unknownIngredientLineIds
+                      .map(ingredientName)
+                      .join(", ")}
+                    .
+                  </li>
+                ))}
             </ul>
-          </>
-        )}
-        {!!ingredientNutrients.length && (
-          <>
-            <h5>Nutrition by ingredient (whole recipe)</h5>
-            <p>
-              USDA is preferred. Missing nutrients may use Grounding with Bing
-              or AI knowledge estimates, labeled below as approximate and not
-              USDA-verified.
-            </p>
+          )}
+          {!!nutrition.unknownComponents?.length && (
             <ul>
-              {ingredientNutrients.map((item, index) => (
-                <li key={`${item.ingredientLineId}:${item.source}:${index}`}>
+              {nutrition.unknownComponents.map((item, index) => (
+                <li key={index}>
                   {ingredientName(item.ingredientLineId)}:{" "}
-                  {item.nutrients
-                    .map(
-                      (nutrient) =>
-                        `${nutrientLabels[nutrient.name]}: ${nutrient.amount.toLocaleString()} ${nutrient.unit}`,
-                    )
+                  {unknownReasons[item.reason]} (
+                  {item.unknownNutrients
+                    .map((name) => nutrientLabels[name])
                     .join(", ")}
-                  {" / "}
-                  {item.reference ? (
+                  ).
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="recipe-disclaimer">{nutrition.notice}</p>
+          {nutrition.sources.length > 0 && (
+            <>
+              <h5>Nutrition sources</h5>
+              <ul>
+                {nutrition.sources.map((source) => (
+                  <li key={source.sourceId}>
                     <Reference
-                      reference={item.reference}
-                      label={calorieSources[item.source]}
-                    />
-                  ) : (
-                    calorieSources[item.source]
-                  )}
-                  {item.source !== "usda_mcp" && " (approximate)"}
-                  {" / "}
-                  {item.basis}
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-        {!!nutrition.coverage?.some(
-          (item) => item.unknownIngredientLineIds.length,
-        ) && (
-          <ul className="recipe-coverage">
-            {nutrition.coverage
-              .filter((item) => item.unknownIngredientLineIds.length)
-              .map((item) => (
-                <li key={item.name}>
-                  {nutrientLabels[item.name]} unavailable for:{" "}
-                  {item.unknownIngredientLineIds.map(ingredientName).join(", ")}
-                  .
-                </li>
-              ))}
-          </ul>
-        )}
-        {!!nutrition.unknownComponents?.length && (
-          <ul>
-            {nutrition.unknownComponents.map((item, index) => (
-              <li key={index}>
-                {ingredientName(item.ingredientLineId)}:{" "}
-                {unknownReasons[item.reason]} (
-                {item.unknownNutrients
-                  .map((name) => nutrientLabels[name])
-                  .join(", ")}
-                ).
-              </li>
-            ))}
-          </ul>
-        )}
-        <p className="recipe-disclaimer">{nutrition.notice}</p>
-        {nutrition.sources.length > 0 && (
-          <>
-            <h5>Nutrition sources</h5>
-            <ul>
-              {nutrition.sources.map((source) => (
-                <li key={source.sourceId}>
-                  <Reference
-                    reference={source.reference}
-                    label={`USDA MCP / ${source.sourceId}`}
-                  />{" "}
-                  / Version: {source.version}
-                  <ul>
-                    {nutrition.mappings
-                      .filter((item) => item.sourceId === source.sourceId)
-                      .map((item) => (
-                        <li key={item.ingredientLineId}>
-                          {ingredientName(item.ingredientLineId)} / Food ID:{" "}
-                          {item.usdaFoodId}
-                          {item.foodDescription && (
-                            <>
-                              {" "}
-                              /{" "}
-                              {item.approximateMatch
-                                ? "Estimated match"
-                                : "USDA food"}
-                              : {item.foodDescription}
-                            </>
-                          )}
-                          {item.conversionBasis && (
-                            <> / {item.conversionBasis}</>
-                          )}
-                          {item.quantityEstimate && (
-                            <ul>
-                              {item.quantityEstimate.sources.map((source) => (
-                                <li key={source.reference}>
-                                  <Reference
-                                    reference={source.reference}
-                                    label="Quantity estimate source"
-                                  />{" "}
-                                  / {source.weightGrams.toLocaleString()} g for{" "}
-                                  {source.servings} source servings
-                                  <blockquote>{source.quote}</blockquote>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </li>
-                      ))}
-                  </ul>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
+                      reference={source.reference}
+                      label={`USDA MCP / ${source.sourceId}`}
+                    />{" "}
+                    / Version: {source.version}
+                    <ul>
+                      {nutrition.mappings
+                        .filter((item) => item.sourceId === source.sourceId)
+                        .map((item) => (
+                          <li key={item.ingredientLineId}>
+                            {ingredientName(item.ingredientLineId)} / Food ID:{" "}
+                            {item.usdaFoodId}
+                            {item.foodDescription && (
+                              <>
+                                {" "}
+                                /{" "}
+                                {item.approximateMatch
+                                  ? "Estimated match"
+                                  : "USDA food"}
+                                : {item.foodDescription}
+                              </>
+                            )}
+                            {item.conversionBasis && (
+                              <> / {item.conversionBasis}</>
+                            )}
+                            {item.quantityEstimate && (
+                              <ul>
+                                {item.quantityEstimate.sources.map((source) => (
+                                  <li key={source.reference}>
+                                    <Reference
+                                      reference={source.reference}
+                                      label="Quantity estimate source"
+                                    />{" "}
+                                    / {source.weightGrams.toLocaleString()} g
+                                    for {source.servings} source servings
+                                    <blockquote>{source.quote}</blockquote>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </li>
+                        ))}
+                    </ul>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </details>
       </section>
 
       <section aria-labelledby={`${id}-sources`}>

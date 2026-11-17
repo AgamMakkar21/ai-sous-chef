@@ -208,13 +208,13 @@ def test_contract_fixtures(fixture: dict[str, Any]) -> None:
 
 def test_one_revision_is_four_model_calls_with_the_same_context_and_budget() -> None:
     router = Coordinator(call(), call(call_id="call_revision"))
-    specialist = Specialist(candidate(minutes=45), candidate(minutes=25))
+    specialist = Specialist(candidate("peanut oil"), candidate(minutes=45))
     data = context()
     result = asyncio.run(OrchestratorService(router, specialist).run(data))
     assert result.status == "candidate"
-    assert result.candidate is not None and result.candidate.total_minutes == 25
+    assert result.candidate is not None and result.candidate.total_minutes == 45
     assert len(router.requests) == len(specialist.calls) == 2
-    assert json.loads(router.requests[1].tool_output or "")["status"] == "time_rejected"
+    assert json.loads(router.requests[1].tool_output or "")["status"] == "safety_rejected"
     assert specialist.calls[0][0] is specialist.calls[1][0] is data
     assert specialist.budgets[0] is specialist.budgets[1]
     budget = specialist.budgets[0]
@@ -222,6 +222,16 @@ def test_one_revision_is_four_model_calls_with_the_same_context_and_budget() -> 
     assert budget.model_calls == 4 and budget.specialist_calls == 2
     assert budget.tool_calls == 2
     assert budget.input_tokens == 4 * USAGE.input_tokens
+
+
+def test_time_mismatch_is_an_acceptable_candidate_not_a_revision_or_refusal() -> None:
+    router = Coordinator(call(), answer())
+    specialist = Specialist(candidate(minutes=45))
+    result = asyncio.run(OrchestratorService(router, specialist).run(context()))
+    assert result.status == "candidate"
+    assert result.candidate is not None and result.candidate.total_minutes == 45
+    assert len(specialist.calls) == 1
+    assert json.loads(router.requests[1].tool_output or "")["status"] == "candidate"
 
 
 @pytest.mark.parametrize(
@@ -502,7 +512,7 @@ def test_source_definition_is_reproducible_strict_and_does_not_bind_extra_tools(
     assert quantity_names["items"]["maxLength"] == 100
     assert "Interpret ingredient amounts semantically" in ORCHESTRATOR_INSTRUCTIONS
     assert "Current explicit direction overrides learned preferences" in ORCHESTRATOR_INSTRUCTIONS
-    assert "do not invent a feasible cooking time" in ORCHESTRATOR_INSTRUCTIONS
+    assert "Never invent a shorter cooking time" in ORCHESTRATOR_INSTRUCTIONS
     assert "never hidden reasoning" in ORCHESTRATOR_INSTRUCTIONS
     assert (
         POLICY.max_model_calls,

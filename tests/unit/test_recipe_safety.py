@@ -106,14 +106,29 @@ def test_compliant_recipe_is_rendered_without_untrusted_evidence_or_commentary()
     assert "Beginner preparation" not in content  # Source excerpt is not a cooking direction.
 
 
-def test_long_valid_recipe_keeps_its_complete_card_and_uses_a_bounded_transcript() -> None:
+@pytest.mark.parametrize("long_recipe", [False, True])
+def test_fit_notes_survive_final_validation_and_bounded_transcript_rendering(
+    long_recipe: bool,
+) -> None:
     instructions = tuple(("Cook the rice carefully. " * 20).strip() for _ in range(9))
-    recipe = full_recipe(instructions=instructions)
+    if not long_recipe:
+        instructions = ("Cook the rice.",)
+    recipe = full_recipe(instructions=instructions).model_copy(
+        update={
+            "fit_notes": (
+                "This recipe may take longer than your time budget.",
+                "This recipe may be above your cooking skill level.",
+            )
+        }
+    )
     checked = validate_final_recipe(recipe, SafetyProfile())
     content = render_recipe(checked)
-    assert len(content) <= 4000 and "recipe card" in content
+    assert len(content) <= 4000
+    assert ("recipe card" in content) is long_recipe
+    assert "Recipe notes" in content
+    assert all(note in content for note in checked.fit_notes)
+    assert "Nutrition [Unavailable]" in content
     assert tuple(item.text for item in checked.instructions) == instructions
-    assert len(checked.instructions) == 9
 
 
 @pytest.mark.parametrize(

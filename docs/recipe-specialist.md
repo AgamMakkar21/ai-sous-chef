@@ -54,7 +54,7 @@ response is not proof that private data was never searched. This is intentionall
 different from the isolated web phase; do not describe combined mode as providing
 that phase's pre-search privacy isolation.
 
-Combined source policy 14 has its own exact definition/phase/fingerprint checks.
+Combined source policy 16 has its own exact definition/phase/fingerprint checks.
 Manually attaching web search to an older retrieval version is not sufficient:
 the old instructions/output schema and stale fingerprint metadata do not meet
 this contract. Preserve existing agent identities and versions, and publish a
@@ -85,7 +85,7 @@ The `AiRecipeDraft` schema requires empty `sourceIds` and `sourceClaims`. The
 backend stamps `generationSource=ai_knowledge`, rejects curated/web recipe
 attribution and displays an unverified-recipe notice. It retains real USDA
 nutrition sources separately; all-AI nutrition may have no external sources.
-Stored allergies, declared ingredients, time/skill correction, all six nutrients
+Stored allergies, declared ingredients, realistic time/skill with advisory notes, all six nutrients
 and atomic completion remain required. Failed source snippets never enter the
 AI composition request. Nutrition still uses USDA first and tool-free AI
 estimates for gaps, never nutrition web search.
@@ -918,6 +918,7 @@ are explicit `null`, not omitted or guessed.
 | `substitutions` | Up to 30 original names/reasons referencing replacement lines actually used in the recipe |
 | `instructions` | 1-30 sequential steps, text up to 500 characters, declared ingredient references; every ingredient is referenced |
 | `fitReasons`, `adaptations` | Up to 10 entries each, 240 characters each; at least one fit reason; adaptations distinguish creative choices from cited source content |
+| `fitNotes` (enriched recipe only) | Up to two backend-authored notes, 240 characters each, for cooking time above the effective request budget and difficulty above the saved skill. These are advisories, not rejection gates. Defaults to empty for older snapshots; retained in chat transcripts, recipe cards and saved history. |
 | `sourceIds` | 1-3 unique curated source IDs attached by the backend from verified retrieval evidence, not trusted from generated metadata |
 | `sourceClaims` | Up to 10 exact quotes (240 characters each) and their cited source IDs; backend retains only quotes verified against their actual retrieved snippets. Unverifiable/malformed optional quotations are omitted and logged, not grounds for discarding the recipe. These describe the source, not proof about an adaptation. |
 | Enriched ingredients | Backend-resolved canonical ID or null, `available/missing/unknown`, and supporting grocery row IDs |
@@ -956,6 +957,23 @@ ingredient names against the latest stored allergies before display/persistence.
 the reviewed ingredient catalog and ASC-35's deterministic hard-constraint checks.
 Dislikes and learned preferences never weaken explicit allergies. Dietary
 restrictions remain generation preferences, not another hard recipe-safety gate.
+Time and cooking skill are also preferences, not reasons to discard a valid draft.
+An over-budget or more difficult recipe keeps its realistic time and skill and is
+delivered with a visible `fitNotes` explanation, including on the AI-knowledge
+recovery path. No correction call is consumed solely to remove these mismatches.
+Other non-allergy preference compromises belong in `adaptations`.
+Saved and learned tastes, cuisines and pantry stock are contextual suggestions,
+not a checklist. Preserve the current dish instead of forcing unrelated flavors
+or pantry ingredients into it; missing stock is represented honestly in shopping
+needs. Explicit current flavor directions still take precedence, and learned
+heat is used only when appropriate to that dish.
+
+Nutrition displays compact `USDA`, `AI estimate` or legacy `Web estimate` tags
+beside the totals. Partial/unavailable amounts and estimated quantities remain
+explicit. The optional **Nutrition details** disclosure retains ingredient
+breakdowns, assumptions, citations and the informational-estimate notice.
+Chat transcripts retain concise source labels even when a long recipe is
+compacted to the recipe-card reference; no attribution or numeric check is removed.
 
 The owner-approved policy change removes deterministic **ordinary cooking-safety
 classification**. There is no thermometer template, temperature/rest/order rule,
@@ -1021,8 +1039,8 @@ thermometer template to pass the backend.
 
 The specialist and Orchestrator source instructions describe natural recipe
 output and the remaining profile/integrity checks. Source policy versions are
-Orchestrator **9**, Recipe + Nutrition **9**, combined Recipe + Nutrition **14**,
-isolated web **13**, and independent recovery **4**. These are
+Orchestrator **15**, Recipe + Nutrition **11**, combined Recipe + Nutrition **16**,
+isolated web **13**, independent nutrition recovery **5**, and AI recipe recovery **3**. These are
 policy versions, **not** Foundry agent-version pins. Existing immutable agents
 do not acquire the new instructions when only backend code changes.
 

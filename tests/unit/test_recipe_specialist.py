@@ -345,15 +345,15 @@ def test_single_pinned_stateless_invocation_is_private_and_has_no_callable_tools
 @pytest.mark.parametrize(
     ("field", "value", "code"),
     [
-        ("totalMinutes", 31, FoundryFailure.REJECTED),
-        ("skill", "advanced", FoundryFailure.REJECTED),
+        ("totalMinutes", 0, FoundryFailure.INVALID_RESULT),
+        ("skill", "expert", FoundryFailure.INVALID_RESULT),
         ("sourceIds", ["invented-citation"], FoundryFailure.INVALID_RESULT),
         ("servings", 0, FoundryFailure.INVALID_RESULT),
         ("schemaVersion", 3, FoundryFailure.INVALID_RESULT),
         ("nutrition", {"calories": 100}, FoundryFailure.INVALID_RESULT),
     ],
 )
-def test_invalid_or_unfit_drafts_fail_explicitly_without_repair(
+def test_invalid_drafts_fail_explicitly_without_repair(
     field: str, value: Any, code: FoundryFailure
 ) -> None:
     draft = copy.deepcopy(FIXTURE["draft"])
@@ -758,14 +758,34 @@ def test_last_allowed_revision_preserves_the_full_recipe() -> None:
 
 
 @pytest.mark.parametrize(
-    ("field", "value", "status"),
+    ("minutes", "skill", "notes"),
     [
-        ("total_minutes", 31, "time_rejected"),
-        ("skill", "intermediate", "skill_rejected"),
+        (30, "beginner", ()),
+        (
+            31,
+            "beginner",
+            ("This recipe takes about 31 minutes and may not fit your 30-minute time budget.",),
+        ),
+        (
+            20,
+            "intermediate",
+            (
+                "This recipe is rated intermediate and may be above your "
+                "beginner cooking skill level.",
+            ),
+        ),
+        (
+            45,
+            "advanced",
+            (
+                "This recipe takes about 45 minutes and may not fit your 30-minute time budget.",
+                "This recipe is rated advanced and may be above your beginner cooking skill level.",
+            ),
+        ),
     ],
 )
-def test_real_specialist_time_and_skill_rejections_reach_the_correction_loop(
-    field: str, value: str | int, status: str, monkeypatch: pytest.MonkeyPatch
+def test_time_and_skill_mismatches_return_the_first_complete_recipe_with_fit_notes(
+    minutes: int, skill: str, notes: tuple[str, ...], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service, tools, transport = setup()
     gateway = service._generator
@@ -776,17 +796,18 @@ def test_real_specialist_time_and_skill_rejections_reach_the_correction_loop(
         nonlocal generations
         draft, usage = await original(request)
         generations += 1
-        return (draft.model_copy(update={field: value}) if generations == 1 else draft), usage
+        return draft.model_copy(update={"total_minutes": minutes, "skill": skill}), usage
 
     monkeypatch.setattr(gateway, "generate_recipe", generate)
-    coordinator = Coordinator(call(), call(call_id="correction"))
+    coordinator = Coordinator(call(), answer("unable"))
     result = asyncio.run(OrchestratorService(coordinator, service).run(cooking_context()))
     assert result.status == "candidate" and result.recipe is not None
-    assert generations == len(transport.requests) == 2
+    assert generations == len(transport.requests) == 1
     assert len(tools.nutrition_requests) == 1
-    feedback = json.loads(coordinator.requests[1].tool_output or "")
-    assert feedback["status"] == status
-    assert result.recipe.total_minutes <= 30 and result.recipe.skill == "beginner"
+    assert len(coordinator.requests) == 1
+    assert result.recipe.total_minutes == minutes and result.recipe.skill == skill
+    assert result.recipe.fit_notes == notes
+    assert StructuredRecipe.model_validate_json(result.recipe.model_dump_json()) == result.recipe
 
 
 def test_source_definition_uses_reviewed_safety_policy_and_strict_schema() -> None:
@@ -832,7 +853,7 @@ def test_recipe_publication_versions_the_existing_distinct_identity_without_acti
     invocation = client.agents.create_version.call_args.kwargs
     assert invocation["agent_name"] == "recipe-agent"
     assert invocation["metadata"]["asc_model"] == "gpt-5.4"
-    assert invocation["metadata"]["asc_policy_version"] == "9"
+    assert invocation["metadata"]["asc_policy_version"] == "11"
     assert invocation["metadata"]["asc_recipe_phase"] == "generation"
     assert invocation["definition"].as_dict()["rai_config"] == {
         "rai_policy_name": (

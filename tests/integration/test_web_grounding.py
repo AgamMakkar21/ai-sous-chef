@@ -1888,7 +1888,7 @@ def test_web_cannot_create_an_extra_model_allowance_for_a_revision() -> None:
     harness.revision = True
     content = harness.recipe["output"][1]["content"][0]
     draft = json.loads(content["text"])
-    draft["totalMinutes"] = harness.arguments.time_budget_minutes + 1
+    draft["ingredients"][0]["name"] = "peanut oil"
     content["text"] = json.dumps(draft)
     result = asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
     assert result.status == "unable" and result.recipe is None

@@ -419,7 +419,8 @@ def test_optional_calorie_summary_does_not_break_a_near_limit_recipe() -> None:
     data["ingredients"][1]["quantity"] = 150
     for step in data["instructions"]:
         step["ingredient_line_ids"] = ["rice", "carrot"]
-    remaining = 3990 - len(render_recipe(StructuredRecipe.model_validate_json(json.dumps(data))))
+    rendered = render_recipe(StructuredRecipe.model_validate_json(json.dumps(data)))
+    remaining = 3990 - len(rendered.partition("\n\nNutrition [")[0])
     for step in data["instructions"]:
         padding = min(remaining, 500 - len(step["text"]))
         step["text"] += " " * padding
@@ -441,4 +442,5 @@ def test_optional_calorie_summary_does_not_break_a_near_limit_recipe() -> None:
     data["sources"].extend(source.model_dump(mode="json") for source in evidence.sources)
     recipe = StructuredRecipe.model_validate_json(json.dumps(data))
     assert len(render_recipe(recipe)) == 3990
+    assert "See the recipe card" not in render_recipe(recipe)
     assert recipe.nutrition.ingredient_calories[-1].source == "ai_knowledge"

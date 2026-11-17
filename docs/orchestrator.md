@@ -40,17 +40,26 @@ models. Only bounded opaque encrypted state is forwarded in memory; plaintext
 reasoning summaries are discarded and never logged, exposed, or persisted.
 Missing required opaque state fails explicitly.
 
-The instructions require clarification for missing/contradictory requirements
-or an impossible cooking-time request. Current explicit direction wins over
+The instructions require clarification for missing dish information or an allergy
+ambiguity, not merely an impossible time or skill preference. Current explicit direction wins over
 learned preferences and old history. A current request can override soft defaults,
-but cannot override stored allergies/restrictions or modify profile state.
+but cannot override stored allergies or modify profile state.
 The original time budget selected during routing cannot be silently increased
-on a revision. The backend enforces fit against that budget and the stored skill;
-the Orchestrator can request the one correction. It does not invent nutrition.
+on a revision. Time and skill are advisory: the backend returns an otherwise valid
+recipe with realistic time/difficulty and backend-authored `fitNotes` when either
+exceeds the preference. It does not spend the allergy/structure correction on a
+soft preference mismatch, invent shorter times, or understate difficulty.
+Other non-allergy preferences guide adaptations rather than refusals.
+It does not invent nutrition.
 
 ## Backend limits and candidate validation
 
-The frozen policy in `domain/orchestrator.py` is version 13:
+The requested dish and current directions take priority over saved or learned
+flavors. These tastes and pantry stock are useful suggestions, not requirements
+to distort a dish or refuse missing ingredients. Stored allergies remain hard
+constraints; inventory and shopping needs are reported honestly.
+
+The frozen policy in `domain/orchestrator.py` is version 15:
 
 | Limit | Value |
 | --- | --- |

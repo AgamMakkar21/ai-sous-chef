@@ -218,6 +218,121 @@ def test_mcp_failure_saves_a_labelled_ai_recipe_with_complete_nutrition_without_
     assert not set(ai_request) & {"tools", "tool_choice", "text", "instructions"}
 
 
+@pytest.mark.parametrize("source", ["curated_recipe", "ai_knowledge"])
+@pytest.mark.parametrize(
+    ("minutes", "skill", "note_count"),
+    [(5, "beginner", 0), (31, "beginner", 1), (5, "advanced", 1), (31, "advanced", 2)],
+)
+def test_fit_mismatches_deliver_and_save_complete_recipes_with_visible_notes(
+    source: str,
+    minutes: int,
+    skill: str,
+    note_count: int,
+    combined_settings: Settings,
+    auth_headers: dict[str, str],
+    harness: tuple[Transport, SyntheticCredential],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = RecipeRecoveryHarness("empty" if source == "ai_knowledge" else "none")
+    transport.ai_recipe.update(totalMinutes=minutes, skill=skill)
+    content = transport.combined["output"][-1]["content"][0]
+    draft = json.loads(content["text"])
+    draft.update(totalMinutes=minutes, skill=skill)
+    content["text"] = json.dumps(draft)
+    monkeypatch.setattr(foundry_gateway, "_project_client", transport.factory)
+    settings = combined_settings.model_copy(
+        update={"foundry_recipe_nutrition_ai_recipe_agent_version": transport.ai_version}
+    )
+    with TestClient(create_app(settings), headers=auth_headers) as client:
+        onboard(client)
+        conversation = create(client)
+        response = send(client, conversation, content="Make dinner in 30 minutes.")
+        assert response.status_code == 200, response.text
+        turn = response.json()["data"]
+        recipe = turn["recipe"]
+        assert turn["status"] == "completed" and turn["generatedRecipeId"]
+        assert recipe["generationSource"] == source
+        assert recipe["totalMinutes"] == minutes and recipe["skill"] == skill
+        assert len(recipe["fitNotes"]) == note_count
+        assert recipe["ingredients"] and recipe["instructions"] and recipe["nutrition"]["nutrients"]
+        assert all(note in turn["messages"][1]["content"] for note in recipe["fitNotes"])
+        assert UNABLE not in turn["messages"][1]["content"]
+        assert client.get(f"{BASE}/{conversation}/turns").json()["items"][0]["recipe"] == recipe
+        saved = client.post(
+            "/api/v1/recipes",
+            json={"generatedRecipeId": turn["generatedRecipeId"], "cooked": False},
+            headers={"Idempotency-Key": "save-with-fit-notes"},
+        )
+        assert saved.status_code == 201, saved.text
+        assert saved.json()["data"]["recipe"] == recipe
+        history_id = saved.json()["data"]["historyId"]
+        assert client.get(f"/api/v1/recipes/{history_id}").json()["data"]["recipe"] == recipe
+        calls = len(transport.requests)
+        assert (
+            send(client, conversation, content="Make dinner in 30 minutes.").json()
+            == response.json()
+        )
+        assert len(transport.requests) == calls
+    kinds = [transport.request_kind(json.loads(request.content)) for request in transport.requests]
+    assert kinds.count("function") == kinds.count("combined") == 1
+    assert transport.ai_calls == (1 if source == "ai_knowledge" else 0)
+
+
+def test_overnight_oats_do_not_require_matching_global_tastes_or_pantry(
+    combined_settings: Settings,
+    auth_headers: dict[str, str],
+    harness: tuple[Transport, SyntheticCredential],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = RecipeRecoveryHarness()
+    transport.arguments = transport.arguments.model_copy(
+        update={"requirements": "Make overnight oats for breakfast."}
+    )
+    transport.ai_recipe.update(
+        title="Overnight oats",
+        totalMinutes=485,
+        fitReasons=["A make-ahead oat breakfast."],
+        instructions=[
+            {
+                "step": 1,
+                "text": "Mix the yogurt, berries and oats, then refrigerate overnight.",
+                "ingredientLineIds": ["yogurt", "berries", "oats"],
+            }
+        ],
+    )
+    monkeypatch.setattr(foundry_gateway, "_project_client", transport.factory)
+    settings = combined_settings.model_copy(
+        update={"foundry_recipe_nutrition_ai_recipe_agent_version": transport.ai_version}
+    )
+    explicit = preferences() | {"spicePreference": "hot", "likes": ["chili", "lime"]}
+    with TestClient(create_app(settings), headers=auth_headers) as client:
+        onboard(client, explicit)
+        add(client, name="rice", quantity=100, unit="g")
+        before = deepcopy(document(harness[0]))
+        conversation = create(client)
+        response = send(client, conversation, content="Make overnight oats for breakfast.")
+        assert response.status_code == 200, response.text
+        turn = response.json()["data"]
+        recipe = turn["recipe"]
+        assert turn["status"] == "completed" and turn["generatedRecipeId"]
+        assert recipe["title"] == "Overnight oats" and recipe["totalMinutes"] == 485
+        assert len(recipe["fitNotes"]) == 1
+        assert [line["name"] for line in recipe["ingredients"]] == [
+            line["name"] for line in transport.ai_recipe["ingredients"]
+        ]
+        assert all(line["inventoryStatus"] == "missing" for line in recipe["ingredients"])
+        assert {item["ingredientLineId"] for item in recipe["shoppingItems"]} == {
+            "yogurt",
+            "berries",
+            "oats",
+        }
+        assert client.get(f"{BASE}/{conversation}/turns").json()["items"][0]["recipe"] == recipe
+        after = document(harness[0])
+        assert after["explicitPreferences"] == before["explicitPreferences"] == explicit
+        assert after["groceries"] == before["groceries"]
+    assert transport.ai_calls == 1
+
+
 @pytest.mark.parametrize("current_information", [False, True])
 def test_ai_recipe_opt_in_preserves_mcp_priority_and_required_current_information(
     current_information: bool,
@@ -284,6 +399,7 @@ def test_ai_recipe_recovery_preserves_allergy_correction_and_the_complete_long_r
 ) -> None:
     transport = RecipeRecoveryHarness()
     transport.correct_allergy = True
+    transport.ai_recipe.update(totalMinutes=31, skill="advanced")
     transport.ai_recipe["instructions"] = [
         {
             "step": index + 1,
@@ -309,6 +425,8 @@ def test_ai_recipe_recovery_preserves_allergy_correction_and_the_complete_long_r
         assert transport.ai_calls == 2 and lookup.call_count == 1
         assert turn["recipe"]["nutrition"]["status"] == "known"
         assert turn["recipe"]["instructions"] == transport.ai_recipe["instructions"]
+        assert len(turn["recipe"]["fitNotes"]) == 2
+        assert all(note in turn["messages"][1]["content"] for note in turn["recipe"]["fitNotes"])
         assert "peanut butter" not in response.text
         assert len(turn["messages"][1]["content"]) <= 4000
         assert "AI-knowledge recipe" in turn["messages"][1]["content"]
@@ -800,7 +918,8 @@ def test_chat_persists_complete_ai_nutrition_during_usda_outage(
         assert {item["ingredientLineId"] for item in nutrition["nutrientEstimates"]} == (
             {"carrot", "oil"} if mode == "fail_carrot" else {"rice", "carrot", "oil"}
         )
-        assert "not USDA-verified" in turn["messages"][-1]["content"]
+        assert "AI estimate" in turn["messages"][-1]["content"]
+        assert "not USDA-verified" not in turn["messages"][-1]["content"]
         assert len(recipe_transport.requests) == 3 + int(mode == "fail_carrot")
         if combined:
             assert {
