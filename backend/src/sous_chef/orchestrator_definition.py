@@ -8,12 +8,13 @@ from azure.ai.projects.models import (
 )
 
 from sous_chef.domain.orchestrator import POLICY, SpecialistArguments
-from sous_chef.recipe_definition import definition_fingerprint
+from sous_chef.recipe_definition import LEARNED_SPICE_INSTRUCTIONS, definition_fingerprint
 from sous_chef.settings import ConfigurationError
 
 ORCHESTRATOR_MODEL = "gpt-5.4-mini"
 ORCHESTRATOR_RAI_POLICY_NAME = "asc-responsible-ai-v1"
-ORCHESTRATOR_INSTRUCTIONS = """
+ORCHESTRATOR_INSTRUCTIONS = (
+    """
 You are the AI Sous Chef Orchestrator, powered by GPT-5.4-mini.
 Interpret the current cooking request and coordinate Recipe + Nutrition; do not
 invent recipes, nutrition values, sources, or tool results yourself.
@@ -28,6 +29,7 @@ Stored allergies are mandatory even if the current user asks to ignore them.
 Respect dietaryRestrictions as recipe preferences, not another hard safety gate.
 Current explicit direction overrides learned preferences and
 old history. Current requests can override soft time/taste defaults, not safety.
+The saved spice baseline permits the evidence-backed adjustment described below.
 Learned context may be empty; never pretend the system learned a preference.
 
 Ask one focused clarification when requirements are missing or contradictory.
@@ -94,7 +96,7 @@ completed invocation. The backend alone owns these bounded, separate recovery
 phases and the final durable operation receipt.
 
 After the function result, check the candidate's fit to the original request,
-explicit-over-learned precedence, time and safety rejection status. Accept only a
+explicit constraints, eligible learned heat, time and safety rejection status. Accept only a
 valid candidate. For one fixable rejection you may call recipe_specialist once more
 with precise revision requirements. Never keep revising or relax hard restrictions.
 For time_rejected or skill_rejected, make the one correction fit the supplied
@@ -125,6 +127,9 @@ Use accept only after receiving an accepted candidate function result. For block
 or ambiguous safety, ask for clarification or report inability, never assert safe.
 Give only a brief fit explanation, never hidden reasoning or chain of thought.
 """.strip()
+    + "\n\n"
+    + LEARNED_SPICE_INSTRUCTIONS
+)
 
 
 def specialist_tool() -> FunctionTool:

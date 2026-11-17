@@ -164,6 +164,7 @@ class Event(StrEnum):
     LEARNING_QUARANTINED = "learning_quarantined"
     LEARNING_SCHEMA_REJECTED = "learning_schema_rejected"
     LEARNING_BATCH_PENDING = "learning_batch_pending"
+    LEARNED_CONTEXT_UNAVAILABLE = "learned_context_unavailable"
 
 
 @dataclass(frozen=True)
@@ -275,6 +276,7 @@ def operational_event(
         Event.LEARNING_RETRY,
         Event.LEARNING_FAILED,
         Event.LEARNING_QUARANTINED,
+        Event.LEARNED_CONTEXT_UNAVAILABLE,
     }:
         level = logging.WARNING
     logging.getLogger("sous_chef.operational").log(

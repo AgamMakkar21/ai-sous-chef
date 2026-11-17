@@ -22,7 +22,7 @@ from worker import function_app as host
 
 ROOT = Path(__file__).resolve().parents[2]
 SHA = "a" * 40
-CLIENT = "11111111-1111-1111-1111-111111111111"
+CLIENT = "11111111-1111-4111-8111-111111111111"
 SETTINGS = {
     "ASC_ENVIRONMENT": "dev",
     "FUNCTIONS_EXTENSION_VERSION": "~4",
@@ -34,6 +34,9 @@ SETTINGS = {
     "ASC_COSMOS_DATABASE": "sous-chef",
     "ASC_FEEDBACK_CONTAINER": "RecipeHistory",
     "ASC_LEASE_CONTAINER": "leases",
+    "ASC_FOUNDRY_PROJECT_ENDPOINT": "https://synthetic.services.ai.azure.com/api/projects/test",
+    "ASC_WORKER_EXTRACTION_DEPLOYMENT": "extraction",
+    "ASC_WORKER_EXTRACTION_MODEL": "gpt-5.4-nano",
     "SCM_DO_BUILD_DURING_DEPLOYMENT": "true",
     "ENABLE_ORYX_BUILD": "true",
     "APPLICATIONINSIGHTS_CONNECTION_STRING": "InstrumentationKey=synthetic",
@@ -58,12 +61,13 @@ def resources(template: dict[str, Any], kind: str) -> list[dict[str, Any]]:
 
 
 class FunctionsInfrastructureTests(unittest.TestCase):
+    root: ClassVar[dict[str, Any]]
     template: ClassVar[dict[str, Any]]
     access: ClassVar[dict[str, Any]]
 
     @classmethod
     def setUpClass(cls) -> None:
-        compile_bicep("infra/functions.bicep")
+        cls.root = compile_bicep("infra/functions.bicep")
         cls.template = compile_bicep("infra/modules/functions.bicep")
         cls.access = compile_bicep("infra/modules/functions-cosmos-access.bicep")
 
@@ -107,6 +111,28 @@ class FunctionsInfrastructureTests(unittest.TestCase):
         )
         self.assertEqual(len(policies), 2)
         self.assertTrue(all(not policy["properties"]["allow"] for policy in policies))
+
+    def test_extraction_pins_and_worker_only_project_access_are_declared(self) -> None:
+        site = resources(self.template, "Microsoft.Web/sites")[0]
+        settings = {s["name"]: s["value"] for s in site["properties"]["siteConfig"]["appSettings"]}
+        for name, parameter in (
+            ("ASC_FOUNDRY_PROJECT_ENDPOINT", "foundryProjectEndpoint"),
+            ("ASC_WORKER_EXTRACTION_DEPLOYMENT", "extractionDeploymentName"),
+            ("ASC_WORKER_EXTRACTION_MODEL", "extractionModelId"),
+        ):
+            self.assertEqual(settings[name], f"[parameters('{parameter}')]")
+        grants = resources(self.root, "Microsoft.Authorization/roleAssignments")
+        self.assertEqual(len(grants), 1)
+        grant = grants[0]
+        self.assertEqual(
+            grant["scope"],
+            "[resourceId('Microsoft.CognitiveServices/accounts/projects', "
+            "parameters('foundryAccountName'), parameters('foundryProjectName'))]",
+        )
+        self.assertIn("outputs.principalId.value", grant["properties"]["principalId"])
+        self.assertIn(
+            "53ca6127-db72-4b80-b1b0-d745d6d5456d", grant["properties"]["roleDefinitionId"]
+        )
 
     def test_cosmos_writes_are_scoped_to_learning_profiles_sources_and_leases(self) -> None:
         grants = resources(self.access, "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments")
@@ -245,6 +271,22 @@ class FunctionsHostTests(unittest.TestCase):
                     host.validate_configuration()
                 self.assertNotIn("private-key", str(failure.exception))
 
+    def test_missing_or_incompatible_extraction_pins_cannot_report_healthy(self) -> None:
+        for changes in (
+            {"ASC_FOUNDRY_PROJECT_ENDPOINT": ""},
+            {"ASC_WORKER_EXTRACTION_DEPLOYMENT": ""},
+            {"ASC_WORKER_EXTRACTION_MODEL": ""},
+            {"ASC_WORKER_EXTRACTION_MODEL": "gpt-5.1-nano"},
+            {"ASC_WORKER_EXTRACTION_DEPLOYMENT": "latest"},
+        ):
+            with (
+                self.subTest(changes=changes),
+                patch.dict(os.environ, SETTINGS | changes, clear=True),
+                patch.object(Path, "read_text", return_value=json.dumps({"commit": SHA})),
+            ):
+                with self.assertRaises(RuntimeError):
+                    host.host_health(MagicMock())
+
     def test_release_missing_or_invalid_is_not_healthy(self) -> None:
         with patch.dict(os.environ, SETTINGS, clear=True):
             for value in ("{}", '{"commit":"not-a-commit"}', '{"commit":null}'):
@@ -302,6 +344,9 @@ class FunctionsDeliveryTests(unittest.TestCase):
             "no_health",
             "wrong_health",
             "no_build",
+            "missing_extraction_project",
+            "missing_extraction_deployment",
+            "wrong_extraction_model",
         ):
             worker, web, config = self.fixtures()
             settings = dict(SETTINGS)
@@ -338,6 +383,12 @@ class FunctionsDeliveryTests(unittest.TestCase):
                 config["healthCheckPath"] = "/health"
             elif mode == "no_build":
                 settings["SCM_DO_BUILD_DURING_DEPLOYMENT"] = "false"
+            elif mode == "missing_extraction_project":
+                del settings["ASC_FOUNDRY_PROJECT_ENDPOINT"]
+            elif mode == "missing_extraction_deployment":
+                del settings["ASC_WORKER_EXTRACTION_DEPLOYMENT"]
+            elif mode == "wrong_extraction_model":
+                settings["ASC_WORKER_EXTRACTION_MODEL"] = "gpt-5.1-nano"
             with (
                 self.subTest(mode=mode),
                 patch.dict(os.environ, ENV, clear=True),

@@ -10,6 +10,8 @@ from uuid import UUID, uuid4
 import httpx2
 import pytest
 from azure.ai.projects.aio import AIProjectClient
+from azure.ai.projects.aio.operations import DeploymentsOperations
+from azure.ai.projects.models import ModelDeployment
 from azure.core.credentials import AccessToken
 from openai import AsyncOpenAI
 from pydantic import ValidationError
@@ -107,8 +109,8 @@ def config(**changes: Any) -> ExtractionConfig:
         json.dumps(
             {
                 "project_endpoint": "https://project.example.invalid/api/projects/test",
-                "deployment": "approved-extraction-51",
-                "model_id": "gpt-5.1-nano",
+                "deployment": "extraction",
+                "model_id": "gpt-5.4-nano",
                 "managed_identity_client_id": "11111111-1111-4111-8111-111111111111",
                 **changes,
             }
@@ -147,7 +149,7 @@ def response_body(draft: Any = None, **changes: Any) -> dict[str, Any]:
         "object": "response",
         "created_at": 0,
         "status": "completed",
-        "model": "gpt-5.1-nano",
+        "model": "gpt-5.4-nano",
         "parallel_tool_calls": False,
         "tool_choice": "none",
         "tools": [],
@@ -257,7 +259,7 @@ def test_repeated_citrus_notes_produce_verified_counts_and_current_context_eligi
     )
     call = harness.requests[0]
     body = json.loads(call.content)
-    assert body["model"] == "approved-extraction-51"
+    assert body["model"] == "extraction"
     assert body["store"] is False and body["tools"] == [] and body["tool_choice"] == "none"
     assert body["truncation"] == "disabled" and body["max_output_tokens"] == 1000
     assert body["text"]["format"]["strict"] is True
@@ -292,6 +294,15 @@ def test_a_single_model_assertion_is_not_an_active_durable_fact() -> None:
         )
         == ()
     )
+
+
+def test_azure_response_can_return_the_exact_configured_deployment_alias() -> None:
+    current = source()
+    request = ExtractionRequest(current=current, profile=profile(), now=NOW)
+    result, harness = run(request, NO_INSIGHT, model="extraction")
+    assert result.outcome == "no_insight"
+    assert result.deployment == "extraction" and result.model_id == "gpt-5.4-nano"
+    assert len(harness.requests) == 1
 
 
 @pytest.mark.parametrize(
@@ -394,7 +405,7 @@ def test_invalid_confidence_and_model_authority_fields_are_rejected(
         ({"dietaryRestrictions": ["vegan"]}, {"value": "beef"}),
         ({"dislikes": ["lime"]}, {}),
         ({"likes": ["lime"]}, {"field": "dislikes"}),
-        ({}, {"field": "spicePreference", "value": "hot"}),
+        ({}, {"field": "spicePreference", "value": "unbounded heat"}),
         ({"nutritionGoals": ["low sodium"]}, {"field": "nutritionGoals", "value": "high sodium"}),
         ({"preferredCuisines": ["Italian"]}, {"field": "preferredCuisines", "value": "Thai"}),
     ],
@@ -409,6 +420,28 @@ def test_explicit_safety_and_taste_conflicts_cannot_become_learned_overrides(
     with pytest.raises(ExtractionError) as caught:
         run(request, {"outcome": "candidates", "candidates": [proposal(current, **changes)]})
     assert caught.value.code == ExtractionFailure.INVALID_RESULT
+    assert selected_profile.model_dump_json() == before
+
+
+def test_spice_feedback_can_propose_a_new_heat_level_without_editing_the_profile() -> None:
+    current = source(note="Please make this spicier next time.")
+    previous = source(note="I would prefer more heat.", days=1)
+    selected_profile = profile()
+    before = selected_profile.model_dump_json()
+    request = ExtractionRequest(
+        current=current, prior=(previous,), profile=selected_profile, now=NOW
+    )
+    result, _ = run(
+        request,
+        {
+            "outcome": "candidates",
+            "candidates": [proposal(current, previous, field="spicePreference", value="hot")],
+        },
+    )
+    learned = result.candidates[0].preference
+    assert learned.field == "spicePreference" and learned.value == "hot"
+    assert learned.candidate.supporting_cooked_count == 2
+    assert learned.candidate.confidence == 0.75
     assert selected_profile.model_dump_json() == before
 
 
@@ -491,7 +524,7 @@ def test_cross_owner_and_duplicate_source_context_is_rejected(case: str) -> None
         {"status": "failed", "error": {"code": "server_error", "message": NOTE}},
         {"incomplete_details": {"reason": "max_output_tokens"}},
         {"output": []},
-        {"model": "gpt-5.4-nano"},
+        {"model": "gpt-5.1-nano"},
         {"usage": None},
         {"usage": {"input_tokens": 6001, "output_tokens": 100, "total_tokens": 6101}},
         {"usage": {"input_tokens": 500, "output_tokens": 1001, "total_tokens": 1501}},
@@ -637,12 +670,25 @@ def test_content_capture_opt_in_is_rejected_before_invocation(
     assert caught.value.code == ExtractionFailure.CONFIGURATION and harness.requests == []
 
 
-def test_new_foundry_factory_uses_only_the_pinned_managed_identity(
+@pytest.mark.parametrize(
+    ("model_name", "model_version", "publisher"),
+    [
+        ("gpt-5.4-nano", "2026-03-17", "OpenAI"),
+        ("gpt-5.1-nano", "2026-03-17", "OpenAI"),
+        ("gpt-5.4-nano", "2026-06-01", "OpenAI"),
+        ("gpt-5.4-nano", "2026-03-17", "other"),
+    ],
+)
+def test_new_foundry_factory_uses_only_pinned_identity_and_verifies_the_backing_model(
     monkeypatch: pytest.MonkeyPatch,
+    model_name: str,
+    model_version: str,
+    publisher: str,
 ) -> None:
     calls: list[str] = []
+    deployment_reads: list[str] = []
     credential_closed: list[bool] = []
-    harness = Harness()
+    harness = Harness(response_body(model="extraction"))
     original = AIProjectClient.get_openai_client
 
     class Credential:
@@ -668,21 +714,44 @@ def test_new_foundry_factory_uses_only_the_pinned_managed_identity(
         kwargs["http_client"] = httpx2.AsyncClient(transport=httpx2.MockTransport(harness.handle))
         return original(project, **kwargs)
 
+    async def deployment(
+        operations: DeploymentsOperations, name: str, **kwargs: Any
+    ) -> ModelDeployment:
+        deployment_reads.append(name)
+        return ModelDeployment(
+            {
+                "type": "ModelDeployment",
+                "name": name,
+                "modelName": model_name,
+                "modelVersion": model_version,
+                "modelPublisher": publisher,
+            }
+        )
+
     monkeypatch.setattr(extraction, "ManagedIdentityCredential", credential)
     monkeypatch.setattr(AIProjectClient, "get_openai_client", openai_client)
+    monkeypatch.setattr(DeploymentsOperations, "get", deployment)
     request = ExtractionRequest(current=source(), profile=profile(), now=NOW)
-    result = asyncio.run(PreferenceExtractor(config()).extract(request))
-    assert result.outcome == "no_insight"
+    configured = config(model_id="gpt-5.4-nano-2026-03-17")
+    if (model_name, model_version, publisher) == ("gpt-5.4-nano", "2026-03-17", "OpenAI"):
+        result = asyncio.run(PreferenceExtractor(configured).extract(request))
+        assert result.outcome == "no_insight"
+        assert len(harness.requests) == 1
+        assert harness.requests[0].url.path == "/api/projects/test/openai/v1/responses"
+    else:
+        with pytest.raises(ExtractionError) as caught:
+            asyncio.run(PreferenceExtractor(configured).extract(request))
+        assert caught.value.code == ExtractionFailure.CONFIGURATION
+        assert harness.requests == []
     assert calls == ["11111111-1111-4111-8111-111111111111"]
-    assert credential_closed and len(harness.requests) == 1
-    assert harness.requests[0].url.path == "/api/projects/test/openai/v1/responses"
+    assert credential_closed and deployment_reads == ["extraction"]
 
 
 def test_model_config_never_reuses_old_nano_or_latest_and_requires_explicit_pins(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     for changes in (
-        {"model_id": "gpt-5.4-nano"},
+        {"model_id": "gpt-5.1-nano"},
         {"deployment": "latest"},
         {"project_endpoint": "http://project.example.invalid/api/projects/test"},
     ):
@@ -692,6 +761,25 @@ def test_model_config_never_reuses_old_nano_or_latest_and_requires_explicit_pins
     monkeypatch.delenv("ASC_WORKER_EXTRACTION_MODEL", raising=False)
     with pytest.raises(ExtractionError) as caught:
         ExtractionConfig.from_environment()
+    assert caught.value.code == ExtractionFailure.CONFIGURATION
+
+
+def test_model_config_validates_deployed_settings_without_process_environment_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ASC_WORKER_EXTRACTION_MODEL", "gpt-5.1-nano")
+    environment = {
+        "ASC_FOUNDRY_PROJECT_ENDPOINT": "https://project.example.invalid/api/projects/test",
+        "ASC_WORKER_EXTRACTION_DEPLOYMENT": "extraction",
+        "ASC_WORKER_EXTRACTION_MODEL": "gpt-5.4-nano-2026-03-17",
+        "AZURE_CLIENT_ID": "11111111-1111-4111-8111-111111111111",
+    }
+    configured = ExtractionConfig.from_environment(environment)
+    assert configured.model_id == environment["ASC_WORKER_EXTRACTION_MODEL"]
+    assert configured.deployment == "extraction"
+    del environment["ASC_WORKER_EXTRACTION_MODEL"]
+    with pytest.raises(ExtractionError) as caught:
+        ExtractionConfig.from_environment(environment)
     assert caught.value.code == ExtractionFailure.CONFIGURATION
 
 

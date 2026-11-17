@@ -1029,6 +1029,16 @@ def worker_target(
         raise DeliveryError(
             "Worker runtime, keyless connections, monitoring or build settings mismatch."
         )
+    from sous_chef.domain.extraction import ExtractionConfig, ExtractionError
+
+    try:
+        ExtractionConfig.from_environment(settings)
+    except ExtractionError:
+        raise DeliveryError(
+            "Worker extraction configuration mismatch. Configure ASC_FOUNDRY_PROJECT_ENDPOINT, "
+            "ASC_WORKER_EXTRACTION_DEPLOYMENT and ASC_WORKER_EXTRACTION_MODEL "
+            "for the approved GPT-5.4 nano deployment."
+        ) from None
     config = az("webapp", "config", "show", "-g", group, "-n", required("ASC_FUNCTION_APP_NAME"))
     mismatches = _worker_host_mismatches(config)
     if mismatches and configure_host:

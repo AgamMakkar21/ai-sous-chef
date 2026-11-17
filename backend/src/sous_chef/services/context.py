@@ -1,8 +1,10 @@
 """Fresh, owned, bounded model input; never writes user preferences or chat."""
 
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
+from time import monotonic
 from uuid import uuid4
 
 import tiktoken
@@ -38,7 +40,10 @@ from sous_chef.domain.profiles import ExplicitPreferences, ProfileModel, require
 from sous_chef.services.conversations import ConversationService
 from sous_chef.services.groceries import _rows as grocery_rows
 from sous_chef.services.profiles import _view as profile_view
+from sous_chef.telemetry import ErrorCategory, Event, operational_event
 from sous_chef.tracing import Operation, observed
+
+MAX_LEARNED_CONTEXT_SECONDS = 2.0
 
 
 class _LearnedState(ProfileModel):
@@ -174,8 +179,22 @@ class ContextService:
             from sous_chef.services.learning import LearningPreferenceReader
 
             reader = self.learned_reader or LearningPreferenceReader(repository)
-            resolved = await reader.resolve(user, candidates, now=now, deadline=deadline)
-            learned = _eligible(user, resolved, candidates, explicit, now)
+            learned_deadline = min(deadline, monotonic() + MAX_LEARNED_CONTEXT_SECONDS)
+            try:
+                async with asyncio.timeout_at(learned_deadline):
+                    resolved = await reader.resolve(
+                        user, candidates, now=now, deadline=learned_deadline
+                    )
+                    learned = _eligible(user, resolved, candidates, explicit, now)
+            except (CosmosError, TimeoutError) as error:
+                code = CosmosFailure.TIMEOUT if isinstance(error, TimeoutError) else error.code
+                if monotonic() >= deadline or code not in {
+                    CosmosFailure.THROTTLED,
+                    CosmosFailure.TIMEOUT,
+                    CosmosFailure.UNAVAILABLE,
+                }:
+                    raise
+                operational_event(Event.LEARNED_CONTEXT_UNAVAILABLE, category=ErrorCategory(code))
 
         exchanges: list[ContextExchange] = []
         token = None

@@ -366,7 +366,7 @@ class EvidenceReader:
     ],
     ids=["ordinary-learning", "allergy-override", "forged-system-identity"],
 )
-def test_evidence_backed_learning_is_filtered_and_explicit_state_stays_authoritative(
+def test_evidence_backed_learning_preserves_explicit_safety_and_gates_learned_heat(
     insight: str,
     chat_api: TestClient,
     executor: FakeExecutor,
@@ -379,6 +379,7 @@ def test_evidence_backed_learning_is_filtered_and_explicit_state_stays_authorita
         ("allergy", "likes", "peanut butter", (evidence(), evidence())),
         ("diet", "likes", "chicken", (evidence(), evidence())),
         ("spice", "spicePreference", "hot", (evidence(), evidence())),
+        ("single-spice", "spicePreference", "hot", (evidence(),)),
         ("taste", "likes", "bitter flavors", (evidence(), evidence())),
         ("old", "likes", "rice", (evidence(days=181), evidence(days=181))),
         ("weak", "likes", "rice", (evidence(), evidence(cooked=False))),
@@ -407,11 +408,12 @@ def test_evidence_backed_learning_is_filtered_and_explicit_state_stays_authorita
         assert send(client, create(client)).status_code == 200
     context = executor.calls[-1].context
     assert reader.calls == 1
-    assert len(context.learned_preferences) == 1
-    learned = context.learned_preferences[0]
-    assert learned.insight_key == "rice"
-    assert learned.confidence == 0.75
-    assert learned.supporting_cooked_count == 2
+    learned = {item.insight_key: item for item in context.learned_preferences}
+    assert set(learned) == {"rice", "spice"}
+    assert all(item.confidence == 0.75 for item in learned.values())
+    assert all(item.supporting_cooked_count == 2 for item in learned.values())
+    assert learned["spice"].field == "spicePreference"
+    assert learned["spice"].value == "hot"
     assert context.explicit_preferences.spice_preference == "medium"
     assert insight not in context.prompt
     assert document(harness[0]) == before

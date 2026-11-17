@@ -23,6 +23,7 @@ from sous_chef.domain.context import (
     RequestContext,
 )
 from sous_chef.domain.extraction import (
+    EXTRACTION_MODEL,
     MAX_EXTRACTION_INPUT_TOKENS,
     MAX_EXTRACTION_OUTPUT_TOKENS,
     MAX_EXTRACTION_PRIOR,
@@ -181,7 +182,7 @@ async def measure(iterations: int) -> dict[str, Any]:
         "fixed_models": {
             "orchestrator": "gpt-5.4-mini",
             "recipe_nutrition": "gpt-5.4",
-            "extraction": "gpt-5.1-nano",
+            "extraction": EXTRACTION_MODEL,
         },
         "budgets": {
             "orchestrator": asdict(POLICY),

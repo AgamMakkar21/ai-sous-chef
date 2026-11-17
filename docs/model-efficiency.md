@@ -7,9 +7,11 @@ both fields. Grocery identifiers, quantities, units, ingredient identifiers,
 complete conversation text, explicit constraints, learned evidence and the full
 recipe-revision snapshot remain unchanged.
 
-The prescribed models remain GPT-5.4-mini for orchestration, GPT-5.4 for Recipe +
-Nutrition and GPT-5.1 nano for extraction. No agent definitions, version pins,
-identities, model selection, tools or provider retry behavior changed.
+The original efficiency baseline used GPT-5.4-mini for orchestration, GPT-5.4 for
+Recipe + Nutrition and GPT-5.1 nano for extraction. That efficiency change did not
+alter agent definitions, identities, tools or retry behavior. Extraction has
+since aligned with the approved existing GPT-5.4 nano deployment; new reports
+record that family, while historical reports retain their original pins.
 
 ## Before/after evidence
 

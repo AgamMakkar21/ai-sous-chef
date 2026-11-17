@@ -1,6 +1,6 @@
 # Durable preference learning (ASC-48 / #42, ASC-49 / #46, ASC-53 / #56)
 
-`LearningService` connects admitted feedback to the existing GPT-5.1 nano
+`LearningService` connects admitted feedback to the existing GPT-5.4 nano
 extractor. All point reads and writes use the change-feed record's validated
 owner partition. Before extraction, it reloads the immutable feedback and current
 owned recipe, checks its revision, note, rating, lineage and real cooked timestamp,
@@ -73,12 +73,31 @@ candidates survive, evicting lowest confidence, oldest evidence, then ascending
 insight key. Existing 256-KiB storage ceilings also apply. No event-ID array,
 evidence list or lifetime receipt collection is embedded in the profile.
 
+The saved `spicePreference` is a soft baseline, not a conflicting safety rule.
+Direct cooked feedback can support a different canonical heat level without
+rewriting that explicit setting. Recipe context still requires two independent
+cooked supporters and confidence >= 0.65; one comment, duplicate delivery or an
+edit cannot bypass the gate. If multiple heat levels qualify, the first entry
+under the existing confidence/recency/key ordering takes precedence. Current
+request heat instructions and all allergy/other explicit constraints still win.
+The existing v1 schema and receipt/window identity namespaces are unchanged;
+updating extraction does not replay already-applied feedback automatically.
+
 `LearningPreferenceReader` is the default recipe-context reader. It rechecks
 owned current sources at request time, including deletion and edits that have not
 yet been processed. The existing two-cooked-supporter / 0.65-confidence gate and
 explicit precedence still apply. `LearningService.reconcile(user)` rebuilds the
 projection after deletion/recovery without invoking extraction; deletion
 orchestration itself remains ASC-50.
+
+Extraction is never invoked by chat or feedback admission: its separate worker
+and model deployment can fail without blocking those paths. Optional learned
+evidence lookup has its own two-second ceiling, never extending the chat deadline.
+A timeout, throttle or temporary unavailability omits learned context for that
+request and emits a safe `learned_context_unavailable` warning. Saved explicit
+preferences and all recipe/allergy checks still apply; no profile is rewritten.
+Ownership, authentication and evidence-integrity errors still fail closed, and
+an expired overall chat deadline is never converted into successful degradation.
 
 The [ASC-57 bounded baseline](preference-learning-evaluation.md) exercises the
 real ledger and context gate with matched explicit-only/learned-enabled inputs.
