@@ -655,6 +655,45 @@ class ReleaseTests(unittest.TestCase):
                     },
                 )
 
+    def test_applying_a_bundle_removes_only_omitted_phase_pins_and_checks_the_readback(
+        self,
+    ) -> None:
+        stale = {name: "7" for name in release.SPECIALIST_PHASE_VERSIONS.values()}
+        for deleted in (True, False):
+            with self.subTest(deleted=deleted):
+                deployed = SETTINGS if deleted else SETTINGS | stale
+                with (
+                    patch.dict(os.environ, ENV),
+                    patch.object(release, "read_bundle", return_value={"commit": SOURCE}),
+                    patch.object(
+                        delivery,
+                        "target",
+                        side_effect=[(APP, SETTINGS | stale), (APP, deployed)],
+                    ),
+                    patch.object(delivery, "worker_target"),
+                    patch.object(delivery, "az", return_value={"status": 4}) as azure,
+                    patch.object(delivery, "smoke") as smoke,
+                    patch.object(delivery, "worker_smoke"),
+                ):
+                    if deleted:
+                        release.apply_bundle(Path("synthetic-release"), "dev", PINS)
+                        smoke.assert_called_once()
+                    else:
+                        with self.assertRaisesRegex(
+                            delivery.DeliveryError, "pins were not applied"
+                        ):
+                            release.apply_bundle(Path("synthetic-release"), "dev", PINS)
+                        smoke.assert_not_called()
+                deletion = next(
+                    call.args
+                    for call in azure.call_args_list
+                    if call.args[:4] == ("webapp", "config", "appsettings", "delete")
+                )
+                self.assertEqual(
+                    deletion[deletion.index("--setting-names") + 1 :], tuple(sorted(stale))
+                )
+                self.assertNotIn("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET", deletion)
+
     def test_rollback_refuses_different_data_contract_or_production_targets(self) -> None:
         with self.assertRaises(delivery.DeliveryError):
             release.rollback_compatible(POLICY, POLICY | {"data_contract": 2})

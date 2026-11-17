@@ -1,5 +1,6 @@
 import asyncio
 import json
+from decimal import Decimal
 from time import monotonic
 from uuid import uuid4
 
@@ -33,8 +34,72 @@ def partial() -> NutritionEvidence:
     )
 
 
-def test_web_fallback_fills_all_missing_nutrients_without_replacing_usda() -> None:
+def test_residual_recovery_sums_raw_values_instead_of_repeatedly_rounding_totals() -> None:
+    payload = request(
+        *(
+            ingredient(name, line_id=line_id).model_copy(update={"quantity": Decimal("0.1")})
+            for name, line_id in (("rice", "rice"), ("carrot", "carrot"), ("olive oil", "oil"))
+        ),
+        servings=1,
+    )
+    original = asyncio.run(
+        UsdaNutritionTool(config("partial_protein")).lookup(payload, deadline=monotonic() + 10)
+    )
+    assert original.status == "partial"
+    estimates = tuple(
+        IngredientNutrientEstimate(
+            ingredient_line_id=line_id,
+            nutrients=(Nutrient(name="protein", amount=0.004, unit="g"),),
+            source="ai_knowledge",
+            reference=None,
+            basis="Synthetic estimate for the specified whole ingredient portion.",
+        )
+        for line_id in ("carrot", "oil")
+    )
+    first = with_nutrient_estimates(original, estimates[:1])
+    remaining = nutrient_request(payload, first, operation_id=uuid4(), use_web=False)
+    assert remaining is not None and remaining.missing_nutrients == {"oil": ("protein",)}
+    final = with_nutrient_estimates(first, estimates[1:])
+    assert final.status == "known" and not final.unknown_components
+    assert next(item.amount for item in final.nutrients if item.name == "protein") == 0.01
+    assert final.mappings == original.mappings and final.sources == original.sources
+
+
+def test_maximum_multilingual_ingredient_input_fits_the_recovery_prompt_without_escaping() -> None:
+    lines = tuple(
+        ingredient(
+            "\u98df" * 100,
+            line_id=f"ingredient-{index:02d}".ljust(64, "x"),
+        )
+        for index in range(30)
+    )
+    payload = request(*lines)
+    evidence = asyncio.run(
+        UsdaNutritionTool(config("no_food")).lookup(payload, deadline=monotonic() + 10)
+    )
+    recovery = nutrient_request(payload, evidence, operation_id=uuid4(), use_web=False)
+    assert recovery is not None and len(recovery.prompt) <= 12000
+    content = json.loads(recovery.prompt)
+    assert len(content["ingredients"]) == 30
+    assert all(item["name"] == "\u98df" * 100 for item in content["ingredients"])
+
+
+@pytest.mark.parametrize("legacy_mapping", [False, True])
+def test_web_fallback_fills_all_missing_nutrients_without_replacing_usda(
+    legacy_mapping: bool,
+) -> None:
     evidence = partial()
+    if legacy_mapping:
+        evidence = NutritionEvidence.model_validate_json(
+            evidence.model_copy(
+                update={
+                    "mappings": tuple(
+                        mapping.model_copy(update={"nutrients": ()})
+                        for mapping in evidence.mappings
+                    )
+                }
+            ).model_dump_json()
+        )
     payload = request(ingredient(), ingredient("carrot", 150, line_id="carrot"))
     fallback = nutrient_request(payload, evidence, operation_id=uuid4())
     assert fallback is not None

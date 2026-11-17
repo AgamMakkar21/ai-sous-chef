@@ -53,6 +53,7 @@ async function chatBackend(page: Page) {
       body: { content: string; retryOfTurnId?: string };
     }[],
     reads: [] as string[],
+    closes: [] as string[],
     generations: 0,
     mode: "success" as
       | "success"
@@ -129,6 +130,19 @@ async function chatBackend(page: Page) {
       return;
     }
     expect(request.method()).toBe("POST");
+    if (parts[5] === "operations" && parts[7] === "close") {
+      expect(request.headers()["x-csrf-token"]).toBeTruthy();
+      expect(request.headers()["idempotency-key"]).toBe(parts[6]);
+      const operation = state.operations.get(parts[6]!);
+      if (!operation || operation.status !== "outcomeUnknown")
+        throw new Error("Only an interrupted synthetic operation can close.");
+      state.closes.push(url.pathname);
+      operation.status = "failed";
+      operation.failureCode = "execution_closed";
+      operation.turn.status = "failed";
+      await route.fulfill({ json: { data: view(operation) } });
+      return;
+    }
     expect(url.pathname).toBe(`/api/v1/conversations/${id}/turns`);
     const key = request.headers()["idempotency-key"];
     if (!key) throw new Error("A send requires an idempotency key.");
@@ -211,6 +225,7 @@ async function chatBackend(page: Page) {
               : null,
         turn: turn!,
       };
+      turn!.operationId = operation.operationId;
       state.operations.set(operation.operationId, operation);
       state.receipts.set(key, { body, operationId: operation.operationId });
       state.generations++;
@@ -561,6 +576,46 @@ test("unknown execution outcomes remain fenced across status checks and reload",
   await expect(page.locator("body")).not.toContainText(
     "private-provider-details",
   );
+});
+
+test("a lost operation reference is recovered from history and closes without another generation", async ({
+  page,
+}) => {
+  const { chat } = await chatBackend(page);
+  const turn = savedTurn("Previously interrupted request", 0, "outcomeUnknown");
+  const operationId = crypto.randomUUID();
+  turn.operationId = operationId;
+  chat.turns = [turn];
+  chat.operations.set(operationId, {
+    operationId,
+    conversationId: id,
+    turnId: turn.turnId,
+    status: "outcomeUnknown",
+    failureCode: "execution_outcome_unknown",
+    turn,
+  });
+  await page.goto("/#sous-chef");
+  await choose(page);
+  await expect(sendButton(page)).toBeDisabled();
+  const recovery = page.getByRole("region", { name: "Saved request recovery" });
+  await recovery.getByRole("button", { name: "Check saved status" }).click();
+  expect(chat.writes).toHaveLength(0);
+  expect(chat.generations).toBe(0);
+  await recovery
+    .getByRole("button", {
+      name: "Close interrupted request without retrying",
+    })
+    .click();
+  await expect(
+    recovery.getByRole("button", { name: "Retry saved request" }),
+  ).toBeVisible();
+  expect(chat.closes).toHaveLength(1);
+  expect(chat.generations).toBe(0);
+  await recovery.getByRole("button", { name: "Retry saved request" }).click();
+  await expect(page.getByText(reply, { exact: true })).toBeVisible();
+  expect(chat.writes).toHaveLength(1);
+  expect(chat.writes[0]?.body.retryOfTurnId).toBe(turn.turnId);
+  expect(chat.generations).toBe(1);
 });
 
 for (const mode of ["partial", "foreign", "mismatched"] as const) {

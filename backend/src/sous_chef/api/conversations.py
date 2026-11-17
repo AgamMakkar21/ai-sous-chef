@@ -144,4 +144,23 @@ def create_conversation_router(
             response.headers["Retry-After"] = "2"
         return OperationEnvelope(data=operation)
 
+    @router.post("/{conversation_id}/operations/{operation_id}/close")
+    async def close_operation(
+        conversation_id: UUID4,
+        operation_id: UUID4,
+        user: CurrentUser,
+        request: Request,
+        response: Response,
+        idempotency_key: Annotated[
+            str, Header(min_length=1, max_length=128, pattern=r"^[\x21-\x7e]+$")
+        ],
+    ) -> OperationEnvelope:
+        if request.query_params or len(request.headers.getlist("idempotency-key")) != 1:
+            raise RequestValidationError([{"type": "extra_forbidden", "loc": ("request",)}])
+        if await request.body():
+            raise RequestValidationError([{"type": "extra_forbidden", "loc": ("body",)}])
+        response.headers["Cache-Control"] = "no-store"
+        operation = await ChatService(settings, executor).close(user, conversation_id, operation_id)
+        return OperationEnvelope(data=operation)
+
     return router

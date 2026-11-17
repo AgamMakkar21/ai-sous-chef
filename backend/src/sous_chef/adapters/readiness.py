@@ -6,6 +6,7 @@ from sous_chef.adapters.credentials import build_async_credential
 from sous_chef.adapters.foundry_iq import RecipeKnowledgeConfig
 from sous_chef.domain.agent_identity import AgentIdentity, AgentRole, IdentityError, verify_distinct
 from sous_chef.domain.readiness import DependencyUnavailable
+from sous_chef.orchestrator_definition import verify_orchestrator_source
 from sous_chef.recipe_definition import RecipePhase, recipe_knowledge_tool, verify_recipe_source
 from sous_chef.settings import ConfigurationError, Settings
 
@@ -96,11 +97,11 @@ class LiveReadinessProbe:
                                 AgentIdentity(role, name, instance.principal_id, instance.client_id)
                             )
                             source = await project.agents.get_version(name, version)
+                            if source.name != name or source.version != version:
+                                raise DependencyUnavailable("Agent pin verification failed.")
+                            if role == AgentRole.ORCHESTRATOR:
+                                verify_orchestrator_source(source)
                             if role == AgentRole.RECIPE_NUTRITION:
-                                if source.name != name or source.version != version:
-                                    raise DependencyUnavailable(
-                                        "Specialist phase pin verification failed."
-                                    )
                                 knowledge = RecipeKnowledgeConfig.from_settings(settings)
                                 if settings.foundry_recipe_nutrition_mode == "combined":
                                     verify_recipe_source(
@@ -126,11 +127,18 @@ class LiveReadinessProbe:
                                         RecipePhase.CALORIE,
                                         settings.foundry_recipe_nutrition_calorie_agent_version,
                                     ),
+                                    (
+                                        RecipePhase.AI_RECIPE,
+                                        settings.foundry_recipe_nutrition_ai_recipe_agent_version,
+                                    ),
                                 ):
                                     if (
                                         settings.foundry_recipe_nutrition_mode == "combined"
-                                        and phase != RecipePhase.CALORIE
-                                    ) or (phase == RecipePhase.CALORIE and pin is None):
+                                        and phase in (RecipePhase.RETRIEVAL, RecipePhase.WEB)
+                                    ) or (
+                                        phase in (RecipePhase.CALORIE, RecipePhase.AI_RECIPE)
+                                        and pin is None
+                                    ):
                                         continue
                                     assert pin is not None
                                     phase_source = await project.agents.get_version(name, pin)

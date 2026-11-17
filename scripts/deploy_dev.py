@@ -161,18 +161,18 @@ def manifest() -> dict[str, dict[str, str]]:
         not isinstance(data, dict)
         or set(data) != {"schema_version", "agents_enabled", "agents"}
         or type(data.get("schema_version")) is not int
-        or data.get("schema_version") not in (2, 3, 4, 5, 6)
+        or data.get("schema_version") not in (2, 3, 4, 5, 6, 7)
         or type(data.get("agents_enabled")) is not bool
         or not isinstance(data.get("agents"), dict)
     ):
         raise DeliveryError(
-            "Use a version-2 through version-6 manifest with explicit agents_enabled."
+            "Use a version-2 through version-7 manifest with explicit agents_enabled."
         )
     if data["agents_enabled"] is False:
         if data["agents"]:
             raise DeliveryError("Disabled agent releases must have an empty agents mapping.")
         return {}
-    if data["schema_version"] not in (3, 4, 5, 6):
+    if data["schema_version"] not in (3, 4, 5, 6, 7):
         raise DeliveryError("Enabled releases require phase pins or combined source pins.")
     if set(data["agents"]) != set(ROLES):
         raise DeliveryError("Enabled agent releases must contain both agent roles.")
@@ -183,12 +183,16 @@ def manifest() -> dict[str, dict[str, str]]:
         version_fields = (
             ("version",)
             if role == "orchestrator" or data["schema_version"] == 4
+            else ("version", "calorie_version", "ai_recipe_version")
+            if data["schema_version"] == 7
             else ("version", "calorie_version")
             if data["schema_version"] in (5, 6)
             else ("version", "retrieval_version", "web_version")
         )
         contract_fields = (
-            {"contract_sha256"} if role == "orchestrator" and data["schema_version"] == 6 else set()
+            {"contract_sha256"}
+            if role == "orchestrator" and data["schema_version"] in (6, 7)
+            else set()
         )
         if not isinstance(target, dict) or set(target) != {
             "name",
@@ -220,7 +224,7 @@ def manifest() -> dict[str, dict[str, str]]:
                     "and contract_sha256 before merging."
                 )
             validated[role]["contract_sha256"] = target["contract_sha256"]
-        if role == "recipe_nutrition" and data["schema_version"] in (4, 5, 6):
+        if role == "recipe_nutrition" and data["schema_version"] in (4, 5, 6, 7):
             validated[role]["mode"] = "combined"
     if agents[ROLES[0]]["name"] == agents[ROLES[1]]["name"]:
         raise DeliveryError("The two agents must have different runtime names.")
@@ -407,7 +411,13 @@ def release_agents(
         )
         version_fields = tuple(
             field
-            for field in ("version", "retrieval_version", "web_version", "calorie_version")
+            for field in (
+                "version",
+                "retrieval_version",
+                "web_version",
+                "calorie_version",
+                "ai_recipe_version",
+            )
             if field in pin
         )
         for field in version_fields:
@@ -436,6 +446,7 @@ def release_agents(
                     "retrieval_version": RecipePhase.RETRIEVAL,
                     "web_version": RecipePhase.WEB,
                     "calorie_version": RecipePhase.CALORIE,
+                    "ai_recipe_version": RecipePhase.AI_RECIPE,
                 }[field]
                 if pin.get("mode") == "combined" and field == "version":
                     phase = RecipePhase.COMBINED
@@ -485,6 +496,7 @@ def release_agents(
             "retrieval_version": "_RETRIEVAL",
             "web_version": "_WEB",
             "calorie_version": "_CALORIE",
+            "ai_recipe_version": "_AI_RECIPE",
         }[field]
         settings[f"ASC_FOUNDRY_{role.upper()}{phase_label}_AGENT_VERSION"] = version.version
     for identity in identities:
@@ -732,14 +744,47 @@ async def chat_smoke(deployed: dict[str, str]) -> None:
     from sous_chef.adapters.foundry_gateway import FoundryGateway
     from sous_chef.domain.agent_identity import AgentRole
     from sous_chef.domain.context import RequestContext
-    from sous_chef.domain.foundry import FoundryGatewayError
-    from sous_chef.domain.orchestrator import POLICY, OrchestratorError
+    from sous_chef.domain.foundry import FoundryFailure, FoundryGatewayError
+    from sous_chef.domain.orchestrator import POLICY, OrchestratorError, TokenUsage
     from sous_chef.domain.profiles import ExplicitPreferences
-    from sous_chef.domain.recipes import NUTRIENT_NAMES, NutrientGroundingRequest
+    from sous_chef.domain.recipes import (
+        NUTRIENT_NAMES,
+        CombinedRecipeGenerationRequest,
+        GroundedRecipeGenerationRequest,
+        NutrientGroundingRequest,
+        RecipeDraft,
+        RecipeGrounding,
+        StructuredRecipe,
+        WebGrounding,
+    )
     from sous_chef.services.nutrition import UsdaNutritionTool
     from sous_chef.services.orchestrator import OrchestratorService
     from sous_chef.services.recipe_specialist import RecipeSpecialistService
     from sous_chef.settings import ConfigurationError, Settings
+
+    class UnavailableRecipeSource(FoundryGateway):
+        async def generate_grounded_recipe(
+            self, request: GroundedRecipeGenerationRequest
+        ) -> tuple[RecipeDraft, RecipeGrounding, TokenUsage]:
+            raise FoundryGatewayError(FoundryFailure.UNAVAILABLE, request)
+
+        async def generate_combined_recipe(
+            self, request: CombinedRecipeGenerationRequest
+        ) -> tuple[RecipeDraft, RecipeGrounding, WebGrounding | None, TokenUsage]:
+            raise FoundryGatewayError(FoundryFailure.UNAVAILABLE, request)
+
+    def complete_recipe(recipe: StructuredRecipe | None) -> StructuredRecipe:
+        if (
+            recipe is None
+            or recipe.nutrition.status != "known"
+            or {item.name for item in recipe.nutrition.nutrients} != set(NUTRIENT_NAMES)
+            or {item.ingredient_line_id for item in recipe.nutrition.ingredient_calories}
+            != {line.line_id for line in recipe.ingredients}
+        ):
+            raise DeliveryError(
+                "Live chat did not produce complete attributed nutrition after USDA/AI lookup."
+            )
+        return recipe
 
     configuration: dict[str, Any] = {
         name: deployed[f"ASC_{name.upper()}"]
@@ -768,6 +813,7 @@ async def chat_smoke(deployed: dict[str, str]) -> None:
             None,
             nutrition,
             combined=settings.foundry_recipe_nutrition_mode == "combined",
+            allow_ai_recipes=settings.foundry_recipe_nutrition_ai_recipe_agent_version is not None,
         )
         context = RequestContext(
             explicit_preferences=ExplicitPreferences.model_validate(
@@ -799,21 +845,28 @@ async def chat_smoke(deployed: dict[str, str]) -> None:
                     result = await OrchestratorService(gateway, specialist).run(
                         context.model_copy(update={"current_request": current_request})
                     )
+                complete_recipe(result.recipe)
+            if settings.foundry_recipe_nutrition_ai_recipe_agent_version is not None:
+                # Inject only retrieval unavailability; generation and nutrition remain live.
+                fallback = RecipeSpecialistService(
+                    UnavailableRecipeSource(settings, client_factory=_release_project_client),
+                    None,
+                    nutrition,
+                    combined=settings.foundry_recipe_nutrition_mode == "combined",
+                    allow_ai_recipes=True,
+                )
+                async with asyncio.timeout(POLICY.deadline_seconds + 30):
+                    recovered = complete_recipe(
+                        (await OrchestratorService(gateway, fallback).run(context)).recipe
+                    )
                 if (
-                    result.status != "candidate"
-                    or result.recipe is None
-                    or result.recipe.nutrition.status != "known"
-                    or {item.name for item in result.recipe.nutrition.nutrients}
-                    != set(NUTRIENT_NAMES)
-                    or {
-                        item.ingredient_line_id
-                        for item in result.recipe.nutrition.ingredient_calories
-                    }
-                    != {line.line_id for line in result.recipe.ingredients}
+                    recovered.generation_source != "ai_knowledge"
+                    or recovered.source_ids
+                    or recovered.source_claims
+                    or recovered.web_grounding is not None
                 ):
                     raise DeliveryError(
-                        "Live chat did not produce complete attributed nutrition "
-                        "after USDA/AI lookup."
+                        "Live AI recipe recovery did not retain honest attribution."
                     )
         assert result.recipe is not None
         if settings.foundry_recipe_nutrition_calorie_agent_version is not None:

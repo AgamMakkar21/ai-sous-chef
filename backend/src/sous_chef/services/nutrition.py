@@ -300,11 +300,9 @@ class UsdaNutritionTool:
                         line.quantity,
                         line.unit,
                         profile,
-                        estimates=request.allow_estimates,
+                        estimates=request.allow_estimates and not request.require_selection,
                     )
-                    if line.quantity is not None
-                    and line.unit is not None
-                    and not request.require_selection
+                    if line.quantity is not None and line.unit is not None
                     else None
                 )
                 applied_estimate = None

@@ -220,24 +220,25 @@ Wait for role propagation and investigate the actual denial at the granted scope
 ## Release stages
 
 The current dev agent design is **combined**: native web search and recipe MCP
-are published on one Recipe + Nutrition source version, with a separate tool-free
-nutrition recovery source. After publishing and exactly verifying the reviewed
+are published on one Recipe + Nutrition source version, with distinct tool-free
+nutrition and AI recipe recovery sources. After publishing and exactly verifying the reviewed
 sources, use this manifest shape:
 
 ```json
 {
-  "schema_version": 6,
+  "schema_version": 7,
   "agents_enabled": true,
   "agents": {
     "orchestrator": {
       "name": "sous-chef-orchestrator-dev",
-      "version": "47",
-      "contract_sha256": "f7d914147b63ebafde3cbebb1be27b2f8bc7bece5be10f32230c4a92b9eff987"
+      "version": "52",
+      "contract_sha256": "18ab1d9449efca1b87a3a43fa31e2aede0870d421d37c2e549d603ab3e132bcc"
     },
     "recipe_nutrition": {
       "name": "sous-chef-recipe-nutrition-dev",
       "version": "58",
-      "calorie_version": "62"
+      "calorie_version": "62",
+      "ai_recipe_version": "71"
     }
   }
 }
@@ -246,11 +247,12 @@ sources, use this manifest shape:
 The pins above are the actual read-back-verified sources selected for this candidate,
 not assumed next-version numbers. Future releases must read back their selected
 versions again. Deployment sets `ASC_FOUNDRY_RECIPE_NUTRITION_MODE=combined`,
-verifies and clones all three exact sources under their existing identities, then pins
+verifies and clones all four exact sources under their existing identities, then pins
 the resulting release versions. It does not publish separate retrieval/web phases.
-Orchestrator source 47 carries policy 11 and the bounded residual-nutrition repair
-instructions; policy-10 source 45 is incompatible with this backend.
-The version-6 manifest records its read-back-verified `asc_contract_sha256` as
+Orchestrator source 52 carries policy 13, bounded MCP-to-AI recipe recovery and
+direct delivery after deterministic gates. Source 71 is the tool-free `ai_recipe`
+phase; it does not replace the combined source 58 or nutrition source 62.
+The version-7 manifest records its read-back-verified `asc_contract_sha256` as
 `contract_sha256`. Manifest validation, already exercised by infrastructure PR CI,
 recomputes that contract from the current instructions and function schema before
 any Azure access. A policy-version, instruction or tool-schema change therefore fails PR
@@ -263,6 +265,22 @@ Recipe sources 58 and 62 retain their exact reviewed definitions. App Service mu
 receive the compatible backend and complete runtime pins together through delivery;
 do not enable its flag manually against the older backend. USDA secrets/enabling
 and the stable `ASC_PAGINATION_KEY` remain owner-managed.
+The release smoke runs ordinary yogurt, chicken and household rice/beans requests,
+then injects retrieval unavailability while retaining real pinned AI composition
+and USDA/AI nutrition. It requires a complete honestly attributed recipe, not
+just a successful model HTTP response. This synthetic dependency check does not
+read/write consumer documents or prove signed-in browser/app-identity acceptance.
+Applying a retained bundle removes only omitted specialist phase-version settings
+and verifies their absence; unrelated authentication/workload settings are preserved.
+
+This backend writes **data contract 2** because recipe snapshots now carry
+`generationSource` and may have no curated evidence for explicitly labelled AI
+recipes. It reads older snapshots, but a contract-1 backend cannot read the new
+format. Rollback/rehearsal across contracts 1 and 2 stays blocked. Establish
+compatible contract-2 retained releases before rollback rehearsal or production
+promotion; do not lower the contract number, bypass that gate or claim an old
+contract-1 bundle is a safe rollback after new snapshots have been written.
+Source publication/read-back does not activate the application.
 Post-execution web-query validation is not pre-search privacy isolation; review
 the [combined-agent boundaries](recipe-specialist.md#combined-recipe-agent-with-native-web-search).
 

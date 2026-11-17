@@ -32,7 +32,7 @@ restrictions, rather than trusting a model-generated context summary. Only
 authorized backend context from ASC-23 belongs here; this service does not
 accept a user ID, select a Cosmos partition, or read provider conversation history.
 
-Function results are returned using native `function_call_output` items with
+Rejections and projection-only function results use native `function_call_output` items with
 their original call ID. The next request includes the bounded context, that
 call and its result, not a `previous_response_id` or provider conversation.
 `store=false` and requested encrypted reasoning items support stateless reasoning
@@ -45,15 +45,16 @@ or an impossible cooking-time request. Current explicit direction wins over
 learned preferences and old history. A current request can override soft defaults,
 but cannot override stored allergies/restrictions or modify profile state.
 The original time budget selected during routing cannot be silently increased
-on a revision. The Orchestrator owns fit review; it does not invent nutrition.
+on a revision. The backend enforces fit against that budget and the stored skill;
+the Orchestrator can request the one correction. It does not invent nutrition.
 
 ## Backend limits and candidate validation
 
-The frozen policy in `domain/orchestrator.py` is version 12:
+The frozen policy in `domain/orchestrator.py` is version 13:
 
 | Limit | Value |
 | --- | --- |
-| Total model invocations | 4 main calls, one USDA selection per specialist attempt (maximum 2), plus at most 2 tool-free nutrition recovery calls |
+| Total model invocations | 4 main calls, one USDA selection and one optional AI recipe recovery per specialist attempt (maximum 2 each), plus at most 2 tool-free nutrition recovery calls |
 | Specialist invocations | 2: initial plus one revision |
 | Total tool calls, including retries and specialist handoffs | 8 |
 | Grounding with Bing | At most one ordinary search; no nutrition search; 10-second ordinary search ceiling |
@@ -67,6 +68,12 @@ AI responses do not trigger another attempt. This does not permit additional
 revisions or another search. All recovery calls share up to 60 seconds
 of the remaining operation time, while preserving two seconds for completion.
 The recovery workflow is reserved independently of web tools and cannot authorize a search.
+When the separate AI recipe pin is configured, MCP retrieval/generation has a
+45-second sub-deadline, followed when necessary by at most 30 seconds for
+tool-free recipe composition, always inside the shared operation deadline.
+Only one such fallback is allowed per specialist attempt. Required current facts
+cannot become AI guesses. Optional quantity searches are skipped when the shared
+search/tool budget is exhausted; uncertain earlier search reservations are not refunded.
 The chat send allows 130 seconds for database admission, orchestration and durable
 completion; the browser send and pending-operation polling allow 150 seconds.
 The release dependency smoke allows 150 seconds including cold USDA startup.
@@ -109,11 +116,14 @@ Final-gate rejections also include an allowlisted `rejection_code` for structure
 ingredients, never rejected text. The coordinator uses it to
 give the specialist a precise correction within the same revision allowance.
 
-The normal path is route -> specialist -> fit review (three model calls).
+The full structured path is route -> specialist -> deterministic backend gates
+-> delivery. A complete validated recipe does not need another coordinator
+roundtrip, including near the operation deadline. Projection-only legacy seams
+retain the fit-review roundtrip.
 For [conditional Web IQ](recipe-specialist.md#conditional-web-iq), the strict
 routing function additionally supplies a minimized public `web_query`, or null
 when `use_web=false`. The specialist's isolated web invocation counts toward the
-same four-model limit; a successful web path leaves no additional revision call.
+same four-model limit.
 The same routing function returns `quantity_ingredients`, a bounded array of public
 food names for ambiguous user-supplied amounts needing cited comparisons. The
 Orchestrator interprets wording and formats semantically; the backend constructs
@@ -126,7 +136,7 @@ Policy 6 changes the published function schema and source instructions. Publish
 and read back a matching Orchestrator source and update the environment's source
 pin before activating this backend; the existing policy-5 source is not compatible.
 Native sources and claims remain in the full recipe, not its fit-review projection.
-If a revision is requested, its specialist invocation is the fourth and last:
+If a revision is requested, it consumes the remaining bounded specialist allowance:
 the backend rechecks its projection and returns either a candidate with brief
 fit reasons or an explicit rejection, **not** another unbounded review loop.
 `status=candidate` is intentionally not a durable safety certificate.
@@ -142,7 +152,9 @@ chat completion hook, which rereads the current owned profile before rendering
 and persistence. Its executor rejects projection-only results rather than
 turning them into a successful `ValidatedReply`.
 
-Specialist failures are not retried. The executor preserves uncertain specialist
+Failed specialist invocations are not replayed. Configured MCP-to-AI recipe
+recovery is a separate, labelled, tool-free phase; it does not add another
+specialist revision. The executor preserves uncertain specialist
 transport outcomes when the Orchestrator wraps them, instead of marking them
 known retryable failures. Deadline/cancellation cancels local awaiting
 work and starts no replacement run; it does not prove a remote operation stopped.
@@ -322,7 +334,7 @@ not change the App Service runtime flag or release manifest. The command appends
 one version under the existing agent, with policy version, model identifier and
 a SHA-256 fingerprint of the exact source definition. `asc_contract_sha256` also
 fingerprints the instructions/function schema with normalized deployment/RAI
-identifiers. The version-6 dev manifest records that read-back-verified receipt
+identifiers. The version-7 dev manifest records that read-back-verified receipt
 as `contract_sha256`; infrastructure PR checks reject a stale receipt before cloud
 access. Update the receipt and actual numeric source pin together after an intentional
 policy/source change. It reports the returned

@@ -12,7 +12,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 
-CATALOG_VERSION = "2"
+CATALOG_VERSION = "3"
 
 
 class Trait(StrEnum):
@@ -96,6 +96,7 @@ _ENTRIES: list[CatalogEntry] = [
     _entry("marzipan", "almond paste", contains=(_T.TREE_NUT,)),
     _entry("walnut", contains=(_T.TREE_NUT,)),
     _entry("cashew", "cashew butter", contains=(_T.TREE_NUT,)),
+    _entry("cashew-milk", contains=(_T.TREE_NUT,)),
     _entry("pecan", contains=(_T.TREE_NUT,)),
     _entry("pistachio", contains=(_T.TREE_NUT,)),
     _entry("hazelnut", "filbert", contains=(_T.TREE_NUT,)),

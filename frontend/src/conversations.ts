@@ -21,6 +21,7 @@ export type Turn = {
   conversationId: string;
   turnIndex: number;
   status: "pending" | "completed" | "failed" | "outcomeUnknown";
+  operationId?: string | null;
   messages: Message[];
   generatedRecipeId?: string | null;
   recipe?: StructuredRecipe | null;
@@ -82,6 +83,9 @@ function isTurn(value: unknown, conversationId: string): value is Turn {
     typeof value.turnIndex !== "number" ||
     !Number.isSafeInteger(value.turnIndex) ||
     value.turnIndex < 0 ||
+    (value.operationId !== undefined &&
+      value.operationId !== null &&
+      !isConversationId(value.operationId)) ||
     (value.status !== "pending" &&
       value.status !== "completed" &&
       value.status !== "failed" &&
@@ -121,6 +125,7 @@ export type Operation = {
   status: Turn["status"];
   failureCode:
     | "execution_failed"
+    | "execution_closed"
     | "invalid_assistant_response"
     | "execution_outcome_unknown"
     | null;
@@ -148,6 +153,7 @@ function isOperation(
       (value.status !== "completed" || value.turn.status === "completed")) ||
     (value.status === "failed" &&
       (value.failureCode === "execution_failed" ||
+        value.failureCode === "execution_closed" ||
         value.failureCode === "invalid_assistant_response")) ||
     (value.status === "outcomeUnknown" &&
       value.failureCode === "execution_outcome_unknown")
@@ -247,6 +253,36 @@ export async function sendMessage(
       operation: value.data,
     };
   throw new ApiError(502, "invalid_response");
+}
+
+export async function closeOperation(
+  session: Session,
+  conversationId: string,
+  operationId: string,
+  signal: AbortSignal,
+): Promise<Operation> {
+  const current = await verifySession(session, signal);
+  const value = await json(
+    await request(
+      `/api/v1/conversations/${conversationId}/operations/${operationId}/close`,
+      {
+        method: "POST",
+        signal,
+        headers: {
+          "X-CSRF-Token": current.csrfToken,
+          "Idempotency-Key": operationId,
+        },
+      },
+    ),
+  );
+  if (
+    !isRecord(value) ||
+    !isOperation(value.data, conversationId) ||
+    value.data.operationId !== operationId ||
+    (value.data.status !== "failed" && value.data.status !== "completed")
+  )
+    throw new ApiError(502, "invalid_response");
+  return value.data;
 }
 
 const operationKey = "asc.chat-operations";

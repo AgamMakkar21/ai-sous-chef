@@ -913,18 +913,20 @@ def test_queries_include_constraints_and_groceries_but_no_history_or_user_keys()
     assert data.current_request not in shaped
 
 
-def test_oversized_queries_fail_without_dropping_hard_constraints() -> None:
+def test_large_pantry_bounds_retrieval_hints_but_preserves_full_generation_context() -> None:
     data = cooking_context()
     rows = tuple(
         data.groceries[0].model_copy(update={"name": "synthetic ingredient " + str(number) * 30})
-        for number in range(100)
+        for number in range(35)
     )
-    with pytest.raises(RecipeToolError) as caught:
-        retrieval_query(
-            data.model_copy(update={"groceries": rows}),
-            SpecialistArguments(requirements="rice", time_budget_minutes=30, use_web=False),
-        )
-    assert caught.value.code == FoundryFailure.REJECTED
+    data = data.model_copy(update={"groceries": rows})
+    arguments = SpecialistArguments(requirements="rice", time_budget_minutes=30, use_web=False)
+    query = retrieval_query(data, arguments)
+    assert len(query) <= 2000
+    assert "Allergies to avoid: peanut, milk." in query
+    assert rows[-1].name not in query
+    assert len(data.groceries) == 35 and rows[-1].name in data.prompt
+    assert data.explicit_preferences.allergies == ("peanut", "milk")
 
 
 def test_large_source_is_excerpted_without_losing_its_version_or_reference() -> None:

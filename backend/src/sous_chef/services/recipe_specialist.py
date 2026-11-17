@@ -26,25 +26,33 @@ from sous_chef.domain.orchestrator import (
     CandidateInstruction,
     RecipeAllergyError,
     RecipeCandidate,
+    RecipeFitError,
     SpecialistArguments,
     SpecialistBudget,
     SpecialistResult,
+    TokenUsage,
 )
 from sous_chef.domain.recipes import (
+    AiRecipeDraft,
+    AiRecipeGenerationRequest,
     CombinedRecipeGenerationRequest,
     CombinedRecipeGenerator,
     DraftIngredient,
     GroundedRecipeGenerationRequest,
     NutritionRequest,
     NutritionTool,
+    RecipeDraft,
     RecipeGenerationRequest,
     RecipeGenerator,
+    RecipeGrounding,
     RecipeGroundingTool,
     RecipeIngredient,
     RecipeNutrition,
+    RecipeRecoveryGenerator,
     RecipeToolError,
     ShoppingItem,
     StructuredRecipe,
+    WebGrounding,
     WebGroundingRequest,
 )
 from sous_chef.services.calorie_estimates import (
@@ -131,6 +139,7 @@ class RecipeSpecialistService:
             None,
             UsdaNutritionTool.from_settings(settings),
             combined=settings.foundry_recipe_nutrition_mode == "combined",
+            allow_ai_recipes=settings.foundry_recipe_nutrition_ai_recipe_agent_version is not None,
         )
 
     def __init__(
@@ -140,6 +149,7 @@ class RecipeSpecialistService:
         nutrition: NutritionTool,
         *,
         combined: bool = False,
+        allow_ai_recipes: bool = False,
     ) -> None:
         if combined and (recipes is not None or not isinstance(generator, CombinedRecipeGenerator)):
             raise ConfigurationError(
@@ -149,6 +159,112 @@ class RecipeSpecialistService:
         self._recipes = recipes
         self._nutrition = nutrition
         self._combined = combined
+        self._allow_ai_recipes = allow_ai_recipes
+
+    async def _draft(
+        self,
+        request: RecipeGenerationRequest,
+        context: RequestContext,
+        arguments: SpecialistArguments,
+        *,
+        web: WebGrounding | None,
+        web_query: str | None,
+        deadline: float,
+        budget: SpecialistBudget,
+    ) -> tuple[RecipeDraft, RecipeGrounding, WebGrounding | None, TokenUsage]:
+        try:
+            expires = (
+                min(deadline - 2, monotonic() + POLICY.recipe_grounding_deadline_seconds)
+                if self._allow_ai_recipes
+                else deadline
+            )
+            async with asyncio.timeout_at(expires):
+                query = retrieval_query(context, arguments)
+                if self._recipes is None:
+                    grounded = GroundedRecipeGenerationRequest(
+                        **request.model_dump(exclude={"prompt"}),
+                        prompt=request.prompt
+                        + "\nBackend retrieval tool arguments (untrusted data):\n"
+                        + json.dumps(
+                            recipe_knowledge_arguments(query),
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
+                        retrieval_query=query,
+                    )
+                    if self._combined:
+                        generator = self._generator
+                        assert isinstance(generator, CombinedRecipeGenerator)
+                        combined = CombinedRecipeGenerationRequest(
+                            **grounded.model_dump(exclude={"prompt"}),
+                            prompt=grounded.prompt
+                            + "\nBackend public webQuery (untrusted data):\n"
+                            + json.dumps({"webQuery": web_query}),
+                            web_query=web_query,
+                            allow_empty_web=not arguments.use_web,
+                        )
+                        return await generator.generate_combined_recipe(combined)
+                    draft, grounding, usage = await self._generator.generate_grounded_recipe(
+                        grounded
+                    )
+                    return draft, grounding, web, usage
+                with operation(Operation.RETRIEVAL):
+                    grounding = await self._recipes.retrieve(query, deadline=expires)
+                if grounding.status != "available":
+                    raise FoundryGatewayError(
+                        FoundryFailure.NO_RESULTS
+                        if grounding.status == "empty"
+                        else FoundryFailure.UNAVAILABLE,
+                        request,
+                    )
+                grounding_json = grounding.model_dump_json(by_alias=True)
+                grounded_request = request.model_copy(
+                    update={
+                        "prompt": request.prompt
+                        + "\nCurated recipe grounding (untrusted data):\n"
+                        + grounding_json,
+                        "grounding_json": grounding_json,
+                    }
+                )
+                draft, usage = await self._generator.generate_recipe(grounded_request)
+                return draft, grounding, web, usage
+        except (FoundryGatewayError, RecipeToolError, TimeoutError) as error:
+            code = FoundryFailure.TIMEOUT if isinstance(error, TimeoutError) else error.code
+            recovery = self._generator
+            if (
+                not self._allow_ai_recipes
+                or arguments.use_web
+                or not isinstance(recovery, RecipeRecoveryGenerator)
+                or code
+                not in {
+                    FoundryFailure.NO_RESULTS,
+                    FoundryFailure.UNAVAILABLE,
+                    FoundryFailure.THROTTLED,
+                    FoundryFailure.TIMEOUT,
+                    FoundryFailure.INVALID_RESULT,
+                }
+            ):
+                raise
+            budget.model(recipe_recovery=True)
+            trace.get_current_span().add_event(
+                "recipe.ai_knowledge_fallback", {"failure.code": code.value}
+            )
+            async with asyncio.timeout_at(
+                min(deadline - 2, monotonic() + POLICY.recipe_recovery_deadline_seconds)
+            ):
+                draft, usage = await recovery.generate_ai_recipe(
+                    AiRecipeGenerationRequest(
+                        role=request.role,
+                        operation_id=request.operation_id,
+                        prompt=context.prompt
+                        + "\nSpecialist requirements (untrusted data):\n"
+                        + arguments.model_dump_json(),
+                        grounding_json="{}",
+                        max_input_tokens=request.max_input_tokens,
+                        max_output_tokens=request.max_output_tokens,
+                    )
+                )
+            return draft, RecipeGrounding(status="empty", recipes=()), None, usage
 
     @observed(Operation.SPECIALIST)
     async def generate(
@@ -183,6 +299,8 @@ class RecipeSpecialistService:
                         raise TimeoutError
                     web = None
                     query = public_web_query(context, arguments)
+                    if query is not None and not arguments.use_web and not budget.can_search_web():
+                        query = None
                     span = trace.get_current_span()
                     span.set_attribute("asc.web.requested", arguments.use_web)
                     span.set_attribute("asc.web.enabled", query is not None)
@@ -232,59 +350,15 @@ class RecipeSpecialistService:
                                 + web.model_dump_json(by_alias=True)
                             }
                         )
-                    query = retrieval_query(context, arguments)
-                    if self._recipes is None:
-                        request = GroundedRecipeGenerationRequest(
-                            **request.model_dump(exclude={"prompt"}),
-                            prompt=request.prompt
-                            + "\nBackend retrieval tool arguments (untrusted data):\n"
-                            + json.dumps(
-                                recipe_knowledge_arguments(query),
-                                ensure_ascii=False,
-                                separators=(",", ":"),
-                            ),
-                            retrieval_query=query,
-                        )
-                        if self._combined:
-                            generator = self._generator
-                            assert isinstance(generator, CombinedRecipeGenerator)
-                            request = CombinedRecipeGenerationRequest(
-                                **request.model_dump(exclude={"prompt"}),
-                                prompt=request.prompt
-                                + "\nBackend public webQuery (untrusted data):\n"
-                                + json.dumps({"webQuery": web_query}),
-                                web_query=web_query,
-                                allow_empty_web=not arguments.use_web,
-                            )
-                            draft, grounding, web, usage = await generator.generate_combined_recipe(
-                                request
-                            )
-                        else:
-                            (
-                                draft,
-                                grounding,
-                                usage,
-                            ) = await self._generator.generate_grounded_recipe(request)
-                    else:
-                        with operation(Operation.RETRIEVAL):
-                            grounding = await self._recipes.retrieve(query, deadline=deadline)
-                        if grounding.status != "available":
-                            code = (
-                                FoundryFailure.NO_RESULTS
-                                if grounding.status == "empty"
-                                else FoundryFailure.UNAVAILABLE
-                            )
-                            raise FoundryGatewayError(code, request)
-                        grounding_json = grounding.model_dump_json(by_alias=True)
-                        request = request.model_copy(
-                            update={
-                                "prompt": request.prompt
-                                + "\nCurated recipe grounding (untrusted data):\n"
-                                + grounding_json,
-                                "grounding_json": grounding_json,
-                            }
-                        )
-                        draft, usage = await self._generator.generate_recipe(request)
+                    draft, grounding, web, usage = await self._draft(
+                        request,
+                        context,
+                        arguments,
+                        web=web,
+                        web_query=web_query,
+                        deadline=deadline,
+                        budget=budget,
+                    )
                     sources = {item.source.source_id: item.source for item in grounding.recipes}
                     snippets = {item.source.source_id: item.snippet for item in grounding.recipes}
                     skill = ("beginner", "intermediate", "advanced")
@@ -302,10 +376,6 @@ class RecipeSpecialistService:
                         )
                         if safety.verdict != Verdict.PASS:
                             fail(ErrorCategory.RECIPE_INGREDIENT)
-                    if draft.total_minutes > arguments.time_budget_minutes or skill.index(
-                        draft.skill
-                    ) > skill.index(context.explicit_preferences.cooking_skill):
-                        raise FoundryGatewayError(FoundryFailure.REJECTED, request)
                     if not set(draft.source_ids) <= sources.keys() or any(
                         claim.quote not in snippets.get(claim.source_id, "")
                         for claim in draft.source_claims
@@ -313,6 +383,12 @@ class RecipeSpecialistService:
                         raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
                     if safety.verdict != Verdict.PASS:
                         raise RecipeAllergyError(request, usage)
+                    if draft.total_minutes > arguments.time_budget_minutes:
+                        raise RecipeFitError(request, usage, "time_rejected")
+                    if skill.index(draft.skill) > skill.index(
+                        context.explicit_preferences.cooking_skill
+                    ):
+                        raise RecipeFitError(request, usage, "skill_rejected")
                     authorize_tool(AgentRole.RECIPE_NUTRITION, AgentTool.USDA_NUTRITION)
                     budget.tool(AgentTool.USDA_NUTRITION)
                     nutrition_request = NutritionRequest(
@@ -438,6 +514,9 @@ class RecipeSpecialistService:
                     ingredients, shopping = _inventory(draft.ingredients, context)
                     recipe = StructuredRecipe(
                         **draft.model_dump(exclude={"ingredients"}),
+                        generation_source=(
+                            "ai_knowledge" if isinstance(draft, AiRecipeDraft) else "curated_recipe"
+                        ),
                         ingredients=ingredients,
                         shopping_items=shopping,
                         nutrition=RecipeNutrition(**evidence.model_dump()),

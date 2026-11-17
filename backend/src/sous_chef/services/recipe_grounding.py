@@ -43,13 +43,17 @@ def retrieval_query(context: RequestContext, arguments: SpecialistArguments) -> 
         ("Dietary preferences", preferences.dietary_restrictions),
         ("Available ingredients", tuple(row.name for row in context.groceries)),
     ):
-        if values:
-            parts.append(f"{label}: {', '.join(values)}.")
-    query = "\n".join(parts)
-    if len(query) > 2000:
-        # Do not silently drop mandatory restrictions to satisfy a query limit.
-        raise RecipeToolError(FoundryFailure.REJECTED)
-    return query
+        included: list[str] = []
+        for value in values:
+            section = f"{label}: {', '.join((*included, value))}."
+            if len("\n".join((*parts, section))) > 2000:
+                break
+            included.append(value)
+        if included:
+            parts.append(f"{label}: {', '.join(included)}.")
+    # Retrieval hints are bounded independently; generation and allergy validation retain
+    # the complete request context, including every omitted pantry name and restriction.
+    return "\n".join(parts)
 
 
 def recipe_knowledge_arguments(query: str) -> dict[str, list[str]]:

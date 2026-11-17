@@ -138,14 +138,19 @@ class DeliveryTests(unittest.TestCase):
         from scripts.release import validate_runtime
 
         data: dict[str, Any] = {
-            "schema_version": 5,
+            "schema_version": 7,
             "agents_enabled": True,
             "agents": {
-                "orchestrator": {"name": "orchestrator", "version": "1"},
+                "orchestrator": {
+                    "name": "orchestrator",
+                    "version": "1",
+                    "contract_sha256": orchestrator_source().metadata["asc_contract_sha256"],
+                },
                 "recipe_nutrition": {
                     "name": "recipe-nutrition",
                     "version": "4",
                     "calorie_version": "6",
+                    "ai_recipe_version": "7",
                 },
             },
         }
@@ -156,6 +161,12 @@ class DeliveryTests(unittest.TestCase):
             with patch.object(delivery, "ROOT", root):
                 agents = delivery.manifest()
                 self.assertEqual(agents["recipe_nutrition"]["mode"], "combined")
+                for bad_version in (None, "6", "4", "not-a-version"):
+                    data["agents"]["recipe_nutrition"]["ai_recipe_version"] = bad_version
+                    (root / "deploy" / "agents.dev.json").write_text(json.dumps(data))
+                    with self.assertRaises(delivery.DeliveryError):
+                        delivery.manifest()
+                data["agents"]["recipe_nutrition"]["ai_recipe_version"] = "7"
                 data["agents"]["recipe_nutrition"]["web_version"] = "5"
                 (root / "deploy" / "agents.dev.json").write_text(json.dumps(data))
                 with self.assertRaises(delivery.DeliveryError):
@@ -172,6 +183,9 @@ class DeliveryTests(unittest.TestCase):
         project = MagicMock()
         calorie = build_recipe_definition(
             "recipe-model", "approved-policy", phase=RecipePhase.CALORIE
+        )
+        ai_recipe = build_recipe_definition(
+            "recipe-model", "approved-policy", phase=RecipePhase.AI_RECIPE
         )
         project.agents.get.side_effect = [
             SimpleNamespace(
@@ -208,11 +222,22 @@ class DeliveryTests(unittest.TestCase):
                     "metadata": recipe_source_metadata(calorie, RecipePhase.CALORIE),
                 }
             ),
+            AgentVersionDetails(
+                {
+                    "name": "recipe-nutrition",
+                    "version": "7",
+                    "status": "active",
+                    "draft": False,
+                    "definition": ai_recipe.as_dict(),
+                    "metadata": recipe_source_metadata(ai_recipe, RecipePhase.AI_RECIPE),
+                }
+            ),
         ]
         project.agents.create_version.side_effect = [
             SimpleNamespace(version="8"),
             SimpleNamespace(version="9"),
             SimpleNamespace(version="10"),
+            SimpleNamespace(version="11"),
         ]
         with patch.dict(os.environ, ENV):
             pins = delivery.release_agents(
@@ -220,14 +245,21 @@ class DeliveryTests(unittest.TestCase):
                 agents,
                 "11111111-1111-1111-1111-111111111111",
             )
-        self.assertEqual(project.agents.get_version.call_count, 3)
-        self.assertEqual(project.agents.create_version.call_count, 3)
+        self.assertEqual(project.agents.get_version.call_count, 4)
+        self.assertEqual(project.agents.create_version.call_count, 4)
         self.assertEqual(pins["ASC_FOUNDRY_RECIPE_NUTRITION_MODE"], "combined")
         self.assertEqual(pins["ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION"], "9")
         self.assertEqual(pins["ASC_FOUNDRY_RECIPE_NUTRITION_CALORIE_AGENT_VERSION"], "10")
+        self.assertEqual(pins["ASC_FOUNDRY_RECIPE_NUTRITION_AI_RECIPE_AGENT_VERSION"], "11")
         self.assertNotIn("ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION", pins)
         published = project.agents.create_version.call_args_list
         self.assertEqual(published[1].kwargs["definition"], combined)
+        self.assertEqual(published[3].kwargs["definition"], ai_recipe)
+        self.assertEqual(ai_recipe.as_dict()["tools"], [])
+        self.assertEqual(
+            {call.kwargs["agent_name"] for call in published},
+            {"orchestrator", "recipe-nutrition"},
+        )
         validate_runtime(
             pins
             | {

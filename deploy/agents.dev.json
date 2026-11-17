@@ -1,16 +1,17 @@
 {
-  "schema_version": 6,
+  "schema_version": 7,
   "agents_enabled": true,
   "agents": {
     "orchestrator": {
       "name": "sous-chef-orchestrator-dev",
-      "version": "49",
-      "contract_sha256": "71ff681a49516c967ebf79126268b86824b9a85763aa1e0de1af596ebc71865e"
+      "version": "52",
+      "contract_sha256": "18ab1d9449efca1b87a3a43fa31e2aede0870d421d37c2e549d603ab3e132bcc"
     },
     "recipe_nutrition": {
       "name": "sous-chef-recipe-nutrition-dev",
       "version": "58",
-      "calorie_version": "62"
+      "calorie_version": "62",
+      "ai_recipe_version": "71"
     }
   }
 }

@@ -1,3 +1,4 @@
+import hmac
 import secrets
 from typing import Annotated
 
@@ -232,8 +233,13 @@ def create_auth_router(settings: Settings) -> APIRouter:
         )
 
     @router.get("/session")
-    async def session(user: CurrentUser) -> JSONResponse:
-        csrf = secrets.token_urlsafe(32)
+    async def session(user: CurrentUser, request: Request) -> JSONResponse:
+        credential = request.cookies.get(SESSION_COOKIE)
+        if settings.auth_mode == "app_service" and credential:
+            # Concurrent session reads must agree, including before the first CSRF cookie exists.
+            csrf = hmac.digest(credential.encode(), b"AI Sous Chef CSRF v1", "sha256").hex()
+        else:
+            csrf = request.cookies.get(_CSRF_COOKIE) or secrets.token_urlsafe(32)
         response = JSONResponse(
             {"userId": user.user_id, "csrfToken": csrf}, headers={"Cache-Control": "no-store"}
         )

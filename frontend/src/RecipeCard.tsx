@@ -85,6 +85,12 @@ export default function RecipeCard({
     <section className="recipe-card" aria-labelledby={`${id}-title`}>
       <header>
         <h3 id={`${id}-title`}>{recipe.title}</h3>
+        {recipe.generationSource === "ai_knowledge" && (
+          <p className="notice">
+            AI-knowledge recipe: recipe sources were unavailable. This recipe is
+            not externally verified; nutrition sources are listed separately.
+          </p>
+        )}
         <dl className="recipe-meta">
           <div>
             <dt>Total time</dt>

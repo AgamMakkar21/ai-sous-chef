@@ -27,6 +27,7 @@ from sous_chef.domain.orchestrator import (
     OrchestratorFailure,
     RecipeAllergyError,
     RecipeCandidate,
+    RecipeFitError,
     RecipeSpecialist,
     SpecialistCall,
     SpecialistResult,
@@ -58,6 +59,8 @@ class ExecutionBudget:
         self.calorie_model_calls = 0
         self.usda_selection_calls = 0
         self._selection_specialist = 0
+        self.recipe_recovery_calls = 0
+        self._recovery_specialist = 0
         self.input_tokens = 0
         self.output_tokens = 0
         self.web_allowed = False
@@ -71,10 +74,18 @@ class ExecutionBudget:
         specialist: bool = False,
         calorie_fallback: bool = False,
         usda_selection: bool = False,
+        recipe_recovery: bool = False,
     ) -> None:
         self.model_allowance(calorie_fallback=calorie_fallback)
         if usda_selection and (
             specialist or calorie_fallback or self._selection_specialist == self.specialist_calls
+        ):
+            self.fail()
+        if recipe_recovery and (
+            specialist
+            or calorie_fallback
+            or usda_selection
+            or self._recovery_specialist == self.specialist_calls
         ):
             self.fail()
         if (
@@ -83,6 +94,8 @@ class ExecutionBudget:
                 POLICY.max_model_calls
                 + self.usda_selection_calls
                 + int(usda_selection)
+                + self.recipe_recovery_calls
+                + int(recipe_recovery)
                 + POLICY.max_calorie_model_calls * self.calorie_fallback_calls
             )
             or calorie_fallback
@@ -103,6 +116,9 @@ class ExecutionBudget:
         if usda_selection:
             self.usda_selection_calls += 1
             self._selection_specialist = self.specialist_calls
+        if recipe_recovery:
+            self.recipe_recovery_calls += 1
+            self._recovery_specialist = self.specialist_calls
 
     def model_allowance(self, *, calorie_fallback: bool = False) -> tuple[None, None]:
         self._check_deadline()
@@ -122,6 +138,14 @@ class ExecutionBudget:
         if self.calorie_fallback_calls >= POLICY.max_calorie_fallback_calls:
             self.fail()
         self.calorie_fallback_calls += 1
+
+    def can_search_web(self) -> bool:
+        self._check_deadline()
+        return (
+            self.web_allowed
+            and self.web_calls < POLICY.max_web_calls
+            and self.tool_calls + 3 <= POLICY.max_tool_calls
+        )
 
     def tool(self, operation: str) -> None:
         self._check_deadline()
@@ -269,6 +293,7 @@ class OrchestratorService:
                 call.arguments.use_web or quantity_web_query(call.arguments) is not None
             )
             rejection_code: RecipeSafetyFailure | None = None
+            rejection_status = "safety_rejected"
             specialist: SpecialistResult | None
             try:
                 specialist = await self._specialist.generate(
@@ -284,6 +309,10 @@ class OrchestratorService:
                 budget.usage(error.usage)
                 specialist = None
                 rejection_code = RecipeSafetyFailure.INGREDIENT
+            except RecipeFitError as error:
+                budget.usage(error.usage)
+                specialist = None
+                rejection_status = error.status
             except FoundryGatewayError as error:
                 raise OrchestratorError(
                     OrchestratorFailure.SPECIALIST_FAILED,
@@ -294,7 +323,7 @@ class OrchestratorService:
             if specialist is None:
                 candidate = None
                 recipe = None
-                status = "safety_rejected"
+                status = rejection_status
                 final_rejected = True
             else:
                 budget.usage(specialist.usage)
@@ -332,6 +361,14 @@ class OrchestratorService:
             if rejection_code is not None:
                 operational_event(
                     Event.RECIPE_SAFETY_REJECTED, category=ErrorCategory(rejection_code.value)
+                )
+            if recipe is not None and status == "candidate":
+                assert candidate is not None
+                return OrchestrationResult(
+                    status="candidate",
+                    explanation=" ".join(candidate.fit_reasons)[:1000],
+                    candidate=candidate,
+                    recipe=recipe,
                 )
             if budget.specialist_calls == POLICY.max_specialist_calls:
                 if final_rejected:

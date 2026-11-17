@@ -1,6 +1,6 @@
 # Recipe + Nutrition structured output and grounding (ASC-26 / ASC-30 / ASC-34)
 
-This slice implements the GPT-5.4 specialist's version-13 combined source policy, strict
+This slice implements the GPT-5.4 specialist's reviewed combined source policy, strict
 draft/full-recipe schemas, one-call New Foundry generation, backend enrichment,
 identity-bound Foundry IQ recipe retrieval and conditional Web IQ. It does not activate chat
 or an Azure release, save/cook a recipe, or replace
@@ -39,7 +39,7 @@ required JSON properties, including explicit null for AI knowledge. The backend
 checks the native search query, single-search count, completion, retrieved URLs,
 URL annotations, citation spans and web-result budget. It attaches validated web
 grounding separately, then runs the existing USDA MCP calculation, source/quantity
-mapping checks, Orchestrator review and deterministic final safety gate. Web
+mapping checks, backend fit validation and deterministic final safety gate. Web
 citations cannot become curated recipe source IDs, USDA evidence or safety approval.
 An optional quantity lookup may be skipped only when both web claims and native
 citations are absent. Explicitly requested current-information searches still
@@ -69,6 +69,32 @@ two-call allowance returned one completed search and cited nutrient values.
 This does not authorize two searches: the gateway still rejects extra searches,
 rewritten queries, unfinished actions or unsupported citations. Legacy web-only
 phases retain their one-call transport allowance.
+
+## AI-knowledge recipe recovery
+
+MCP remains the first recipe source. The optional
+`ASC_FOUNDRY_RECIPE_NUTRITION_AI_RECIPE_AGENT_VERSION` pins a distinct,
+tool-free `ai_recipe` version under the existing Recipe + Nutrition identity.
+After no results, unavailable/throttled/timed-out retrieval or an invalid primary
+result, one such composition is allowed per specialist attempt. Authentication,
+rejected requests and required current-information searches cannot use it.
+The primary phase has up to 45 seconds and AI composition up to 30 seconds,
+inside the shared 120-second operation deadline; cancellation is not a retry.
+
+The `AiRecipeDraft` schema requires empty `sourceIds` and `sourceClaims`. The
+backend stamps `generationSource=ai_knowledge`, rejects curated/web recipe
+attribution and displays an unverified-recipe notice. It retains real USDA
+nutrition sources separately; all-AI nutrition may have no external sources.
+Stored allergies, declared ingredients, time/skill correction, all six nutrients
+and atomic completion remain required. Failed source snippets never enter the
+AI composition request. Nutrition still uses USDA first and tool-free AI
+estimates for gaps, never nutrition web search.
+
+Publish this phase with `--agent recipe_nutrition --phase ai_recipe`, then
+read back the exact returned version before changing its pin. The primary MCP
+pin is not replaced. In Foundry's version selector, the newest version can be a
+tool-free recovery phase: inspect the running primary pin, not `latest`, when
+checking whether the knowledge base is attached.
 
 ## Execution and tool boundaries
 
@@ -625,13 +651,14 @@ rather than completing chat with partial nutrition. Historical partial snapshots
 remain readable and retain their original uncertainty labels.
 
 This routing change retains the reviewed `--phase combined` and `--phase calorie`
-sources. Publish and read back the updated Orchestrator contract and pin its
-source version and receipt in the version-6 dev manifest. Delivery verifies
-and copies both specialist definitions without changing
+sources and adds a distinct `--phase ai_recipe` source. Publish and read back the
+updated Orchestrator contract and pin its source version and receipt in the
+version-7 dev manifest. Delivery verifies and copies all three specialist definitions without changing
 identities; readiness verifies their schemas and policy fingerprints. The live
 release smoke requires complete USDA-first chat with tool-free AI fallback
 nutrition and independently exercises all-six-nutrient AI recovery.
-Historical phased releases remain available for rollback.
+Historical phased configurations remain readable; rollback additionally requires
+a compatible persisted data contract as described in [dev delivery](dev-delivery.md#release-stages).
 No runtime tool/schema override is used.
 
 `ASC_USDA_MCP_TIMEOUT_SECONDS` defaults to 10 (maximum 10) for ingredient lookups.
@@ -734,8 +761,9 @@ The ordinary non-web path uses one specialist model invocation:
 1. Reserve an allowlisted `foundry_iq_recipes` call on the supplied request-local
    budget. Shape a bounded query from specialist requirements, groceries, explicit
    allergies/restrictions, skill and time. Never include conversation history,
-   learned evidence or user IDs. Queries over 2,000 characters fail rather than
-   silently drop constraints.
+   learned evidence or user IDs. Append whole pantry/preference hints only while
+   the query fits 2,000 characters. Generation and deterministic allergy checks
+   retain the full context, including every omitted hint.
 2. Send the original complete `RequestContext`, specialist requirements and
    untrusted grounding to the pinned Recipe + Nutrition managed agent. The
    gateway requires the distinct agent/workload identity pins. It uses Responses
@@ -760,31 +788,34 @@ The ordinary non-web path uses one specialist model invocation:
    retrieval evidence still fails closed. Validate the time budget, declared skill
    ceiling and ingredient restrictions. Hard allergies/restrictions take priority
    over current requests, taste and nutrition goals. Explicit preferences outrank
-   learned state. A blocked or ambiguous ingredient list is rejected.
+   learned state. Confirmed declared-allergen matches reject the candidate;
+   unknown names alone do not.
 4. Reserve an allowlisted `usda_nutrition` call for exactly those ingredient
    amounts/units and servings. Attach only validated tool evidence. The model
    cannot supply nutrition, source metadata or grocery ownership.
 5. Assemble inventory status and missing purchases from the supplied groceries,
    then return the full `StructuredRecipe`, its bounded `RecipeCandidate`
    projection and provider-counted usage. The Orchestrator retains the full
-   recipe but reviews only its projection; it never receives another copy of all
-   nutrition/tool data in its function result.
+   recipe and delivers it after backend gates without a redundant final model
+   call. Projection-only legacy seams retain coordinator review.
 
 The caller reserves the single specialist model invocation before entering this
 service (as `OrchestratorService` already does). Both tool calls share the same
 budget. The specialist does not make hidden repair calls, create another budget,
 or retry failed/ambiguous operations. Invalid JSON, schema, references, provider
-usage or enrichment yields explicit `foundry_invalid_result`; unfit time/skill or
-ingredient restrictions yield `foundry_rejected`. An empty index/retrieval is
+usage or enrichment yields explicit `foundry_invalid_result`; typed time/skill
+rejections can use the existing single correction. An empty index/retrieval is
 `foundry_no_results`, distinct from an unavailable service. Missing/malformed
-source metadata is `foundry_invalid_result`; no generation from memory replaces
-failed grounding. Live MCP may already have generated a draft when an empty or
+source metadata is `foundry_invalid_result`; only the separately pinned and
+labelled AI recipe phase can recover unusable grounding. Live MCP may already
+have generated a draft when an empty or
 invalid result is detected, but that draft is discarded before nutrition or return.
 The fixture path rejects missing grounding before invoking the model.
 Service/auth/throttling failures
 remain distinct. Tool adapters raise `RecipeToolError` with a safe `FoundryFailure`
 category, not a raw upstream body. A returned `status=unavailable` nutrition result
-is valid and explicit, not zero nutrition; an actual tool failure stops the request.
+is valid and explicit, not zero nutrition; recoverable gaps use the existing
+bounded AI nutrient workflow.
 
 The supplied finite deadline covers retrieval, generation and nutrition together,
 with a 120-second ceiling. Cancellation starts no replacement invocation. The

@@ -145,6 +145,7 @@ none accepts a `userId` route/body field.
 | `GET /conversations/{conversationId}/turns` | Paginated ordered complete-exchange records, including explicit pending/failure state |
 | `POST /conversations/{conversationId}/turns` | Accept user text under one idempotency key; create a pending turn and persist validated output in that same turn |
 | `GET /conversations/{conversationId}/operations/{operationId}` | Inspect known pending/completed/failed/unknown send outcome without another model invocation |
+| `POST /conversations/{conversationId}/operations/{operationId}/close` | Explicitly close interrupted/expired work without generation; authenticated, CSRF-protected and idempotent; requires `Idempotency-Key`, no body or query parameters |
 | `POST /recipes` | Save an owned `generatedRecipeId` into an immutable snapshot; no client recipe body |
 | `POST /recipes/{historyId}/cooked` | Confirm cooking; set cooked timestamp once |
 | `POST /generated-recipes/{generatedRecipeId}/rejections` | Record an explicit rejection and optional reason, not abandonment |
@@ -185,7 +186,8 @@ On completion, conditionally update the turn with its assistant message/snapshot
 and finalize the operation in the same partition. Never store the assistant
 response as an unrelated message item or expose a half-committed successful pair.
 
-The 60-second deadline includes dependencies, retries, validation, and persistence.
+The 130-second send deadline includes dependencies, bounded orchestration,
+validation and persistence.
 Retain explicit `pending`, `completed`, `failed`, or `outcomeUnknown` state.
 If the provider may still have completed a response, reconcile its provider
 response ID before offering a new attempt. If the ID or outcome cannot be
@@ -200,6 +202,10 @@ on the send endpoint, using the original trimmed content and a new key.
 Known execution/validation failures return 502 and uncertain execution returns
 504, with `Location` pointing to the operation. Expired pending operations become
 `outcomeUnknown` on inspection/replay and continue to hold the conversation guard.
+An explicit close can turn interrupted/expired work into failed
+`execution_closed` without generation or remote-cancellation claims. A fresh
+pending operation cannot close. Late completions remain fenced, and retry is a
+separate explicit action after closure.
 See [the implemented send contract](../conversations.md#durable-chat-sends-asc-22)
 for the injected executor boundary and reconciliation limitations.
 Operation history is separate
@@ -286,6 +292,8 @@ successful assistant response. Persist a structured generated recipe once in
 the completed turn; a saved history snapshot is its deliberate immutable copy.
 Every turn stays within the 256-KiB record ceiling; an oversized response fails
 explicitly before being displayed or saved as successful.
+Owned public history includes the current `operationId` when available, so status
+inspection and explicit closure do not depend on browser storage.
 
 Tool/agent subcalls are not additional public chat messages. Store at most eight
 necessary tool references containing tool name, outcome, and source IDs; do not
@@ -329,12 +337,18 @@ Recipe ingredients include a line ID, canonical ingredient ID, display name,
 amount/unit and available/missing/unknown inventory status. Instructions reference
 ingredient line IDs. Recipe sources include source ID, version, and bounded
 references, not an unbounded retrieved document.
+`generationSource` distinguishes `curated_recipe` from `ai_knowledge`; omitted
+historical values default to curated. Curated recipes require actual retrieved
+recipe sources. AI recipes require empty recipe source IDs/claims, no curated
+sources or web grounding, and a visible unverified-recipe label. Genuine USDA
+nutrition sources remain separate; wholly AI-estimated nutrition may leave the
+external source list empty.
 
 Nutrition includes serving basis, nutrient amount/unit, USDA food/source/version
 references, mapped ingredient amounts, and `status: known/partial/unavailable`.
 Known portions of a partial result are labeled partial, not a complete total.
-Missing data is not zero. New chat recipes prefer USDA MCP and use Bing-grounded
-web evidence, then labeled AI knowledge estimates, for missing calories, protein,
+Missing data is not zero. New chat recipes prefer USDA MCP and use tool-free,
+labeled AI knowledge estimates for missing calories, protein,
 carbohydrate, fat, fiber and sodium. Chat must not deliver a partially calculated
 recipe if all recovery methods are insufficient. Historical partial snapshots
 and standalone USDA lookups retain their uncertainty states.

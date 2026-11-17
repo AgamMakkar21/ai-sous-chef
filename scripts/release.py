@@ -29,6 +29,10 @@ TARGET_KEYS = {
 }
 GUID = r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}"
 FILES = {"app.zip", "worker.zip", "runtime.json"}
+SPECIALIST_PHASE_VERSIONS = {
+    phase: f"ASC_FOUNDRY_RECIPE_NUTRITION_{phase.upper()}_AGENT_VERSION"
+    for phase in ("retrieval", "web", "calorie", "ai_recipe")
+}
 
 
 def require(condition: bool, message: str) -> None:
@@ -304,23 +308,23 @@ def validate_runtime(pins: dict[str, Any]) -> None:
         for field in ("NAME", "VERSION", "PRINCIPAL_ID")
     }
     mode_key = "ASC_FOUNDRY_RECIPE_NUTRITION_MODE"
-    phase_keys = {
-        "ASC_FOUNDRY_RECIPE_NUTRITION_RETRIEVAL_AGENT_VERSION",
-        "ASC_FOUNDRY_RECIPE_NUTRITION_WEB_AGENT_VERSION",
-    }
+    phase_keys = {SPECIALIST_PHASE_VERSIONS[phase] for phase in ("retrieval", "web")}
     mode = pins.get(mode_key)
-    calorie_key = "ASC_FOUNDRY_RECIPE_NUTRITION_CALORIE_AGENT_VERSION"
-    if calorie_key in pins:
-        agent_keys.add(calorie_key)
+    calorie_key = SPECIALIST_PHASE_VERSIONS["calorie"]
+    ai_recipe_key = SPECIALIST_PHASE_VERSIONS["ai_recipe"]
+    recovery_keys = {calorie_key, ai_recipe_key}
+    for recovery_key in recovery_keys & pins.keys():
+        agent_keys.add(recovery_key)
         require(
-            isinstance(pins[calorie_key], str)
-            and re.fullmatch(r"[1-9][0-9]{0,9}", pins[calorie_key]) is not None
-            and pins[calorie_key]
+            isinstance(pins[recovery_key], str)
+            and re.fullmatch(r"[1-9][0-9]{0,9}", pins[recovery_key]) is not None
+            and pins[recovery_key]
             not in {
                 pins.get("ASC_FOUNDRY_RECIPE_NUTRITION_AGENT_VERSION"),
                 *(pins.get(key) for key in phase_keys),
+                *(pins.get(key) for key in recovery_keys - {recovery_key}),
             },
-            "Runtime calorie recovery requires a distinct explicit source version.",
+            "Runtime recovery requires a distinct explicit source version for each phase.",
         )
     if mode == "combined":
         agent_keys.add(mode_key)
@@ -733,6 +737,20 @@ def apply_bundle(directory: Path, environment: str, pins: dict[str, str]) -> Non
             isinstance(result, dict) and result.get("status") == 4,
             "Release build did not finish successfully; no successful release is recorded.",
         )
+    stale_phases = sorted(set(SPECIALIST_PHASE_VERSIONS.values()) & settings.keys() - pins.keys())
+    if stale_phases:
+        delivery.az(
+            "webapp",
+            "config",
+            "appsettings",
+            "delete",
+            "-g",
+            delivery.required("ASC_RESOURCE_GROUP"),
+            "-n",
+            delivery.required("ASC_APP_NAME"),
+            "--setting-names",
+            *stale_phases,
+        )
     delivery.az(
         "webapp",
         "config",
@@ -757,7 +775,8 @@ def apply_bundle(directory: Path, environment: str, pins: dict[str, str]) -> Non
         )
     _, deployed = delivery.target(environment, allow_dispatch=True)
     require(
-        all(deployed.get(key) == value for key, value in pins.items()),
+        all(deployed.get(key) == value for key, value in pins.items())
+        and not set(stale_phases) & deployed.keys(),
         "Runtime pins were not applied.",
     )
     delivery.smoke(

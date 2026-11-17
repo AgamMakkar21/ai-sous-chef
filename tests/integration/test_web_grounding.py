@@ -1277,7 +1277,7 @@ def test_vague_quantity_uses_one_minimized_native_search_then_real_usda_mcp() ->
     result = asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
     assert result.status == "candidate" and result.recipe is not None
     recipe = result.recipe
-    assert len(harness.requests) == 4  # One USDA selection, no separate quantity model call.
+    assert len(harness.requests) == 3  # One USDA selection, no separate quantity/review call.
     assert recipe.nutrition.status == "known"
     assert recipe.ingredients[0].quantity is None and recipe.ingredients[0].unit is None
     mapping = recipe.nutrition.mappings[0]
@@ -1492,14 +1492,13 @@ def test_combined_recipe_uses_one_version_and_keeps_usda_and_native_attribution(
     }
 
 
-def test_combined_orchestration_reviews_recipe_and_enforces_final_safety() -> None:
+def test_combined_orchestration_delivers_validated_recipe_without_a_final_review() -> None:
     harness = CombinedHarness()
     result = asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
     assert result.recipe is not None and result.status == "candidate"
     assert [harness.request_kind(json.loads(request.content)) for request in harness.requests] == [
         "function",
         "combined",
-        "function",
     ]
     assert result.recipe.web_grounding is not None and len(harness.tools.nutrition_requests) == 1
 
@@ -1669,7 +1668,7 @@ def test_native_routing_preserves_citations_without_exposing_private_context(
     assert StructuredRecipe.model_validate_json(recipe.model_dump_json(by_alias=True)) == recipe
     assert len(budgets) == 1
     budget = budgets[0]
-    assert budget.model_calls == len(harness.requests) == 3 + int(use_web)
+    assert budget.model_calls == len(harness.requests) == 2 + int(use_web)
     assert budget.web_calls == int(use_web) and budget.tool_calls == 3 + int(use_web)
     assert budget.input_tokens == 400 * budget.model_calls
     assert budget.output_tokens == 200 * budget.model_calls
@@ -1853,7 +1852,7 @@ def test_web_final_gate_does_not_scan_prose_for_undeclared_allergens() -> None:
     result = asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
     assert result.status == "candidate" and result.recipe is not None
     assert all("peanut" not in item.name for item in result.recipe.ingredients)
-    assert len(harness.requests) == 4 and len(harness.tools.nutrition_requests) == 1
+    assert len(harness.requests) == 3 and len(harness.tools.nutrition_requests) == 1
 
 
 def test_web_recipe_accepts_natural_cooking_prose() -> None:
@@ -1865,7 +1864,7 @@ def test_web_recipe_accepts_natural_cooking_prose() -> None:
     result = asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
     assert result.status == "candidate" and result.recipe is not None
     assert result.recipe.instructions[-1].text == "Stir gently until tender, then serve warm."
-    assert len(harness.requests) == 4 and len(harness.tools.nutrition_requests) == 1
+    assert len(harness.requests) == 3 and len(harness.tools.nutrition_requests) == 1
 
 
 @pytest.mark.parametrize("limit", ["model_calls", "tool_calls", "web_calls"])
@@ -1887,10 +1886,13 @@ def test_shared_limits_stop_web_before_it_runs(limit: str) -> None:
 def test_web_cannot_create_an_extra_model_allowance_for_a_revision() -> None:
     harness = WebHarness()
     harness.revision = True
-    with pytest.raises(OrchestratorError) as caught:
-        asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
-    assert caught.value.code == OrchestratorFailure.BUDGET_EXHAUSTED
-    assert len(harness.requests) == 4 and len(harness.tools.nutrition_requests) == 1
+    content = harness.recipe["output"][1]["content"][0]
+    draft = json.loads(content["text"])
+    draft["totalMinutes"] = harness.arguments.time_budget_minutes + 1
+    content["text"] = json.dumps(draft)
+    result = asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
+    assert result.status == "unable" and result.recipe is None
+    assert len(harness.requests) == 4 and not harness.tools.nutrition_requests
 
 
 def test_nested_usage_does_not_exhaust_recipe_token_headroom() -> None:

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "./api";
 import {
   CHAT_TIMEOUT_MS,
+  closeOperation,
   inspectOperation,
   rememberOperation,
   safeTitle,
@@ -58,9 +59,11 @@ export default function ChatComposer({
   const lifetime = useRef<AbortController | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const working = phase === "sending" || phase === "checking";
-  const unresolved = turns.some(
+  const unresolvedTurn = turns.find(
     (turn) => turn.status === "pending" || turn.status === "outcomeUnknown",
   );
+  const unresolved = Boolean(unresolvedTurn);
+  const persistedOperationId = unresolvedTurn?.operationId;
   const locked =
     blocked ||
     working ||
@@ -92,6 +95,13 @@ export default function ChatComposer({
         throw new ApiError(502, "invalid_response");
       onTurn(operation.turn);
       const status = operation.turn.status;
+      if (
+        (status === "pending" || status === "outcomeUnknown") &&
+        operation.turn.operationId
+      ) {
+        setOperationId(operation.turn.operationId);
+        remember(operation.turn.operationId);
+      }
       if (status === "completed") {
         remember(null);
         setOperationId(null);
@@ -108,7 +118,7 @@ export default function ChatComposer({
         setPhase("failed");
       } else if (status === "outcomeUnknown") {
         setNotice(
-          "The outcome is unknown. This chat is blocked to avoid duplicate generation. A service owner must resolve it before another request can be sent.",
+          "The outcome is unknown. Check saved status, or explicitly close the interrupted request without retrying. No new generation will be sent automatically.",
         );
         setPhase("unknown");
       } else {
@@ -267,24 +277,50 @@ export default function ChatComposer({
     }
   }
 
-  async function check() {
+  async function check(savedId?: string) {
     const controller = lifetime.current;
     if (!controller || busy.current) return;
-    if (!operationId) {
+    const target = savedId ?? persistedOperationId ?? operationId;
+    if (!target) {
       if (attempt.current) await send(attempt.current);
       else onRefresh();
       return;
     }
     busy.current = true;
+    setOperationId(target);
+    remember(target);
     setPhase("checking");
     try {
       const operation = await inspectOperation(
         session,
         id,
-        operationId,
+        target,
         controller.signal,
       );
       if (!controller.signal.aborted) accept(operation);
+    } catch (error) {
+      if (!controller.signal.aborted) failed(error);
+    } finally {
+      busy.current = false;
+    }
+  }
+
+  async function close(savedId: string) {
+    const controller = lifetime.current;
+    if (!controller || busy.current) return;
+    busy.current = true;
+    setPhase("checking");
+    try {
+      const operation = await closeOperation(
+        session,
+        id,
+        savedId,
+        controller.signal,
+      );
+      if (!controller.signal.aborted) {
+        accept(operation, null);
+        onRefresh();
+      }
     } catch (error) {
       if (!controller.signal.aborted) failed(error);
     } finally {
@@ -384,15 +420,16 @@ export default function ChatComposer({
           >
             {phase === "sending" ? "Sending..." : "Send request"}
           </button>
-          {(phase === "uncertain" || phase === "unknown") && (
-            <button
-              className="button secondary"
-              type="button"
-              onClick={() => void check()}
-            >
-              {operationId ? "Check saved status" : "Check this request"}
-            </button>
-          )}
+          {(phase === "uncertain" || phase === "unknown") &&
+            !persistedOperationId && (
+              <button
+                className="button secondary"
+                type="button"
+                onClick={() => void check()}
+              >
+                {operationId ? "Check saved status" : "Check this request"}
+              </button>
+            )}
         </div>
       </form>
       {turns.some((turn) => turn.status !== "completed") && (
@@ -433,11 +470,33 @@ export default function ChatComposer({
                     </button>
                   </>
                 ) : (
-                  <p>
-                    {turn.status === "pending"
-                      ? "This request is pending. Leaving or reloading does not cancel it."
-                      : "The outcome is unknown. Do not retry; this chat remains blocked until the service owner resolves it."}
-                  </p>
+                  <>
+                    <p>
+                      {turn.status === "pending"
+                        ? "This request is pending. Leaving or reloading does not cancel it."
+                        : "The outcome is unknown. Closing this attempt marks it failed without generating another answer. Retry remains a separate action."}
+                    </p>
+                    {turn.operationId && (
+                      <button
+                        className="button secondary"
+                        disabled={working}
+                        onClick={() =>
+                          void check(turn.operationId ?? undefined)
+                        }
+                      >
+                        Check saved status
+                      </button>
+                    )}
+                    {turn.status === "outcomeUnknown" && turn.operationId && (
+                      <button
+                        className="button secondary"
+                        disabled={working}
+                        onClick={() => void close(turn.operationId!)}
+                      >
+                        Close interrupted request without retrying
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
             ))}

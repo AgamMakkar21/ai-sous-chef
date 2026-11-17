@@ -49,6 +49,8 @@ from sous_chef.domain.orchestrator import (
     TokenUsage,
 )
 from sous_chef.domain.recipes import (
+    AiRecipeDraft,
+    AiRecipeGenerationRequest,
     CalorieEstimate,
     CalorieGroundingRequest,
     CombinedRecipeDraft,
@@ -196,6 +198,11 @@ class FoundryGateway:
                 settings.foundry_recipe_nutrition_agent_name,
                 settings.foundry_recipe_nutrition_calorie_agent_version,
             )
+        if settings.foundry_recipe_nutrition_ai_recipe_agent_version is not None:
+            self._recipe_targets[RecipePhase.AI_RECIPE] = AgentTarget(
+                settings.foundry_recipe_nutrition_agent_name,
+                settings.foundry_recipe_nutrition_ai_recipe_agent_version,
+            )
         if settings.foundry_recipe_nutrition_mode == "phased":
             assert settings.foundry_recipe_nutrition_retrieval_agent_version is not None
             assert settings.foundry_recipe_nutrition_web_agent_version is not None
@@ -264,6 +271,16 @@ class FoundryGateway:
         self._require_agent_pins()
         return await self._execute(request, self._combined_recipe_result)
 
+    async def generate_ai_recipe(
+        self, request: AiRecipeGenerationRequest
+    ) -> tuple[AiRecipeDraft, TokenUsage]:
+        self._require_agent_pins()
+        if RecipePhase.AI_RECIPE not in self._recipe_targets:
+            raise FoundryGatewayError(FoundryFailure.UNAVAILABLE, request)
+        draft, usage = await self._execute(request, self._recipe_result)
+        assert isinstance(draft, AiRecipeDraft)
+        return draft, usage
+
     async def ground_web(
         self, request: WebGroundingRequest
     ) -> tuple[WebGrounding | None, TokenUsage]:
@@ -303,7 +320,9 @@ class FoundryGateway:
         coordination: CoordinationRequest | None = None,
     ) -> Result:
         target = (
-            self._recipe_targets[RecipePhase.CALORIE]
+            self._recipe_targets[RecipePhase.AI_RECIPE]
+            if isinstance(request, AiRecipeGenerationRequest)
+            else self._recipe_targets[RecipePhase.CALORIE]
             if isinstance(request, CalorieGroundingRequest) and not request.use_web
             else self._recipe_targets[RecipePhase.COMBINED]
             if isinstance(request, CombinedRecipeGenerationRequest)
@@ -331,7 +350,9 @@ class FoundryGateway:
             span.set_attribute("gen_ai.request.model", model)
         span.set_attribute(
             "asc.foundry.phase",
-            "combined"
+            "ai_recipe"
+            if isinstance(request, AiRecipeGenerationRequest)
+            else "combined"
             if isinstance(request, CombinedRecipeGenerationRequest)
             else "web"
             if isinstance(request, WebGroundingRequest)
@@ -699,6 +720,10 @@ class FoundryGateway:
                 or actions[0].status != "completed"
                 or len(actions[0].content) != 1
                 or actions[0].content[0].type != "output_text"
+                or (
+                    isinstance(request, AiRecipeGenerationRequest)
+                    and actions[0].content[0].annotations
+                )
             ):
                 raise ValueError
             payload = json.loads(response.output_text)
@@ -737,7 +762,9 @@ class FoundryGateway:
                     operational_event(Event.RECIPE_ATTRIBUTION_NORMALIZED)
                 payload.update(sourceIds=list(sources), sourceClaims=verified)
             model = (
-                CombinedRecipeDraft
+                AiRecipeDraft
+                if isinstance(request, AiRecipeGenerationRequest)
+                else CombinedRecipeDraft
                 if isinstance(request, CombinedRecipeGenerationRequest)
                 else RecipeDraft
             )
