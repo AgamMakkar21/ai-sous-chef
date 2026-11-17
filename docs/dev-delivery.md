@@ -6,8 +6,13 @@ versioned New Foundry prompt-agent configuration to **existing dev resources**
 when agents are explicitly enabled in the reviewed release manifest.
 Before acquiring Azure credentials or changing the running app, delivery now
 requires all six PR quality jobs to have succeeded for the merged PR's exact
-reviewed head. The same guard is reused when sealing the release. A missing,
-failed, incomplete or stale CI run blocks deployment, not just artifact retention.
+reviewed head. The gate follows the newest run for that head and waits up to
+12 minutes if it is queued or active; an older successful run cannot hide a
+pending or failed rerun. The unprivileged review job allows 15 minutes for this
+wait and the review checks. The same guard is reused when sealing the release.
+Missing, failed or stale evidence blocks deployment immediately; a run still
+incomplete at the deadline also blocks. This protects deployment, not just artifact
+retention. GitHub API errors remain explicit failures.
 
 A human collaborator other than the PR author must formally approve the exact
 final PR head before merging. A review comment or the merge action alone is not
@@ -436,6 +441,13 @@ No worker, Web IQ evaluation suite or production promotion system blocks this
 initial delivery pipeline; ASC-09 adds worker delivery before full MVP acceptance.
 
 ## Failures and recovery
+
+If a reviewed merge starts delivery while a newer PR quality run is still
+running, the CI gate waits instead of immediately rejecting incomplete evidence.
+It still requires that newest run to finish successfully with all six checks.
+For a release that failed under the earlier immediate-rejection behavior,
+confirm that the exact-head CI and peer approval are valid before rerunning
+the failed workflow. Do not select an older green run or bypass the gate.
 
 If **Verify reviewed dev merge** fails with "No merged dev PR with a current
 peer approval matches this commit", deployment has not started. A merge by a

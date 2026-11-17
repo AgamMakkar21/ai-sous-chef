@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
@@ -19,6 +20,7 @@ OWNER = "AgamMakkar21"
 CHECKS = {
     f"CI / {name}" for name in ("lint", "types", "tests", "build", "infrastructure", "frontend")
 }
+CI_WAIT_SECONDS = 12 * 60
 TARGET_KEYS = {
     "subscription_id": "AZURE_SUBSCRIPTION_ID",
     "resource_group": "ASC_RESOURCE_GROUP",
@@ -188,12 +190,33 @@ def check_dev_ci() -> tuple[dict[str, Any], dict[str, Any]]:
     delivery.dev_event()
     commit = delivery.commit()
     pr = merged_pr(commit, "dev")
-    runs = github(
-        f"actions/workflows/ci.yml/runs?head_sha={sha(pr['head']['sha'])}"
-        "&event=pull_request&per_page=1"
-    )["workflow_runs"]
-    require(bool(runs), "No PR quality run is recorded for the dev PR's exact reviewed head.")
-    ci = run_proof(number(runs[0]["id"]), "ci.yml", pr["head"]["sha"])
+    head = sha(pr["head"]["sha"])
+    deadline = time.monotonic() + CI_WAIT_SECONDS
+    while True:
+        runs = github(
+            f"actions/workflows/ci.yml/runs?head_sha={head}&event=pull_request&per_page=1"
+        )["workflow_runs"]
+        require(bool(runs), "No PR quality run is recorded for the dev PR's exact reviewed head.")
+        latest = runs[0]
+        run_id = number(latest["id"])
+        if latest["status"] == "completed":
+            break
+        require(
+            latest["status"] in {"requested", "queued", "pending", "waiting", "in_progress"},
+            "The newest PR quality run has an unsupported status; deployment remains blocked.",
+        )
+        remaining = deadline - time.monotonic()
+        require(
+            remaining > 0,
+            f"PR quality run {run_id} did not complete within 12 minutes; "
+            "deployment remains blocked.",
+        )
+        print(
+            f"Waiting for newest exact-head PR quality run {run_id} ({latest['status']}).",
+            flush=True,
+        )
+        time.sleep(min(10, remaining))
+    ci = run_proof(run_id, "ci.yml", head)
     jobs = github(f"actions/runs/{ci['id']}/jobs?per_page=100")["jobs"]
     require(
         CHECKS <= {job["name"] for job in jobs if job["conclusion"] == "success"},
