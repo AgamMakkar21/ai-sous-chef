@@ -171,6 +171,61 @@ test("keyboard add, change and delete persist after reload", async ({
   }
 });
 
+for (const form of ["add", "edit"] as const) {
+  test(`${form} quantity arrows use whole units and keep typed fractions`, async ({
+    page,
+  }) => {
+    const state = await backend(page, form === "edit" ? [milk] : []);
+    await page.goto("/");
+    if (form === "add") {
+      await page.getByLabel("Ingredient name", { exact: true }).fill("Milk");
+      await page.getByLabel("Unit (optional)").selectOption("l");
+    }
+    const input = page.getByLabel(
+      form === "add" ? "Quantity (optional)" : "Quantity for Milk",
+      { exact: true },
+    );
+    if (form === "edit") {
+      await input.press("ArrowUp");
+      await expect(input).toHaveValue("3");
+      await input.press("ArrowDown");
+      await expect(input).toHaveValue("2");
+      await input.fill("");
+    }
+    await input.press("ArrowUp");
+    await expect(input).toHaveValue("1");
+    await input.press("ArrowUp");
+    await expect(input).toHaveValue("2");
+    await input.press("ArrowDown");
+    await expect(input).toHaveValue("1");
+    await input.fill("1.125");
+    await input.press("ArrowUp");
+    await expect(input).toHaveValue("2.125");
+    await input.press("ArrowDown");
+    await expect(input).toHaveValue("1.125");
+    for (const invalid of ["0", "1.2345"]) {
+      await input.fill(invalid);
+      await input.press("Enter");
+      expect(
+        await input.evaluate((element: HTMLInputElement) =>
+          element.checkValidity(),
+        ),
+      ).toBe(false);
+      expect(state.writes).toHaveLength(0);
+    }
+    await input.fill("1.125");
+    await input.press("Enter");
+    await expect(row(page).locator(".grocery-amount")).toHaveText("1.125 l");
+    expect(state.writes).toHaveLength(1);
+    expect(state.writes[0]).toMatchObject({
+      method: form === "add" ? "POST" : "PATCH",
+      body: { quantity: 1.125 },
+    });
+    await page.reload();
+    await expect(row(page).locator(".grocery-amount")).toHaveText("1.125 l");
+  });
+}
+
 for (const unit of ["fl oz", "qt", "gal", "dozen"] as const) {
   test(`standard unit ${unit} can be selected and survives reload`, async ({
     page,

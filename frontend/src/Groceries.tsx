@@ -24,16 +24,28 @@ function quantity(value: string): number | null {
 }
 
 function QuantityInput({ id, value }: { id: string; value?: number | null }) {
+  // Whole-unit arrows and typed fractions need separate precision validation.
   return (
     <input
       id={id}
       name="quantity"
       type="number"
-      min="0.001"
+      min="0"
+      aria-valuemin={0.001}
       max="1000000"
-      step="0.001"
+      step="any"
       defaultValue={value ?? ""}
       placeholder="Unknown"
+      onInput={(event) => {
+        const input = event.currentTarget;
+        const amount = input.valueAsNumber;
+        input.setCustomValidity(
+          input.value !== "" &&
+            (amount <= 0 || Math.round(amount * 1000) / 1000 !== amount)
+            ? "Enter a positive quantity with up to 3 decimal places."
+            : "",
+        );
+      }}
     />
   );
 }
@@ -211,7 +223,7 @@ export default function Groceries({
         <p id="grocery-help">
           Add what you have. Quantity and unit are optional; leave quantity
           blank when unknown. Plus and minus change a known quantity by 1 in its
-          unit. Nothing here calls AI.
+          unit; type fractions when needed. Nothing here calls AI.
         </p>
         {loading && <p role="status">Loading your groceries...</p>}
         {failed && (
