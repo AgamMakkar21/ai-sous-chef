@@ -132,6 +132,24 @@ async function open(page: Page) {
 const card = (page: Page) =>
   page.getByRole("region", { name: "Simple carrot rice", exact: true });
 
+for (const unit of ["fl oz", "qt", "gal", "dozen"]) {
+  test(`recipe unit ${unit} renders after conversation reload`, async ({
+    page,
+  }) => {
+    const turn = recipeTurn();
+    const recipe = turn.recipe!;
+    for (const line of recipe.ingredients) line.unit = unit;
+    for (const item of recipe.shoppingItems) item.unit = unit;
+    for (const mapping of recipe.nutrition.mappings) mapping.unit = unit;
+    await recipeBackend(page, [turn]);
+    await open(page);
+    const amount = `${recipe.ingredients[0]!.quantity} ${unit}`;
+    await expect(card(page)).toContainText(amount);
+    await page.reload();
+    await expect(card(page)).toContainText(amount);
+  });
+}
+
 test("AI recipe attribution survives history reload without claiming curated evidence", async ({
   page,
 }) => {
