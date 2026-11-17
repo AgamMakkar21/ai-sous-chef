@@ -6,6 +6,8 @@ adds its identity-based `feedback_change_feed` trigger and deterministic admissi
 filter. `GET /api/health` still returns a fixed `{"status":"ok","scope":"host-only"}` and
 an `X-ASC-Commit` header from packaged release metadata. It accepts no business
 inputs, returns no user data, and performs no Cosmos reads/writes itself.
+It validates the required runtime and extraction settings before reporting
+success; missing project/deployment/model pins can no longer look healthy.
 ASC-47 supplies the [extraction adapter](preference-extraction.md); ASC-48
 connects owned context, durable application and recovery through the
 [learning ledger](preference-learning.md). Host health is not evidence that the
@@ -17,8 +19,8 @@ trigger, configured model access or learning works.
 **dev**. ASC-60 also permits explicit `environment=prod` using the separate
 `infra/environments/prod-functions.bicepparam`; production needs owner-approved
 resources, costs and identities and is not provisioned by Actions.
-It references the existing Cosmos account and foundation monitoring resources;
-it does not redeploy the web app, Foundry, database or containers. Deploy in
+It references the existing Cosmos account, Foundry project and foundation
+monitoring resources; it does not redeploy the web app, Foundry, database or containers. Deploy in
 incremental mode. Resource names and role-assignment GUIDs are deterministic for
 the group/environment. Review any parameter/region changes before applying.
 
@@ -89,15 +91,19 @@ No Entra Agent identity is created or reused in this infrastructure-only slice.
 | Worker identity | `sous-chef/Users` container | Cosmos DB Built-in Data Contributor (`...0002`), for owned context and conditional learned-only profile projection |
 | Worker identity | Precreated `sous-chef/leases` container | Cosmos DB Built-in Data Contributor (`...0002`), to create/update/delete lease items |
 | Worker identity | Existing Application Insights resource | Monitoring Metrics Publisher (`3913510d-42f4-4e42-8a64-420c390055eb`), Entra-authenticated telemetry ingestion |
+| Worker identity | Existing Foundry project only | Foundry User (`53ca6127-db72-4b80-b1b0-d745d6d5456d`), the supported project-user role for extraction; broader than custom invoke-only access |
 | GitHub delivery identity | This Function App only | Website Contributor, added by `infra/dev-delivery.bicep` |
 
 Storage Blob Data Owner is a **storage data-plane role**, not Azure resource
 Owner. No queue/table roles or Storage Account Contributor are needed for this
 HTTP-health/Cosmos-trigger host. Blob triggers, Durable Functions or other storage features would
 require separately reviewed grants. The worker has no ChatHistory,
-subscription/group management or RBAC-writing grant. Owner-configured
-project-scoped Foundry invocation access and extraction pins are required
-separately. Container RBAC cannot enforce learned-only JSON-property writes;
+subscription/group management or RBAC-writing grant. The owner supplies
+`foundryAccountName`, `foundryProjectName`, `extractionDeploymentName` and
+`extractionModelId` to the reviewed host template; it persists the three required
+extraction settings and the project-scoped grant. Actions does not provision
+them, and deployment preflight rejects absent or incompatible pins.
+Container RBAC cannot enforce learned-only JSON-property writes;
 the application boundary and ETag checks do so.
 
 Host storage uses `AzureWebJobsStorage__accountName`, `__credential=managedidentity`
@@ -113,7 +119,7 @@ The Cosmos trigger references those prefixes, uses the precreated
 `leases` container (`/id` partition key), and sets
 `create_lease_container_if_not_exists=False`. Identity-based Cosmos bindings
 cannot create the lease container. User isolation, explicit-over-learned
-precedence and deterministic allergy checks remain responsibilities of future
+precedence and deterministic allergy checks remain responsibilities of
 application code, not guarantees supplied by container-scoped RBAC.
 
 ## Feedback admission and durable processing
@@ -322,9 +328,10 @@ After peer approval and the normal dev deployment, an authorized operator must:
    under `feedback-v1`, with no 401/403 or lease-container-create failures.
 3. Use a dedicated synthetic dev account to cook/save a recipe and submit a
    rating through the normal API. Confirm its immutable event is version 1 with
-   the expected owner/source. Observe `feedback_batch_pending` with `failed > 0`
-   and `invalid = 0`: the default processor is deliberately disconnected.
-   The persisted rating must remain readable and learning must remain pending.
+   the expected owner/source. Confirm a completed `learningRecovery` record and
+   an authoritative `feedbackApplication` receipt, or investigate the explicit
+   failure category. A single cooked comment cannot qualify learned context.
+   The persisted rating must remain readable even when extraction fails.
 4. Repeat the same feedback/key, then edit its note using a new key and current
    ETag. Confirm one event for replay and a distinct version-2 event for the edit.
    Ordinary grocery/profile/chat writes must not create feedback revisions.

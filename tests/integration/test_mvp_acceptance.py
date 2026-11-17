@@ -5,6 +5,8 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from copy import deepcopy
+from datetime import datetime
+from time import monotonic
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -15,12 +17,16 @@ from fastapi.testclient import TestClient
 from sous_chef.adapters import foundry_gateway
 from sous_chef.adapters.cosmos import CosmosRepository, open_cosmos
 from sous_chef.app import create_app
-from sous_chef.domain.context import RequestContext
+from sous_chef.domain.authorization import AuthenticatedUser
+from sous_chef.domain.context import LearnedCandidate, RequestContext, ResolvedPreference
+from sous_chef.domain.cosmos import CosmosError, CosmosFailure
 from sous_chef.domain.recipe_safety import UNABLE
+from sous_chef.services import context as contexts
 from sous_chef.services.learning_recovery import LearningRecovery
 from sous_chef.services.recipe_grounding import retrieval_query
 from sous_chef.settings import Settings
 from test_chat_api import documents, send
+from test_context import candidate
 from test_conversation_api import BASE, OWNER, create
 from test_conversation_api import conversation_settings as conversation_settings
 from test_cosmos_repository import SyntheticCredential, Transport
@@ -253,6 +259,119 @@ def test_inventory_to_feedback_worker_to_personalized_recipe_survives_reload(
             assert NOTE not in denied.text and OWNER.user_id not in denied.text
     assert len(model.requests) == 2
     assert NOTE not in caplog.text and OWNER.user_id not in caplog.text
+
+
+def test_unconfigured_extraction_never_runs_on_the_chat_or_feedback_path(
+    combined_settings: Settings,
+    journey_agents: JourneyAgents,
+    auth_headers: dict[str, str],
+    harness: tuple[Transport, SyntheticCredential],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden_config() -> extraction.ExtractionConfig:
+        pytest.fail("Chat and feedback admission must never configure or invoke extraction.")
+
+    monkeypatch.setattr(extraction.ExtractionConfig, "from_environment", forbidden_config)
+    for name in (
+        "ASC_FOUNDRY_PROJECT_ENDPOINT",
+        "ASC_WORKER_EXTRACTION_DEPLOYMENT",
+        "ASC_WORKER_EXTRACTION_MODEL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    with TestClient(create_app(combined_settings), headers=auth_headers) as client:
+        onboard(client)
+        original = deepcopy(document(harness[0]))
+        conversation = create(client)
+        generated = send(client, conversation, content="Make a pantry dinner.")
+        assert generated.status_code == 200, generated.text
+        turn = generated.json()["data"]
+        assert turn["status"] == "completed" and turn["recipe"] is not None
+        saved = accept(client, turn["generatedRecipeId"])
+        assert saved.status_code == 201, saved.text
+        cooked = cook(client, saved.json()["data"]["historyId"], saved.headers["etag"])
+        assert cooked.status_code == 200, cooked.text
+        rated = feedback(client, cooked, note=NOTE)
+        assert rated.status_code == 200, rated.text
+        assert rated.json()["data"]["processingStatus"] == "pending"
+        later = send(client, conversation, key="extraction-independent", content="Another dinner.")
+        assert later.status_code == 200, later.text
+        result = later.json()["data"]
+        assert result["status"] == "completed" and result["recipe"] is not None
+        assert len(journey_agents.contexts) == 2
+        assert document(harness[0]) == original
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [CosmosFailure.THROTTLED, CosmosFailure.TIMEOUT, CosmosFailure.UNAVAILABLE, None],
+    ids=["throttled", "timeout", "unavailable", "stalled"],
+)
+def test_optional_learning_failure_does_not_block_grounded_chat(
+    combined_settings: Settings,
+    journey_agents: JourneyAgents,
+    auth_headers: dict[str, str],
+    harness: tuple[Transport, SyntheticCredential],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    failure: CosmosFailure | None,
+) -> None:
+    class UnavailableReader:
+        calls = 0
+        cancelled = False
+
+        async def resolve(
+            self,
+            user: AuthenticatedUser,
+            candidates: tuple[LearnedCandidate, ...],
+            *,
+            now: datetime,
+            deadline: float,
+        ) -> tuple[ResolvedPreference, ...]:
+            self.calls += 1
+            assert user == OWNER and len(candidates) == 1
+            assert deadline <= monotonic() + 0.01
+            if failure is not None:
+                raise CosmosError(failure, uuid4())
+            try:
+                await asyncio.sleep(0.1)
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+            pytest.fail("The optional learning deadline did not cancel the stalled lookup.")
+
+    reader = UnavailableReader()
+    monkeypatch.setattr(contexts, "MAX_LEARNED_CONTEXT_SECONDS", 0.01)
+    with TestClient(
+        create_app(combined_settings, learned_preference_reader=reader), headers=auth_headers
+    ) as client:
+        onboard(client)
+        document(harness[0])["learnedPreferences"] = [
+            candidate().model_dump(mode="json", by_alias=True)
+        ]
+        original = deepcopy(document(harness[0]))
+        result = send(client, create(client), content="Make a pantry dinner.")
+        assert result.status_code == 200, result.text
+        turn = result.json()["data"]
+        assert turn["status"] == "completed" and turn["recipe"] is not None
+        context = journey_agents.contexts[-1]
+        assert context.learned_preferences == ()
+        assert (
+            context.explicit_preferences.model_dump(mode="json", by_alias=True)
+            == original["explicitPreferences"]
+        )
+        assert document(harness[0]) == original
+    assert reader.calls == 1 and reader.cancelled is (failure is None)
+    events = [
+        json.loads(record.getMessage())
+        for record in caplog.records
+        if record.name == "sous_chef.operational"
+    ]
+    assert any(
+        event["event"] == "learned_context_unavailable"
+        and event.get("error_category") == (failure or CosmosFailure.TIMEOUT).value
+        for event in events
+    )
+    assert OWNER.user_id not in caplog.text and candidate().insight not in caplog.text
 
 
 @pytest.mark.parametrize("use_web", [False, True])

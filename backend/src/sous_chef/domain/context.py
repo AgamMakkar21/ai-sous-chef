@@ -1,7 +1,7 @@
 """Backend-only request context and the future learning worker's evidence boundary."""
 
 from datetime import datetime
-from typing import Annotated, Literal, Protocol
+from typing import Annotated, Literal, Protocol, get_args
 
 from pydantic import UUID4, AwareDatetime, Field, StringConstraints
 
@@ -14,7 +14,7 @@ from sous_chef.domain.food_safety import (
     validate_ingredients,
 )
 from sous_chef.domain.groceries import GroceryRow
-from sous_chef.domain.profiles import ExplicitPreferences, PreferenceText
+from sous_chef.domain.profiles import ExplicitPreferences, PreferenceText, Spice
 from sous_chef.domain.recipes import StructuredRecipe
 
 MAX_CONTEXT_CHARACTERS = 131_072
@@ -35,7 +35,8 @@ LearnedField = Literal[
 def conflicts_with_explicit(field: LearnedField, value: str, explicit: ExplicitPreferences) -> bool:
     normalized = value.casefold()
     if field == "spicePreference":
-        return normalized != explicit.spice_preference
+        # Heat can adapt through evidence; it must still be a canonical profile level.
+        return normalized not in get_args(Spice)
     if field == "likes":
         safety = validate_ingredients(
             SafetyProfile(

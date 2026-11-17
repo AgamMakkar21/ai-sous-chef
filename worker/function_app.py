@@ -498,6 +498,7 @@ def validate_configuration() -> None:
     }
     if any(os.environ.get(key) != value for key, value in expected.items()):
         raise RuntimeError("Host runtime, environment or container configuration does not match.")
+    ExtractionConfig.from_environment()
 
 
 @app.function_name(name="host_health")

@@ -26,21 +26,25 @@ These are observed runtime pins, not the source-agent versions in
 This acceptance PR is not part of the observed deployment above.
 
 The Function has `AZURE_CLIENT_ID`, but all three required settings below were
-absent. Its health endpoint deliberately does not validate them:
+absent. That release's health endpoint did not validate them. The repaired
+runtime and deployment preflight now require the explicit, owner-approved pins:
 
 | Missing setting | Owner-approved value required |
 | --- | --- |
 | `ASC_FOUNDRY_PROJECT_ENDPOINT` | Existing New Foundry project HTTPS endpoint |
-| `ASC_WORKER_EXTRACTION_DEPLOYMENT` | Explicit existing GPT-5.1 nano deployment name |
-| `ASC_WORKER_EXTRACTION_MODEL` | `gpt-5.1-nano` or the exact expected dated model ID |
+| `ASC_WORKER_EXTRACTION_DEPLOYMENT` | Explicit existing GPT-5.4 nano deployment name |
+| `ASC_WORKER_EXTRACTION_MODEL` | `gpt-5.4-nano` or the exact expected dated model ID |
 
 Follow [extraction configuration](preference-extraction.md#configuration-and-identity)
 and [worker permissions](feedback-host.md#identity-storage-and-data-permissions).
 The worker's separate managed identity also needs the required project-scoped
 invocation access; that permission was **not verified** here. Do not copy the
-legacy web extraction pin, substitute GPT-5.4 nano, share identities, broaden
+legacy web extraction pin implicitly, substitute another model, share identities, broaden
 roles or enable public networking to make the check pass. No cloud configuration,
 permissions, leases or application data were changed during these checks.
+The later repair aligns with the already-deployed GPT-5.4 nano model and adds
+reviewed infrastructure wiring; this historical observation is not evidence that
+the repair has been deployed or failed feedback has been replayed.
 
 ## Automated acceptance
 

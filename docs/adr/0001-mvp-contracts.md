@@ -75,6 +75,10 @@ Explicit allergies and strict restrictions are non-negotiable. Current requests
 may override soft defaults such as time or taste, but not safety constraints.
 Explicit user direction overrides conflicting learned preferences. A model never
 creates, removes, or modifies explicit preferences or allergies.
+The saved spice level is a soft baseline: current evidence-backed canonical heat
+may adjust recipe heat after the two-independent-cooked-supporter / 0.65 gate.
+The current request's heat direction and all safety constraints still take
+precedence; learning never rewrites the saved explicit setting.
 
 The complete final recipe, including substitutions, garnishes, and ingredient-
 bearing instructions, passes a deterministic safety gate using current profile

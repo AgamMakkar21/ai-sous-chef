@@ -6,8 +6,13 @@ versioned New Foundry prompt-agent configuration to **existing dev resources**
 when agents are explicitly enabled in the reviewed release manifest.
 Before acquiring Azure credentials or changing the running app, delivery now
 requires all six PR quality jobs to have succeeded for the merged PR's exact
-reviewed head. The same guard is reused when sealing the release. A missing,
-failed, incomplete or stale CI run blocks deployment, not just artifact retention.
+reviewed head. The gate follows the newest run for that head and waits up to
+12 minutes if it is queued or active; an older successful run cannot hide a
+pending or failed rerun. The unprivileged review job allows 15 minutes for this
+wait and the review checks. The same guard is reused when sealing the release.
+Missing, failed or stale evidence blocks deployment immediately; a run still
+incomplete at the deadline also blocks. This protects deployment, not just artifact
+retention. GitHub API errors remain explicit failures.
 
 A human collaborator other than the PR author must formally approve the exact
 final PR head before merging. A review comment or the merge action alone is not
@@ -187,8 +192,9 @@ PostgreSQL, import USDA data, register API keys or copy developer credentials.
    | `ASC_FOUNDRY_PROJECT_NAME` | Existing dev project name |
 
 5. Review the explicit stage in `deploy/agents.dev.json`. The current candidate
-   enables combined-mode chat with the read-back-verified Orchestrator source 47,
-   Recipe + Nutrition combined source 58 and tool-free selection/nutrition recovery source 62.
+   enables combined-mode chat with the read-back-verified Orchestrator source 54,
+   Recipe + Nutrition combined source 76, tool-free nutrition recovery source 62
+   and AI recipe recovery source 75.
    This is release configuration,
    not evidence that the candidate has been deployed or passed live UI acceptance.
    Agent-enabled releases pin the **actual approved agent versions**.
@@ -231,14 +237,14 @@ sources, use this manifest shape:
   "agents": {
     "orchestrator": {
       "name": "sous-chef-orchestrator-dev",
-      "version": "52",
-      "contract_sha256": "18ab1d9449efca1b87a3a43fa31e2aede0870d421d37c2e549d603ab3e132bcc"
+      "version": "54",
+      "contract_sha256": "724d6e50aea7108083f0a82633be0de1c5489c4566f5bc8b956540db594d9950"
     },
     "recipe_nutrition": {
       "name": "sous-chef-recipe-nutrition-dev",
-      "version": "58",
+      "version": "76",
       "calorie_version": "62",
-      "ai_recipe_version": "71"
+      "ai_recipe_version": "75"
     }
   }
 }
@@ -249,9 +255,11 @@ not assumed next-version numbers. Future releases must read back their selected
 versions again. Deployment sets `ASC_FOUNDRY_RECIPE_NUTRITION_MODE=combined`,
 verifies and clones all four exact sources under their existing identities, then pins
 the resulting release versions. It does not publish separate retrieval/web phases.
-Orchestrator source 52 carries policy 13, bounded MCP-to-AI recipe recovery and
-direct delivery after deterministic gates. Source 71 is the tool-free `ai_recipe`
-phase; it does not replace the combined source 58 or nutrition source 62.
+Orchestrator source 54 carries policy 13, bounded MCP-to-AI recipe recovery and
+direct delivery after deterministic gates, including the evidence-backed spice
+baseline policy. Source 75 is the tool-free `ai_recipe` phase; it does not replace
+combined source 76 or nutrition source 62. Combined source 76 still has both recipe
+MCP and native web tools attached.
 The version-7 manifest records its read-back-verified `asc_contract_sha256` as
 `contract_sha256`. Manifest validation, already exercised by infrastructure PR CI,
 recomputes that contract from the current instructions and function schema before
@@ -261,7 +269,14 @@ and receipt are updated together. The portable contract normalizes environment-s
 model-deployment and RAI identifiers; deployment still validates the full remote
 definition, its full fingerprint, policy metadata, active state and identity.
 This receipt does not replace live verification or authorize publication/deployment.
-Recipe sources 58 and 62 retain their exact reviewed definitions. App Service must
+Shared schema changes also require fresh affected specialist sources. The
+measurement-unit merge added `fl oz`, `qt`, `gal` and `dozen` to the recipe schema,
+so older combined/AI-recipe definitions failed exact phase verification even
+though application CI passed. Sources 76 and 75 include those units; unchanged
+nutrition source 62 was separately verified and retained. Publish, read back and
+update all affected pins in the same PR as a shared-schema change; never bypass
+the mismatch or override a published response schema at invocation time.
+App Service must
 receive the compatible backend and complete runtime pins together through delivery;
 do not enable its flag manually against the older backend. USDA secrets/enabling
 and the stable `ASC_PAGINATION_KEY` remain owner-managed.
@@ -436,6 +451,13 @@ No worker, Web IQ evaluation suite or production promotion system blocks this
 initial delivery pipeline; ASC-09 adds worker delivery before full MVP acceptance.
 
 ## Failures and recovery
+
+If a reviewed merge starts delivery while a newer PR quality run is still
+running, the CI gate waits instead of immediately rejecting incomplete evidence.
+It still requires that newest run to finish successfully with all six checks.
+For a release that failed under the earlier immediate-rejection behavior,
+confirm that the exact-head CI and peer approval are valid before rerunning
+the failed workflow. Do not select an older green run or bypass the gate.
 
 If **Verify reviewed dev merge** fails with "No merged dev PR with a current
 peer approval matches this commit", deployment has not started. A merge by a

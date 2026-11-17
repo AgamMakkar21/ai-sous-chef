@@ -12,7 +12,7 @@ import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from test_foundation import compile_bicep
 
@@ -117,6 +117,21 @@ def evidence() -> dict[str, Any]:
     }
 
 
+def ci_run(
+    *,
+    run_id: int = 102,
+    status: str = "completed",
+    conclusion: str | None = "success",
+) -> dict[str, Any]:
+    return {
+        "id": run_id,
+        "status": status,
+        "conclusion": conclusion,
+        "path": ".github/workflows/ci.yml",
+        "head_sha": HEAD,
+    }
+
+
 class ReleaseTests(unittest.TestCase):
     def test_predeployment_gate_rejects_missing_failed_or_stale_ci_evidence(self) -> None:
         for fault in ("none", "missing_run", "missing_check", "failed", "stale"):
@@ -127,13 +142,9 @@ class ReleaseTests(unittest.TestCase):
                 jobs.pop()
             elif fault == "failed":
                 jobs[0]["conclusion"] = "failure"
-            run = {
-                "id": 102,
-                "status": "completed",
-                "conclusion": "success",
-                "path": ".github/workflows/ci.yml",
-                "head_sha": SOURCE if fault == "stale" else HEAD,
-            }
+            run = ci_run()
+            if fault == "stale":
+                run["head_sha"] = SOURCE
             with (
                 self.subTest(fault=fault),
                 patch.dict(os.environ, ENV | {"GITHUB_REF": "refs/heads/dev"}),
@@ -142,7 +153,7 @@ class ReleaseTests(unittest.TestCase):
                     release,
                     "github",
                     side_effect=[
-                        {"workflow_runs": [] if fault == "missing_run" else [{"id": 102}]},
+                        {"workflow_runs": [] if fault == "missing_run" else [run]},
                         run,
                         {"jobs": jobs},
                     ],
@@ -155,6 +166,86 @@ class ReleaseTests(unittest.TestCase):
                     with self.assertRaises(delivery.DeliveryError):
                         release.check_dev_ci()
                 azure.assert_not_called()
+
+    def test_predeployment_gate_waits_for_newest_ci_run(self) -> None:
+        proposal = pr(evidence())
+        proposal["head"]["sha"] = HEAD
+        queued = ci_run(status="queued", conclusion=None)
+        running = ci_run(run_id=103, status="in_progress", conclusion=None)
+        completed = ci_run(run_id=103)
+        older_success = ci_run(run_id=101)
+        jobs = [{"name": check, "conclusion": "success"} for check in release.CHECKS]
+        with (
+            patch.dict(os.environ, ENV | {"GITHUB_REF": "refs/heads/dev"}),
+            patch.object(release, "merged_pr", return_value=proposal),
+            patch.object(
+                release,
+                "github",
+                side_effect=[
+                    {"workflow_runs": [queued, older_success]},
+                    {"workflow_runs": [running, older_success]},
+                    {"workflow_runs": [completed, older_success]},
+                    completed,
+                    {"jobs": jobs},
+                ],
+            ) as github,
+            patch("time.monotonic", return_value=0),
+            patch("time.sleep") as sleep,
+            patch.object(delivery, "az") as azure,
+        ):
+            self.assertEqual(release.check_dev_ci(), (completed, proposal))
+            self.assertEqual(sleep.call_args_list, [call(10), call(10)])
+            github.assert_any_call("actions/runs/103/jobs?per_page=100")
+            azure.assert_not_called()
+
+    def test_predeployment_gate_does_not_hide_failed_reruns(self) -> None:
+        proposal = pr(evidence())
+        proposal["head"]["sha"] = HEAD
+        for conclusion in ("failure", "cancelled", "timed_out"):
+            pending = ci_run(status="in_progress", conclusion=None)
+            completed = ci_run(conclusion=conclusion)
+            older_success = ci_run(run_id=101)
+            with (
+                self.subTest(conclusion=conclusion),
+                patch.dict(os.environ, ENV | {"GITHUB_REF": "refs/heads/dev"}),
+                patch.object(release, "merged_pr", return_value=proposal),
+                patch.object(
+                    release,
+                    "github",
+                    side_effect=[
+                        {"workflow_runs": [pending, older_success]},
+                        {"workflow_runs": [completed, older_success]},
+                        completed,
+                    ],
+                ),
+                patch("time.monotonic", return_value=0),
+                patch("time.sleep") as sleep,
+                patch.object(delivery, "az") as azure,
+            ):
+                with self.assertRaisesRegex(delivery.DeliveryError, "Workflow evidence"):
+                    release.check_dev_ci()
+                sleep.assert_called_once_with(10)
+                azure.assert_not_called()
+
+    def test_predeployment_gate_wait_is_bounded(self) -> None:
+        proposal = pr(evidence())
+        proposal["head"]["sha"] = HEAD
+        pending = ci_run(status="in_progress", conclusion=None)
+        with (
+            patch.dict(os.environ, ENV | {"GITHUB_REF": "refs/heads/dev"}),
+            patch.object(release, "merged_pr", return_value=proposal),
+            patch.object(release, "github", return_value={"workflow_runs": [pending]}) as github,
+            patch("time.monotonic", side_effect=[0, 0, 720]),
+            patch("time.sleep") as sleep,
+            patch.object(delivery, "az") as azure,
+        ):
+            with self.assertRaisesRegex(
+                delivery.DeliveryError, "did not complete within 12 minutes"
+            ):
+                release.check_dev_ci()
+            sleep.assert_called_once_with(10)
+            self.assertEqual(github.call_count, 2)
+            azure.assert_not_called()
 
     def test_feature_fork_and_stale_evidence_cannot_bypass_main(self) -> None:
         original = pr(evidence())
@@ -271,7 +362,7 @@ class ReleaseTests(unittest.TestCase):
                         release,
                         "github",
                         side_effect=[
-                            {"workflow_runs": [{"id": 102}]},
+                            {"workflow_runs": [ci_run()]},
                             {"jobs": jobs},
                         ],
                     ),

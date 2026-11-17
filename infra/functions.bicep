@@ -16,6 +16,18 @@ param cosmosAccountName string
 param applicationInsightsName string
 param logAnalyticsName string
 
+@description('Existing owner-approved Foundry account and project; no model is provisioned here.')
+@minLength(1)
+param foundryAccountName string
+@minLength(1)
+param foundryProjectName string
+
+@description('Explicit existing extraction deployment and expected GPT-5.4 nano backing model ID.')
+@minLength(1)
+param extractionDeploymentName string
+@minLength(1)
+param extractionModelId string
+
 @description('Existing owner-approved delegated subnet; required for a private-only Cosmos account.')
 param integrationSubnetResourceId string = ''
 
@@ -42,6 +54,15 @@ resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' existin
   name: logAnalyticsName
 }
 
+resource foundry 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
+  name: foundryAccountName
+}
+
+resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' existing = {
+  parent: foundry
+  name: foundryProjectName
+}
+
 module worker 'modules/functions.bicep' = {
   name: '${namePrefix}-feedback-host'
   params: {
@@ -54,6 +75,19 @@ module worker 'modules/functions.bicep' = {
     logAnalyticsResourceId: workspace.id
     integrationSubnetResourceId: integrationSubnetResourceId
     telemetryEnabled: telemetryEnabled
+    foundryProjectEndpoint: 'https://${foundryAccountName}.services.ai.azure.com/api/projects/${foundryProjectName}'
+    extractionDeploymentName: extractionDeploymentName
+    extractionModelId: extractionModelId
+  }
+}
+
+resource modelInvocationGrant 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(project.id, '${namePrefix}-feedback-identity', 'foundry-user')
+  scope: project
+  properties: {
+    principalId: worker.outputs.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')
   }
 }
 

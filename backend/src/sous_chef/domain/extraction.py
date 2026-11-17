@@ -1,12 +1,25 @@
 """Private extraction proposals and verified evidence, never explicit-profile mutations."""
 
 import hashlib
+import json
+import os
+import re
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Annotated, Final, Literal, Self
 from uuid import UUID, uuid4
 
-from pydantic import UUID4, AwareDatetime, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    UUID4,
+    AwareDatetime,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    StringConstraints,
+    ValidationError,
+    model_validator,
+)
 
 from sous_chef.domain.context import ContextPreference, LearnedField, ResolvedPreference
 from sous_chef.domain.conversations import ConversationModel
@@ -14,6 +27,7 @@ from sous_chef.domain.feedback import FeedbackRevision
 from sous_chef.domain.profiles import ExplicitPreferences, PreferenceText
 
 EXTRACTION_POLICY_VERSION: Final = 1
+EXTRACTION_MODEL: Final = "gpt-5.4-nano"
 MAX_EXTRACTION_INPUT_TOKENS = 6000
 MAX_EXTRACTION_OUTPUT_TOKENS = 1000
 MAX_EXTRACTION_PRIOR = 5
@@ -24,6 +38,47 @@ Confidence = Annotated[float, Field(strict=True, ge=0, le=1)]
 
 class ExtractionModel(ConversationModel):
     model_config = ConfigDict(strict=True)
+
+
+class ExtractionConfig(ExtractionModel):
+    model_config = ConfigDict(alias_generator=None)
+
+    project_endpoint: HttpUrl = Field(repr=False)
+    deployment: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+    model_id: str = Field(pattern=r"^gpt-5\.4-nano(?:-\d{4}-\d{2}-\d{2})?$")
+    managed_identity_client_id: UUID4 = Field(repr=False)
+
+    @model_validator(mode="after")
+    def pinned_project(self) -> "ExtractionConfig":
+        endpoint = self.project_endpoint
+        if (
+            endpoint.scheme != "https"
+            or endpoint.username is not None
+            or endpoint.password is not None
+            or endpoint.query is not None
+            or endpoint.fragment is not None
+            or not re.fullmatch(r"/api/projects/[A-Za-z0-9._-]+/?", endpoint.path or "")
+            or self.deployment.casefold() == "latest"
+        ):
+            raise ValueError("Configure a fixed New Foundry project and extraction deployment.")
+        return self
+
+    @classmethod
+    def from_environment(cls, environment: Mapping[str, str] | None = None) -> "ExtractionConfig":
+        values = os.environ if environment is None else environment
+        try:
+            return cls.model_validate_json(
+                json.dumps(
+                    {
+                        "project_endpoint": values.get("ASC_FOUNDRY_PROJECT_ENDPOINT"),
+                        "deployment": values.get("ASC_WORKER_EXTRACTION_DEPLOYMENT"),
+                        "model_id": values.get("ASC_WORKER_EXTRACTION_MODEL"),
+                        "managed_identity_client_id": values.get("AZURE_CLIENT_ID"),
+                    }
+                )
+            )
+        except ValidationError:
+            raise ExtractionError(ExtractionFailure.CONFIGURATION) from None
 
 
 class ExtractionSource(ExtractionModel):

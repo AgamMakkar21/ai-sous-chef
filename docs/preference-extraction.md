@@ -18,25 +18,38 @@ developer-credential, classic-agent or Chat Completions fallback.
 | Environment setting | Required value |
 | --- | --- |
 | `ASC_FOUNDRY_PROJECT_ENDPOINT` | HTTPS New Foundry project URL ending in `/api/projects/<project>` |
-| `ASC_WORKER_EXTRACTION_DEPLOYMENT` | Explicit owner-approved existing GPT-5.1 nano deployment name; never `latest` |
-| `ASC_WORKER_EXTRACTION_MODEL` | Expected returned model ID: `gpt-5.1-nano` or its exact dated ID |
+| `ASC_WORKER_EXTRACTION_DEPLOYMENT` | Explicit owner-approved existing GPT-5.4 nano deployment name; never `latest` |
+| `ASC_WORKER_EXTRACTION_MODEL` | Expected backing model ID: `gpt-5.4-nano` or its exact dated ID |
 | `AZURE_CLIENT_ID` | The separate Function workload identity's client UUID |
 
 `ExtractionConfig.from_environment()` fails closed if a setting is absent or
-invalid. A different returned model fails extraction rather than silently
-switching models. The adapter does not read the web app's legacy
+invalid. Before every inference, project deployment metadata must match the
+configured alias, OpenAI publisher, model and any explicit version pin. A mismatch
+fails configuration before a paid request. Azure may return that exact deployment
+alias in `response.model`; only it or the exact configured model ID is accepted.
+No other returned model/alias is allowed. The adapter does not read the web app's legacy
 `ASC_FOUNDRY_EXTRACTION_DEPLOYMENT`.
 
-**Configuration discrepancy:** the existing foundation template and ADR still
-describe GPT-5.4 nano. Issue #48 explicitly specifies the working GPT-5.1 nano
-deployment, so this adapter requires separate explicit pins for that deployment.
-This change neither alters the foundation model deployment nor provisions a new
-one. It performs no availability probe or alternative-model evaluation.
+The extractor now aligns with the owner-approved GPT-5.4 nano deployment already
+declared by the foundation, rather than requiring a separate GPT-5.1 deployment.
+The backing model pin is still explicit; the project metadata check distinguishes
+the real model/version from Azure's response alias. No model is
+created, substituted or automatically discovered.
 
-The host access template grants scoped source/profile/lease/monitoring access.
-The owner must configure approved pins, grant only the required project-scoped
-invocation permission and retain private networking. Do not copy web credentials,
-broaden roles or deploy infrastructure to make a local test pass.
+The shared `sous_chef.domain.extraction.ExtractionConfig` validates runtime and
+deployment settings identically. Both host health and worker deployment preflight
+reject missing or invalid extraction pins. Health remains `scope=host-only`:
+it performs no model calls and does not prove live authorization or successful
+learning.
+
+`infra/functions.bicep` requires the existing Foundry account/project and explicit
+deployment/model pins, adds the three worker settings, and grants the separate
+worker identity **Foundry User** (`53ca6127-db72-4b80-b1b0-d745d6d5456d`) only on
+that existing project. This is the supported project-user role, not a custom
+invoke-only grant; it has broader project data actions. It gives no subscription
+or resource-group grant and adds no provisioning permission to Actions.
+The owner applies the reviewed access/configuration change while retaining
+private networking. Do not copy web credentials or enable public access.
 
 ## Input and ownership boundary
 
@@ -66,11 +79,15 @@ or expose an HTTP endpoint.
 
 ## Instructions, limits and outcomes
 
-Policy-v1 instructions treat the JSON user message as untrusted data. The full
+The updated policy-v1 instructions treat the JSON user message as untrusted data. The full
 current note and specific meaning take precedence over the whole-meal rating:
 liking lime sauce may survive an overall dislike; burning rice does not prove a
 rice dislike. Existing learned text is context, not fresh evidence. Explicit
-preferences and deterministic allergy checks remain authoritative.
+constraints and deterministic allergy checks remain authoritative. The saved
+spice level is a taste baseline: direct feedback may propose `none`, `mild`,
+`medium` or `hot` without editing that setting. Only evidence that passes the
+unchanged independent-occasion and confidence gates can influence recipe heat.
+The current request's explicit heat instruction still wins.
 
 The adapter selects at most five newest prior occasions within 180 days. It
 counts instructions, data, schema and a framing reserve with the existing
@@ -95,8 +112,9 @@ Every assertion must reference an actually supplied feedback ID, history,
 revision and occasion, with an exact nonblank excerpt from that revision's note.
 Dropped/expired examples cannot be cited. Each candidate must involve the
 current feedback and count each occasion once. Repeated normalized proposals,
-opposite likes/dislikes for the same value and conflicts with the current
-explicit profile fail closed.
+opposite likes/dislikes for the same value and conflicts with current explicit
+constraints fail closed. A canonical spice adjustment is not such a conflict;
+an arbitrary spice string is.
 
 Application code builds stable normalized field/value keys and derives evidence
 metadata from actual sources. Each supporting/opposing cooked occasion contributes

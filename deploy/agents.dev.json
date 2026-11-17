@@ -4,14 +4,14 @@
   "agents": {
     "orchestrator": {
       "name": "sous-chef-orchestrator-dev",
-      "version": "52",
-      "contract_sha256": "18ab1d9449efca1b87a3a43fa31e2aede0870d421d37c2e549d603ab3e132bcc"
+      "version": "54",
+      "contract_sha256": "724d6e50aea7108083f0a82633be0de1c5489c4566f5bc8b956540db594d9950"
     },
     "recipe_nutrition": {
       "name": "sous-chef-recipe-nutrition-dev",
-      "version": "58",
+      "version": "76",
       "calorie_version": "62",
-      "ai_recipe_version": "71"
+      "ai_recipe_version": "75"
     }
   }
 }

@@ -63,7 +63,7 @@ forbidden preference as a recommendation target.
 Evidence precision counts unique current source/revision/direction assertions
 that match the fixture's independent gold list, divided by all emitted current
 assertions. Recall divides those matches by all expected assertions. Neither
-metric measures how accurately GPT-5.1 nano interprets natural language: its
+metric measures how accurately a live extraction model interprets natural language: its
 responses are scripted in this run.
 
 Brier score is the mean squared difference between raw ledger confidence and a
@@ -109,7 +109,10 @@ The scripted extractor proposes 0.99; a single support still yields 0.666667 and
 is excluded. Negative controls prove the experiment fails if either the
 two-support minimum or the confidence floor is bypassed.
 
-Explicit allergies, dietary restrictions and preferences always take precedence.
+Explicit allergies, dietary restrictions and other constraints take precedence.
+The saved spice level is a soft baseline: evidence-backed canonical heat can
+adjust it without changing the saved setting, unless the current request
+specifies heat explicitly. The same two-support / 0.65 gate still applies.
 The existing stable ranking and maximum of 20 learned entries remain unchanged;
 budget trimming can remove learned entries but never mandatory explicit inputs.
 These fixtures support retaining this conservative gate, not claiming it is an
@@ -119,9 +122,10 @@ optimal threshold. Any threshold change requires new evidence and peer review.
 
 Every report records the dataset hash, starting commit, dirty-state flag, source
 tree and prompt hashes, SDK versions, production policy versions, model IDs
-`gpt-5.4-mini`, `gpt-5.4` and `gpt-5.1-nano`, the extraction source hash and the
+`gpt-5.4-mini`, `gpt-5.4` and the extraction model family, the extraction source hash and the
 acceptance-test hash. Both arms share those pins. Live backing model versions are
 `null`: naming a model does not make scripted replay a live model experiment.
+New runs identify GPT-5.4 nano; historical reports retain their original pins.
 
 The fixture SHA-256 is
 `0be9e3b6f3890cfa0ec9a7c7052d4372a260e841217555bf242e2ac82808b495`.

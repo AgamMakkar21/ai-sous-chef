@@ -54,15 +54,17 @@ USERS = ProductContainer.USERS
 
 
 class Extractor:
-    def __init__(self) -> None:
+    def __init__(self, *, field: str = "likes", value: str = "lime") -> None:
         self.calls: list[ExtractionRequest] = []
         self.no_insight = False
         self.oppose = False
+        self.field = field
+        self.value = value
 
     async def extract(self, request: ExtractionRequest) -> ExtractionResult:
         self.calls.append(request)
         await asyncio.sleep(0)
-        candidate = proposal(request.current)
+        candidate = proposal(request.current, field=self.field, value=self.value)
         if self.oppose:
             candidate["evidence"][0]["direction"] = "oppose"
         draft = (
@@ -191,6 +193,43 @@ def test_replay_and_restart_count_each_feedback_once_and_preserve_explicit_inven
         ]
         assert len(batch_calls) == 2 and all(len(call.body) == 4 for call in batch_calls)
         assert all("/RecipeHistory/" in call.path for call in batch_calls)
+
+    asyncio.run(scenario())
+
+
+def test_repeated_spice_feedback_is_stored_and_gated_without_rewriting_explicit_preferences(
+    harness: tuple[Transport, SyntheticCredential],
+) -> None:
+    async def scenario() -> None:
+        extractor = Extractor(field="spicePreference", value="hot")
+        async with open_cosmos(settings(), lifetime_seconds=60) as repository:
+            original = await seed_profile(repository)
+            for count, days in enumerate((2, 1, 0), start=1):
+                item = source(note="Please make this spicier next time.", days=days)
+                await seed_source(repository, item)
+                await LearningService(repository, extractor).process(
+                    OWNER, item.feedback.feedback_id, now=NOW
+                )
+                current = stored_profile(harness[0])
+                assert current["explicitPreferences"] == original.body["explicitPreferences"]
+                assert current["groceries"] == original.body["groceries"]
+                candidates = tuple(
+                    LearnedCandidate.model_validate(entry)
+                    for entry in current["learnedPreferences"]
+                )
+                assert len(candidates) == 1
+                assert candidates[0].supporting_cooked_count == count
+                resolved = await LearningPreferenceReader(repository).resolve(
+                    OWNER, candidates, now=NOW, deadline=monotonic() + 5
+                )
+                eligible = _eligible(
+                    OWNER, resolved, candidates, profile().explicit_preferences, NOW
+                )
+                assert len(eligible) == (1 if count >= 2 else 0)
+                if eligible:
+                    assert eligible[0].field == "spicePreference" and eligible[0].value == "hot"
+            assert candidates[0].confidence == 0.8
+            assert len(extractor.calls) == 3
 
     asyncio.run(scenario())
 

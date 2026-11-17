@@ -99,8 +99,10 @@ occasions and confidence >= 0.65 are required; stored aggregate claims cannot
 qualify an insight. Eligible preferences rank by confidence, latest evidence and key.
 
 Learned input is a structured soft field/value, never a safety override or raw
-extracted instruction. Different explicit spice choices, opposing explicit tastes
-and incompatible explicit selections suppress it. Ingredient likes also pass the
+extracted instruction. Opposing explicit tastes and incompatible explicit
+constraints suppress it. The saved spice level is a baseline: eligible canonical
+learned heat may adjust it without editing the saved profile, and the current
+request's explicit heat direction still wins. Ingredient likes also pass the
 existing deterministic allergy/diet/dislike check; unresolved ingredients are
 conservatively excluded when hard restrictions exist. Candidate prose, source
 records, revisions, internal prompts and provider identifiers do not enter model

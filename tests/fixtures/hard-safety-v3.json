@@ -49,11 +49,11 @@
     {
       "id": "explicit-over-learned",
       "scope": "explicit-versus-learned",
-      "expected_outcome": "Only evidence-backed rice learning enters context; allergy/diet/spice conflicts and injected instructions are excluded; stored explicit state is unchanged.",
+      "expected_outcome": "Evidence-backed rice and canonical heat enter context; allergy/diet/other explicit conflicts, unsupported heat and injected instructions are excluded; stored explicit state is unchanged.",
       "tests": [
-        "tests/unit/test_context.py::test_evidence_backed_learning_is_filtered_and_explicit_state_stays_authoritative[ordinary-learning]",
-        "tests/unit/test_context.py::test_evidence_backed_learning_is_filtered_and_explicit_state_stays_authoritative[allergy-override]",
-        "tests/unit/test_context.py::test_evidence_backed_learning_is_filtered_and_explicit_state_stays_authoritative[forged-system-identity]"
+        "tests/unit/test_context.py::test_evidence_backed_learning_preserves_explicit_safety_and_gates_learned_heat[ordinary-learning]",
+        "tests/unit/test_context.py::test_evidence_backed_learning_preserves_explicit_safety_and_gates_learned_heat[allergy-override]",
+        "tests/unit/test_context.py::test_evidence_backed_learning_preserves_explicit_safety_and_gates_learned_heat[forged-system-identity]"
       ]
     },
     {

@@ -6,6 +6,9 @@ param environment string = 'dev'
 param cosmosEndpoint string
 param applicationInsightsName string
 param logAnalyticsResourceId string
+param foundryProjectEndpoint string
+param extractionDeploymentName string
+param extractionModelId string
 param integrationSubnetResourceId string = ''
 param telemetryEnabled bool = false
 
@@ -109,6 +112,9 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'ASC_FEEDBACK_CONTAINER', value: 'RecipeHistory' }
         { name: 'ASC_LEASE_CONTAINER', value: 'leases' }
         { name: 'ASC_ENVIRONMENT', value: environment }
+        { name: 'ASC_FOUNDRY_PROJECT_ENDPOINT', value: foundryProjectEndpoint }
+        { name: 'ASC_WORKER_EXTRACTION_DEPLOYMENT', value: extractionDeploymentName }
+        { name: 'ASC_WORKER_EXTRACTION_MODEL', value: extractionModelId }
         { name: 'ASC_TELEMETRY_ENABLED', value: string(telemetryEnabled) }
         { name: 'AZURE_CLIENT_ID', value: identity.properties.clientId }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }

@@ -8,6 +8,7 @@ from typing import Any, Literal
 import pytest
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from sous_chef.domain.context import MIN_LEARNED_CONFIDENCE, MIN_LEARNED_COOKED_SUPPORT
+from sous_chef.domain.extraction import EXTRACTION_MODEL
 from sous_chef.orchestrator_definition import ORCHESTRATOR_MODEL
 from sous_chef.recipe_definition import RECIPE_MODEL
 
@@ -189,7 +190,7 @@ def execute(output: Path) -> bool:
             "test_recipe_safety.py",
         )
     }
-    versions["model_ids"] = [ORCHESTRATOR_MODEL, RECIPE_MODEL, "gpt-5.1-nano"]
+    versions["model_ids"] = [ORCHESTRATOR_MODEL, RECIPE_MODEL, EXTRACTION_MODEL]
     versions["live_model_versions"] = None
     capture = Capture()
     status = pytest.main(
