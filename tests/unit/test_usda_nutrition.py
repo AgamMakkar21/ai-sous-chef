@@ -33,7 +33,7 @@ def config(mode: str = "", *, log: Path | None = None, timeout: float = 10) -> U
 
 def ingredient(
     name: str = "rice",
-    quantity: int | None = 100,
+    quantity: int | float | None = 100,
     unit: str | None = "g",
     line_id: str = "rice",
 ) -> DraftIngredient:
@@ -88,10 +88,13 @@ def test_percentage_food_names_reach_mcp_unchanged(name: str, tmp_path: Path) ->
     assert arguments == [{"keyword": name, "limit": 20, "agent_selection": True}]
 
 
-def test_chat_uses_source_backed_volume_portions_in_selection_mode() -> None:
+@pytest.mark.parametrize(
+    ("unit", "grams"), [("cup", 158), ("fl oz", 19.75), ("qt", 632), ("gal", 2528)]
+)
+def test_chat_uses_source_backed_volume_portions_in_selection_mode(unit: str, grams: float) -> None:
     payload = NutritionRequest(
         servings=1,
-        ingredients=(ingredient(quantity=1, unit="cup"),),
+        ingredients=(ingredient(quantity=1, unit=unit),),
         selected_food_ids={"rice": "99901"},
         allow_estimates=True,
         require_selection=True,
@@ -100,10 +103,46 @@ def test_chat_uses_source_backed_volume_portions_in_selection_mode() -> None:
         UsdaNutritionTool(config("volume_portion")).lookup(payload, deadline=monotonic() + 10)
     )
     assert evidence.status == "known" and not evidence.unknown_components
-    assert evidence.mappings[0].weight_grams == 158
+    assert evidence.mappings[0].weight_grams == grams
+    assert evidence.mappings[0].unit == unit
     assert "USDA" in (evidence.mappings[0].conversion_basis or "")
-    assert evidence.nutrients[0].amount == 316
+    assert evidence.nutrients[0].amount == grams * 2
     assert not evidence.nutrient_estimates
+
+
+@pytest.mark.parametrize("mode", ["fl_oz_portion", "fluid_ounce_portion"])
+def test_fluid_ounce_source_portions_are_recognized_as_volume(mode: str) -> None:
+    evidence = asyncio.run(
+        UsdaNutritionTool(config(mode)).lookup(
+            request(ingredient(quantity=1, unit="cup")), deadline=monotonic() + 10
+        )
+    )
+    assert evidence.status == "known"
+    assert evidence.mappings[0].weight_grams == 158
+
+
+@pytest.mark.parametrize(
+    ("mode", "unit", "quantity", "grams"),
+    [
+        ("count_portion", "dozen", 1.5, 900),
+        ("dozen_portion", "dozen", 0.5, 300),
+        ("dozen_portion", "piece", 6, 300),
+    ],
+)
+def test_dozen_counts_use_source_backed_portion_weights(
+    mode: str, unit: str, quantity: float, grams: float
+) -> None:
+    payload = request(ingredient(quantity=quantity, unit=unit)).model_copy(
+        update={"allow_estimates": True}
+    )
+    evidence = asyncio.run(
+        UsdaNutritionTool(config(mode)).lookup(payload, deadline=monotonic() + 10)
+    )
+    assert evidence.status == "known"
+    assert evidence.mappings[0].quantity == quantity
+    assert evidence.mappings[0].unit == unit
+    assert evidence.mappings[0].weight_grams == grams
+    assert evidence.nutrients[0].amount == grams
 
 
 def test_unambiguous_reordered_words_resolve_without_choosing_a_different_food_form() -> None:
@@ -233,7 +272,7 @@ def test_food_name_alone_does_not_invent_a_volume_density(unit: str, quantity: i
 
 
 def test_approximation_does_not_invent_density_or_count_weights_for_unknown_portions() -> None:
-    for unit in ("ml", "piece", "package"):
+    for unit in ("ml", "piece", "package", "fl oz", "qt", "gal", "dozen"):
         payload = request(ingredient(unit=unit)).model_copy(update={"allow_estimates": True})
         evidence = asyncio.run(
             UsdaNutritionTool(config()).lookup(payload, deadline=monotonic() + 10)

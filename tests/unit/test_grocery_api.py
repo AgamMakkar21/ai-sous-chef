@@ -129,6 +129,24 @@ def test_duplicates_identify_owned_row_without_merging_or_converting_units(
     assert [row["quantity"] for row in document(transport)["groceries"]] == [2, 1, 4]
 
 
+@pytest.mark.parametrize("unit", ["fl oz", "qt", "gal", "dozen"])
+def test_new_standard_units_round_trip_without_converting_inventory(
+    grocery_client: TestClient, unit: str
+) -> None:
+    created = add(grocery_client, quantity=1.5, unit=unit)
+    row = created.json()["data"]
+    assert row["quantity"] == 1.5 and row["unit"] == unit
+    updated = grocery_client.patch(
+        GROCERIES + "/" + row["groceryId"],
+        headers={"If-Match": created.headers["etag"]},
+        json={"quantity": 2.5},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["data"]["quantity"] == 2.5
+    assert updated.json()["data"]["unit"] == unit
+    assert grocery_client.get(GROCERIES).json()["items"] == [updated.json()["data"]]
+
+
 def test_unknown_quantities_and_mapping_changes_are_explicit(
     grocery_client: TestClient, harness: tuple[Transport, SyntheticCredential]
 ) -> None:
