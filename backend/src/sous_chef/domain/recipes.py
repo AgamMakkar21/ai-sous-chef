@@ -606,6 +606,7 @@ class StructuredRecipe(RecipeDraft):
     ingredients: tuple[RecipeIngredient, ...] = Field(min_length=1, max_length=30, repr=False)
     shopping_items: tuple[ShoppingItem, ...] = Field(max_length=30, repr=False)
     nutrition: RecipeNutrition = Field(repr=False)
+    fit_notes: tuple[Text, ...] = Field(default=(), max_length=2, repr=False)
     generation_source: Literal["curated_recipe", "ai_knowledge"] = "curated_recipe"
     source_ids: tuple[ReferenceId, ...] = Field(max_length=3)
     sources: tuple[RecipeSource, ...] = Field(max_length=33)

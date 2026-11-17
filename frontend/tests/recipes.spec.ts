@@ -150,6 +150,43 @@ for (const unit of ["fl oz", "qt", "gal", "dozen"]) {
   });
 }
 
+test("time and skill notes stay visible on a completed recipe after reload", async ({
+  page,
+}) => {
+  const turn = recipeTurn();
+  const recipe = turn.recipe!;
+  recipe.totalMinutes = 45;
+  recipe.skill = "advanced";
+  recipe.fitNotes = [
+    "This recipe takes about 45 minutes and may not fit your 30-minute time budget.",
+    "This recipe is rated advanced and may be above your beginner cooking skill level.",
+  ];
+  expect(isStructuredRecipe(recipe)).toBe(true);
+  for (const invalid of [
+    null,
+    "not a list",
+    [""],
+    ["a", "b", "c"],
+    ["x".repeat(241)],
+  ]) {
+    expect(isStructuredRecipe({ ...recipe, fitNotes: invalid })).toBe(false);
+  }
+  await recipeBackend(page, [turn]);
+  await open(page);
+  const notes = card(page).getByRole("region", {
+    name: "Recipe notes",
+    exact: true,
+  });
+  for (const note of recipe.fitNotes) await expect(notes).toContainText(note);
+  await expect(card(page)).toContainText("45 min");
+  await expect(card(page)).toContainText("advanced");
+  await page.reload();
+  for (const note of recipe.fitNotes) await expect(notes).toContainText(note);
+  await expect(
+    page.getByText("I couldn't complete a recipe", { exact: false }),
+  ).toHaveCount(0);
+});
+
 test("AI recipe attribution survives history reload without claiming curated evidence", async ({
   page,
 }) => {
@@ -176,6 +213,14 @@ test("AI recipe attribution survives history reload without claiming curated evi
   await expect(card(page)).toContainText("not externally verified");
   await page.reload();
   await expect(card(page)).toContainText("AI-knowledge recipe");
+  await expect(
+    card(page)
+      .getByRole("group", { name: "Nutrition sources" })
+      .getByText("USDA", {
+        exact: true,
+      }),
+  ).toBeVisible();
+  await card(page).getByText("Nutrition details", { exact: true }).click();
   await expect(
     card(page).getByRole("link", { name: /USDA/i }).first(),
   ).toBeVisible();
@@ -257,21 +302,30 @@ for (const backup of ["web_iq", "ai_knowledge"] as const) {
     expect(isStructuredRecipe(inventedCitation)).toBe(false);
     await recipeBackend(page, [turn]);
     await open(page);
+    const sources = card(page).getByRole("group", {
+      name: "Nutrition sources",
+    });
+    await expect(sources.getByText("USDA", { exact: true })).toBeVisible();
     await expect(
-      card(page).getByRole("heading", {
-        name: "Nutrition by ingredient (whole recipe)",
-      }),
+      sources.getByText(
+        backup === "ai_knowledge" ? "AI estimate" : "Web estimate",
+        {
+          exact: true,
+        },
+      ),
     ).toBeVisible();
+    const breakdown = card(page).getByRole("heading", {
+      name: "Nutrition by ingredient (whole recipe)",
+      includeHidden: true,
+    });
+    await expect(breakdown).toBeHidden();
     await expect(card(page).getByText(/Incomplete estimate/)).toHaveCount(0);
     await expect(card(page).getByText(/Partial:/)).toHaveCount(0);
-    if (backup === "ai_knowledge")
-      await expect(
-        card(page)
-          .getByText(/AI knowledge \(approximate\)/)
-          .first(),
-      ).toBeVisible();
+    await card(page).getByText("Nutrition details", { exact: true }).click();
+    await expect(breakdown).toBeVisible();
     await page.reload();
-    await expect(card(page).getByText(/USDA is preferred/)).toBeVisible();
+    await expect(sources.getByText("USDA", { exact: true })).toBeVisible();
+    await expect(breakdown).toBeHidden();
   });
 }
 
@@ -415,26 +469,25 @@ test("mixed calorie sources are labeled per ingredient and survive history reloa
   await recipeBackend(page, [turn]);
   await open(page);
   await expect(card(page).getByText("90 kcal", { exact: true })).toBeVisible();
+  const sources = card(page).getByRole("group", { name: "Nutrition sources" });
+  for (const source of ["USDA", "Web estimate", "AI estimate"])
+    await expect(sources.getByText(source, { exact: true })).toBeVisible();
+  await expect(card(page).getByText(/not USDA-verified/)).toHaveCount(0);
+  await card(page).getByText("Nutrition details", { exact: true }).click();
   await expect(
     card(page).getByRole("link", {
-      name: "USDA MCP (opens in a new tab)",
+      name: "USDA (opens in a new tab)",
       exact: true,
     }),
   ).toBeVisible();
   await expect(
     card(page).getByRole("link", {
-      name: "Grounding with Bing (opens in a new tab)",
+      name: "Web estimate (opens in a new tab)",
       exact: true,
     }),
   ).toHaveAttribute("href", "https://nutrition.example.invalid/carrot");
-  await expect(
-    card(page).getByText(/AI knowledge \(approximate\)/),
-  ).toBeVisible();
-  await expect(card(page).getByText(/not USDA-verified/)).toBeVisible();
   await page.reload();
-  await expect(
-    card(page).getByText(/AI knowledge \(approximate\)/),
-  ).toBeVisible();
+  await expect(sources.getByText("AI estimate", { exact: true })).toBeVisible();
 });
 
 test("assumed quantity is disclosed with its source without changing the original ingredient", async ({
@@ -471,6 +524,12 @@ test("assumed quantity is disclosed with its source without changing the origina
   expect(isStructuredRecipe(unattributed)).toBe(false);
   await recipeBackend(page, [turn]);
   await open(page);
+  await expect(
+    card(page).getByText("Estimated quantities", { exact: true }),
+  ).toBeVisible();
+  const details = card(page).getByText("Nutrition details", { exact: true });
+  await details.focus();
+  await details.press("Enter");
   await expect(card(page)).toContainText("Assumed 250 g for this recipe");
   await expect(
     card(page).getByRole("region", { name: "Already have" }),
@@ -480,7 +539,15 @@ test("assumed quantity is disclosed with its source without changing the origina
   ).toHaveAttribute("href", recipe.sources[0].reference);
   await expect(card(page)).toContainText("500 g for 4 source servings");
   await page.reload();
-  await expect(card(page)).toContainText("Assumed 250 g for this recipe");
+  await expect(
+    card(page).getByText("Estimated quantities", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    card(page).getByRole("link", {
+      name: "Quantity estimate source",
+      includeHidden: true,
+    }),
+  ).toBeHidden();
 });
 
 test("recipes with more than nine USDA sources retain their estimates and conversion evidence", async ({
@@ -511,6 +578,7 @@ test("recipes with more than nine USDA sources retain their estimates and conver
   await recipeBackend(page, [turn]);
   await open(page);
   await expect(card(page)).toBeVisible();
+  await card(page).getByText("Nutrition details", { exact: true }).click();
   await expect(card(page)).toContainText(
     "Estimated match: Rice, white, long-grain, raw",
   );
@@ -555,11 +623,20 @@ test("contract recipe fields, shopping shortfall, citations and lifecycle action
       recipe.getByRole("term").filter({ hasText: new RegExp(`^${label}$`) }),
     ).toBeVisible();
   await expect(recipe.getByText("0 mg", { exact: true })).toBeVisible();
+  const notice = recipe.getByText(
+    "Informational estimate, not medical advice.",
+    {
+      exact: true,
+    },
+  );
+  await expect(notice).toBeHidden();
   await expect(
-    recipe.getByText("Informational estimate, not medical advice.", {
+    recipe.getByRole("group", { name: "Nutrition sources" }).getByText("USDA", {
       exact: true,
     }),
   ).toBeVisible();
+  await recipe.getByText("Nutrition details", { exact: true }).click();
+  await expect(notice).toBeVisible();
   await expect(
     recipe.getByRole("region", { name: "Grounded recipe sources" }),
   ).toContainText("Beginner preparation, 25 minutes.");
@@ -581,6 +658,7 @@ test("contract recipe fields, shopping shortfall, citations and lifecycle action
   ).toHaveCount(0);
   await page.reload();
   await expect(card(page)).toBeVisible();
+  await expect(notice).toBeHidden();
   await page.screenshot({
     path: testInfo.outputPath("recipe.png"),
     fullPage: true,
@@ -710,6 +788,10 @@ test("partial nutrients identify unknown ingredients; unavailable values never b
     card(page).getByText("Unavailable", { exact: true }),
   ).toHaveCount(5);
   await expect(
+    card(page).getByText("Partial estimate", { exact: true }),
+  ).toBeVisible();
+  await card(page).getByText("Nutrition details", { exact: true }).click();
+  await expect(
     card(page).getByText("Calories unavailable for: carrot, olive oil.", {
       exact: true,
     }),
@@ -734,7 +816,9 @@ test("partial nutrients identify unknown ingredients; unavailable values never b
   await expect(
     card(page).getByText("Unavailable", { exact: true }),
   ).toHaveCount(6);
-  await expect(card(page)).toContainText("Missing values are not zero.");
+  await expect(
+    card(page).getByText("Nutrition unavailable", { exact: true }),
+  ).toBeVisible();
   await expect(
     card(page).getByRole("link", { name: "USDA", exact: false }),
   ).toHaveCount(0);

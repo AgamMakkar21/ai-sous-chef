@@ -192,9 +192,9 @@ PostgreSQL, import USDA data, register API keys or copy developer credentials.
    | `ASC_FOUNDRY_PROJECT_NAME` | Existing dev project name |
 
 5. Review the explicit stage in `deploy/agents.dev.json`. The current candidate
-   enables combined-mode chat with the read-back-verified Orchestrator source 54,
-   Recipe + Nutrition combined source 76, tool-free nutrition recovery source 62
-   and AI recipe recovery source 75.
+   enables combined-mode chat with the read-back-verified Orchestrator source 57,
+   Recipe + Nutrition combined source 83, tool-free nutrition recovery source 62
+   and AI recipe recovery source 82.
    This is release configuration,
    not evidence that the candidate has been deployed or passed live UI acceptance.
    Agent-enabled releases pin the **actual approved agent versions**.
@@ -237,14 +237,14 @@ sources, use this manifest shape:
   "agents": {
     "orchestrator": {
       "name": "sous-chef-orchestrator-dev",
-      "version": "54",
-      "contract_sha256": "724d6e50aea7108083f0a82633be0de1c5489c4566f5bc8b956540db594d9950"
+      "version": "57",
+      "contract_sha256": "ec824c2614e5ecb295fd6f01b9e83e393ed4364894ae0a61d59eb8754f65b3a1"
     },
     "recipe_nutrition": {
       "name": "sous-chef-recipe-nutrition-dev",
-      "version": "76",
+      "version": "83",
       "calorie_version": "62",
-      "ai_recipe_version": "75"
+      "ai_recipe_version": "82"
     }
   }
 }

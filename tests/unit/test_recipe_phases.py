@@ -26,15 +26,15 @@ def test_persisted_phase_has_only_its_capabilities_and_strict_output(phase: Reci
     assert source.name == "recipe-agent"
     assert source.metadata["asc_recipe_phase"] == phase.value
     assert source.metadata["asc_policy_version"] == (
-        "14"
+        "16"
         if phase == RecipePhase.COMBINED
         else "13"
         if phase == RecipePhase.WEB
         else "5"
         if phase == RecipePhase.CALORIE
-        else "1"
+        else "3"
         if phase == RecipePhase.AI_RECIPE
-        else "9"
+        else "11"
     )
     assert definition["text"]["format"]["strict"] is True
     expected_schema = (

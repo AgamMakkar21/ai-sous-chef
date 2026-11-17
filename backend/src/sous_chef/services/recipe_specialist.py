@@ -26,7 +26,6 @@ from sous_chef.domain.orchestrator import (
     CandidateInstruction,
     RecipeAllergyError,
     RecipeCandidate,
-    RecipeFitError,
     SpecialistArguments,
     SpecialistBudget,
     SpecialistResult,
@@ -383,12 +382,19 @@ class RecipeSpecialistService:
                         raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
                     if safety.verdict != Verdict.PASS:
                         raise RecipeAllergyError(request, usage)
+                    fit_notes: list[str] = []
                     if draft.total_minutes > arguments.time_budget_minutes:
-                        raise RecipeFitError(request, usage, "time_rejected")
+                        fit_notes.append(
+                            f"This recipe takes about {draft.total_minutes} minutes and may not "
+                            f"fit your {arguments.time_budget_minutes}-minute time budget."
+                        )
                     if skill.index(draft.skill) > skill.index(
                         context.explicit_preferences.cooking_skill
                     ):
-                        raise RecipeFitError(request, usage, "skill_rejected")
+                        fit_notes.append(
+                            f"This recipe is rated {draft.skill} and may be above your "
+                            f"{context.explicit_preferences.cooking_skill} cooking skill level."
+                        )
                     authorize_tool(AgentRole.RECIPE_NUTRITION, AgentTool.USDA_NUTRITION)
                     budget.tool(AgentTool.USDA_NUTRITION)
                     nutrition_request = NutritionRequest(
@@ -514,6 +520,7 @@ class RecipeSpecialistService:
                     ingredients, shopping = _inventory(draft.ingredients, context)
                     recipe = StructuredRecipe(
                         **draft.model_dump(exclude={"ingredients"}),
+                        fit_notes=tuple(fit_notes),
                         generation_source=(
                             "ai_knowledge" if isinstance(draft, AiRecipeDraft) else "curated_recipe"
                         ),

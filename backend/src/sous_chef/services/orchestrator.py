@@ -27,7 +27,6 @@ from sous_chef.domain.orchestrator import (
     OrchestratorFailure,
     RecipeAllergyError,
     RecipeCandidate,
-    RecipeFitError,
     RecipeSpecialist,
     SpecialistCall,
     SpecialistResult,
@@ -163,7 +162,7 @@ class ExecutionBudget:
             raise OrchestratorError(OrchestratorFailure.TIMEOUT, self.operation_id)
 
 
-def _candidate_status(candidate: RecipeCandidate, context: RequestContext, minutes: int) -> str:
+def _candidate_status(candidate: RecipeCandidate, context: RequestContext) -> str:
     explicit = context.explicit_preferences
     safety = validate_declared_allergies(
         explicit.allergies,
@@ -173,8 +172,6 @@ def _candidate_status(candidate: RecipeCandidate, context: RequestContext, minut
     )
     if safety.verdict != Verdict.PASS:
         return "safety_rejected"
-    if candidate.total_minutes > minutes:
-        return "time_rejected"
     return "candidate"
 
 
@@ -293,7 +290,6 @@ class OrchestratorService:
                 call.arguments.use_web or quantity_web_query(call.arguments) is not None
             )
             rejection_code: RecipeSafetyFailure | None = None
-            rejection_status = "safety_rejected"
             specialist: SpecialistResult | None
             try:
                 specialist = await self._specialist.generate(
@@ -309,10 +305,6 @@ class OrchestratorService:
                 budget.usage(error.usage)
                 specialist = None
                 rejection_code = RecipeSafetyFailure.INGREDIENT
-            except RecipeFitError as error:
-                budget.usage(error.usage)
-                specialist = None
-                rejection_status = error.status
             except FoundryGatewayError as error:
                 raise OrchestratorError(
                     OrchestratorFailure.SPECIALIST_FAILED,
@@ -323,13 +315,13 @@ class OrchestratorService:
             if specialist is None:
                 candidate = None
                 recipe = None
-                status = rejection_status
+                status = "safety_rejected"
                 final_rejected = True
             else:
                 budget.usage(specialist.usage)
                 candidate = specialist.candidate
                 recipe = specialist.recipe
-                status = _candidate_status(candidate, context, minutes)
+                status = _candidate_status(candidate, context)
                 final_rejected = False
                 if recipe is not None:
                     try:

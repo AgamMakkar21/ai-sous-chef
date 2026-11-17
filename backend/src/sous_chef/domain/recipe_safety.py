@@ -74,47 +74,40 @@ def render_recipe(recipe: StructuredRecipe) -> str:
         for line in recipe.ingredients
     )
     steps = "\n".join(f"{step.step}. {step.text}" for step in recipe.instructions)
+    fit_notes = (
+        "\n\nRecipe notes\n" + "\n".join(f"- {note}" for note in recipe.fit_notes)
+        if recipe.fit_notes
+        else ""
+    )
     text = (
-        f"{recipe.title}\n{recipe.servings} servings; {recipe.total_minutes} minutes.\n\n"
+        f"{recipe.title}\n{recipe.servings} servings; {recipe.total_minutes} minutes."
+        f"{fit_notes}\n\n"
         f"Ingredients\n{ingredients}\n\nInstructions\n{steps}\n\n{HANDLING_NOTICE}"
     )
     if recipe.generation_source == "ai_knowledge":
         text = f"{AI_RECIPE_NOTICE}\n\n{text}"
-    if any(item.source != "usda_mcp" for item in recipe.nutrition.ingredient_calories):
-        energy = next(item for item in recipe.nutrition.nutrients if item.name == "energy")
-        labels = {"web_iq": "Grounding with Bing", "ai_knowledge": "AI knowledge"}
-        sources = " / ".join(
-            labels[source]
-            for source in labels
-            if any(item.source == source for item in recipe.nutrition.ingredient_calories)
+    labels = ["USDA"] if recipe.nutrition.mappings else []
+    fallback_sources = {item.source for item in recipe.nutrition.ingredient_calories} | {
+        item.source for item in recipe.nutrition.nutrient_estimates
+    }
+    for source, label in (("web_iq", "Web estimate"), ("ai_knowledge", "AI estimate")):
+        if source in fallback_sources:
+            labels.append(label)
+    summary = f"\n\nNutrition [{', '.join(labels) if labels else 'Unavailable'}]"
+    energy = next((item for item in recipe.nutrition.nutrients if item.name == "energy"), None)
+    if energy is not None:
+        partial = "Partial: " if recipe.nutrition.status == "partial" else ""
+        summary += (
+            f": {partial}{energy.amount:g} kcal {recipe.nutrition.serving_basis.replace('_', ' ')}."
         )
-        summary = (
-            f"\n\nCalories: {energy.amount:g} kcal "
-            f"{recipe.nutrition.serving_basis.replace('_', ' ')}."
-            f" Includes approximate {sources} values, not USDA-verified; see ingredient sources."
-        )
-        if len(text) + len(summary) <= 4000:
-            text += summary
-    if recipe.nutrition.nutrient_estimates:
-        sources = " / ".join(
-            name
-            for source, name in (
-                ("web_iq", "Grounding with Bing"),
-                ("ai_knowledge", "AI knowledge"),
-            )
-            if any(item.source == source for item in recipe.nutrition.nutrient_estimates)
-        )
-        summary = (
-            f"\n\nMissing USDA nutrients were filled with approximate {sources} "
-            "estimates, not USDA-verified; see ingredient nutrient sources."
-        )
-        if len(text) + len(summary) <= 4000:
-            text += summary
     if len(text) > 4000:
         text = (
             (f"{AI_RECIPE_NOTICE}\n\n" if recipe.generation_source == "ai_knowledge" else "")
-            + f"{recipe.title}\n{recipe.servings} servings; {recipe.total_minutes} minutes.\n\n"
+            + f"{recipe.title}\n{recipe.servings} servings; {recipe.total_minutes} minutes."
+            + f"{fit_notes}\n\n"
             "See the recipe card for the complete ingredients, instructions, nutrition "
-            f"and sources.\n\n{HANDLING_NOTICE}"
+            f"and sources.\n\n{HANDLING_NOTICE}" + summary
         )
+    elif len(text) + len(summary) <= 4000:
+        text += summary
     return text

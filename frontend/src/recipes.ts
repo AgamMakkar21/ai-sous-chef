@@ -59,6 +59,7 @@ export type StructuredRecipe = {
   servings: number;
   skill: Skill;
   fitReasons: string[];
+  fitNotes?: string[];
   ingredients: Ingredient[];
   shoppingItems: (Amount & { ingredientLineId: string })[];
   instructions: { step: number; text: string; ingredientLineIds: string[] }[];
@@ -245,6 +246,7 @@ export function isStructuredRecipe(value: unknown): value is StructuredRecipe {
     !number(value.totalMinutes, 1, 1440) ||
     !["beginner", "intermediate", "advanced"].includes(String(value.skill)) ||
     !list(value.fitReasons, 10, shortText, 1) ||
+    (value.fitNotes !== undefined && !list(value.fitNotes, 2, shortText)) ||
     !list(value.adaptations, 10, shortText) ||
     !list(
       value.ingredients,

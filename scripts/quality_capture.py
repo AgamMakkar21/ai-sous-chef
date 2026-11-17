@@ -75,7 +75,7 @@ class Case(EvidenceModel):
     groceries: tuple[GroceryRow, ...] | None = None
     nutrition_goals: tuple[str, ...] | None = None
     require_shopping: bool = False
-    measure_pantry_utilization: bool = True
+    measure_pantry_utilization: bool = False
     judge_metrics: tuple[Metric, ...] = METRICS
 
     def context(self, defaults: RequestContext) -> RequestContext:

@@ -33,6 +33,7 @@
     {
       "id": "normal-no-web",
       "request": "Use the rice and carrots for a mild beginner dinner in 30 minutes.",
+      "measure_pantry_utilization": true,
       "expected": ["candidate"],
       "web": "forbidden"
     },
@@ -88,14 +89,15 @@
     {
       "id": "creative-within-constraints",
       "request": "Give the rice and carrots a creative twist in a mild beginner vegetarian dinner in 30 minutes. Mark adaptations separately from source facts and keep the milk and peanut allergies.",
+      "measure_pantry_utilization": true,
       "expected": ["candidate"],
       "web": "forbidden"
     }
   ],
   "rubrics": {
-    "grocery_utilization": "Judge whether the response makes useful use of the stated pantry, minimizes avoidable purchases and honestly explains shortages. Ingredient matching alone does not establish a good meal. When stock is insufficient, an explicit reasonable shopping plan is preferable to pretending ingredients are available.",
-    "feasibility": "Judge whether preparation, quantities, total elapsed time, equipment assumptions and techniques form a practical meal at the stated skill. A realistic clarification for an impossible request scores highly; invented time or silently changing the requested dish scores poorly. Consider taste/nutrition conflicts without overriding allergies or restrictions.",
-    "controlled_creativity": "Judge useful, coherent flavor, presentation or technique adaptations within all stated constraints. Novelty is not mandatory for ordinary requests. For an explicitly creative request, merely renaming an unchanged dish is weak. Distinguish an honestly labeled adaptation from a claimed source fact. Reward practical adaptations, never invented nutrition, safety or external claims."
+    "grocery_utilization": "Judge useful pantry use when it suits the current request, and honestly reported shortages. Pantry stock is a suggestion unless the current request asks to focus on it: do not penalize a named dish for leaving unrelated stock unused or needing purchases. Ingredient matching alone does not establish a good meal. An explicit reasonable shopping plan is preferable to pretending ingredients are available.",
+    "feasibility": "Judge whether preparation, quantities, realistic total elapsed time, equipment assumptions and techniques form a practical meal. Time and skill mismatches may be disclosed with honest advisory notes rather than withholding a recipe. A clarification explicitly requested by the user may score highly; invented time, understated difficulty or silently changing the requested dish scores poorly. Stored allergies remain mandatory.",
+    "controlled_creativity": "Judge useful, coherent flavor, presentation or technique adaptations that preserve the requested dish and current directions. Saved or learned tastes are optional contextual suggestions, not a requirement to make every dish spicy, sour or match every preference. Novelty is not mandatory for ordinary requests. For an explicitly creative request, merely renaming an unchanged dish is weak. Distinguish an honestly labeled adaptation from a claimed source fact. Reward practical adaptations, never invented nutrition, safety or external claims."
   },
   "scale": {
     "1": "Fails the criterion or makes unsupported claims.",

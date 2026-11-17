@@ -78,8 +78,13 @@ Direct cooked feedback can support a different canonical heat level without
 rewriting that explicit setting. Recipe context still requires two independent
 cooked supporters and confidence >= 0.65; one comment, duplicate delivery or an
 edit cannot bypass the gate. If multiple heat levels qualify, the first entry
-under the existing confidence/recency/key ordering takes precedence. Current
-request heat instructions and all allergy/other explicit constraints still win.
+under the existing confidence/recency/key ordering is preferred when heat suits
+the requested dish. Eligibility makes a taste suggestion available; it does not
+require applying it to every recipe. The current dish and flavor instructions
+take precedence: overnight oats need not become spicy or sour to match global
+tastes. Pantry stock is also a suggestion, not a prerequisite; missing ingredients
+are shown as purchases rather than preventing a recipe. Stored allergies remain
+mandatory, and no preference or inventory is rewritten to claim a match.
 The existing v1 schema and receipt/window identity namespaces are unchanged;
 updating extraction does not replay already-applied feedback automatically.
 

@@ -200,10 +200,12 @@ def factual_checks(suite: Suite, case: Case, observation: Observation) -> dict[s
     )
     context = case.context(suite.defaults)
     skill = ("beginner", "intermediate", "advanced")
+    fit_mismatches = int(recipe.total_minutes > case.minutes) + int(
+        skill.index(recipe.skill) > skill.index(context.explicit_preferences.cooking_skill)
+    )
     checks["time_skill"] = check(
-        recipe.total_minutes <= case.minutes
-        and skill.index(recipe.skill) <= skill.index(context.explicit_preferences.cooking_skill),
-        "Reported time and skill must respect explicit limits; practical timing is also judged.",
+        len(recipe.fit_notes) >= fit_mismatches,
+        "Disclose time/skill mismatches with realistic metadata; practical timing is also judged.",
     )
     ingredients = tuple(
         DraftIngredient.model_validate(

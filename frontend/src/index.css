@@ -735,6 +735,26 @@ input[type="checkbox"] {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+.recipe-nutrition-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+.recipe-source-tag {
+  padding: 2px 8px;
+  border: 1px solid var(--cp-border-strong);
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  color: var(--cp-text-soft);
+}
+.recipe-nutrition-details {
+  margin-top: 16px;
+}
+.recipe-nutrition-details summary {
+  cursor: pointer;
+  margin-bottom: 12px;
+}
 .recipe-skill {
   text-transform: capitalize;
 }

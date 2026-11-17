@@ -8,7 +8,11 @@ from azure.ai.projects.models import (
 )
 
 from sous_chef.domain.orchestrator import POLICY, SpecialistArguments
-from sous_chef.recipe_definition import LEARNED_SPICE_INSTRUCTIONS, definition_fingerprint
+from sous_chef.recipe_definition import (
+    CONTEXTUAL_PREFERENCE_INSTRUCTIONS,
+    LEARNED_SPICE_INSTRUCTIONS,
+    definition_fingerprint,
+)
 from sous_chef.settings import ConfigurationError
 
 ORCHESTRATOR_MODEL = "gpt-5.4-mini"
@@ -32,9 +36,13 @@ old history. Current requests can override soft time/taste defaults, not safety.
 The saved spice baseline permits the evidence-backed adjustment described below.
 Learned context may be empty; never pretend the system learned a preference.
 
-Ask one focused clarification when requirements are missing or contradictory.
-If the requested dish cannot fit the time budget, explain that briefly and ask
-which constraint to change; do not invent a feasible cooking time.
+Ask one focused clarification when information needed to identify the dish or
+resolve an allergy ambiguity is missing. Non-allergy preferences should guide
+the recipe, not prevent one. Do not refuse or ask which constraint to change
+solely because a recipe may exceed the time budget or cooking skill.
+Call recipe_specialist for the requested dish with the original time preference;
+the backend adds a visible note for time or skill mismatches.
+Never invent a shorter cooking time or understate difficulty to claim a fit.
 Do not ask again for already supplied profile information.
 
 Your ONLY function is recipe_specialist. Pass concise cooking requirements,
@@ -95,12 +103,12 @@ Never initiate your own retry of a specialist/service error or an ambiguously
 completed invocation. The backend alone owns these bounded, separate recovery
 phases and the final durable operation receipt.
 
-After the function result, check the candidate's fit to the original request,
-explicit constraints, eligible learned heat, time and safety rejection status. Accept only a
-valid candidate. For one fixable rejection you may call recipe_specialist once more
-with precise revision requirements. Never keep revising or relax hard restrictions.
-For time_rejected or skill_rejected, make the one correction fit the supplied
-time budget and cooking skill without inventing a shorter cooking time.
+After the function result, accept a valid candidate even when its realistic
+time or skill exceeds the preference. These are advisory differences, not
+rejections and not reasons for another generation. Other non-allergy preferences
+guide adaptations rather than refusal. For one fixable allergy or structure
+rejection you may call recipe_specialist once more with precise revision
+requirements. Never keep revising or relax hard restrictions.
 The backend's rejection_code identifies a failed final gate without exposing the
 rejected draft. For recipe_ingredient_rejected, request a declared ingredient list
 compatible with stored allergies. Use the remaining revision to substitute
@@ -129,6 +137,8 @@ Give only a brief fit explanation, never hidden reasoning or chain of thought.
 """.strip()
     + "\n\n"
     + LEARNED_SPICE_INSTRUCTIONS
+    + "\n\n"
+    + CONTEXTUAL_PREFERENCE_INSTRUCTIONS
 )
 
 

@@ -114,6 +114,29 @@ def test_replay_exercises_production_orchestration_and_never_claims_live_quality
     assert "NOT a live" in result["measurement"]
 
 
+@pytest.mark.parametrize(
+    ("minutes", "notes", "status"),
+    [
+        (31, [], "fail"),
+        (31, ["Above the beginner skill level."], "fail"),
+        (31, ["Above the time budget.", "Above the beginner skill level."], "pass"),
+        (25, ["Above the beginner skill level."], "pass"),
+    ],
+)
+def test_quality_requires_disclosure_not_rejection_for_fit_mismatches(
+    suite: Suite,
+    observations: list[Observation],
+    minutes: int,
+    notes: list[str],
+    status: str,
+) -> None:
+    data = observations[0].model_dump(mode="json", by_alias=True)
+    data["result"]["recipe"].update(totalMinutes=minutes, skill="advanced", fitNotes=notes)
+    observation = Observation.model_validate_json(json.dumps(data))
+    checks = factual_checks(suite, suite.cases[0], observation)
+    assert checks["time_skill"].status == status
+
+
 @pytest.mark.parametrize("mode", ["phased", "combined"])
 @pytest.mark.parametrize("case_id", ["normal-no-web", "current-public-information"])
 def test_capture_preserves_configured_grounding_mode_and_single_combined_usage(
