@@ -18,7 +18,11 @@ VOLUME = {
     "tsp": Decimal("4.92892159375"),
     "tbsp": Decimal("14.78676478125"),
     "cup": Decimal("236.5882365"),
+    "fl oz": Decimal("29.5735295625"),
+    "qt": Decimal("946.352946"),
+    "gal": Decimal("3785.411784"),
 }
+COUNT = {"item": Decimal(1), "piece": Decimal(1), "dozen": Decimal(12)}
 _UNIT_ALIASES = {
     "teaspoon": "tsp",
     "teaspoons": "tsp",
@@ -29,6 +33,12 @@ _UNIT_ALIASES = {
     "milliliters": "ml",
     "liter": "l",
     "liters": "l",
+    "quart": "qt",
+    "quarts": "qt",
+    "gallon": "gal",
+    "gallons": "gal",
+    "doz": "dozen",
+    "dozens": "dozen",
 }
 _PREPARATION = {
     "fresh",
@@ -152,6 +162,8 @@ def ingredient_weight(
             label = f"{portion.measure_unit} {portion.modifier or ''}".strip()
         words = re.findall(r"[^\W_]+", label.casefold())
         units = {_UNIT_ALIASES.get(word, word) for word in words}
+        if re.search(r"\b(?:fl\.?\s*oz|fluid\s+ounces?)\b", label, flags=re.IGNORECASE):
+            units.add("fl oz")
         portion_unit = next((value for value in VOLUME if value in units), None)
         grams = portion.gram_weight / portion.amount
         detail = f"USDA portion: {portion.amount} {label} = {portion.gram_weight} g"
@@ -159,12 +171,12 @@ def ingredient_weight(
             score = 10 if unit == portion_unit else 0
             score += len(food_words(label) & requested)
             portions.append((score, quantity * VOLUME[unit] / VOLUME[portion_unit] * grams, detail))
-        elif estimates and unit in {"item", "piece"}:
+        elif estimates and unit in COUNT:
             count_words = food_words(label)
             explicit = requested & {"wedge", "clove", "slice", "pod", "stalk", "sprig", "leaf"}
             expected = explicit
             if not expected:
-                expected = {"fruit", "medium", "small", "large", "whole", "piece", "item"}
+                expected = {"fruit", "medium", "small", "large", "whole", "piece", "item", "dozen"}
             if count_words & expected and portion_unit is None:
                 # Never turn a wedge, slice, package or serving into a whole item.
                 if (
@@ -176,7 +188,8 @@ def ingredient_weight(
                 size = requested & {"small", "medium", "large"} or {"medium"}
                 score = 10 if size & count_words else 0
                 score += len(count_words & requested)
-                portions.append((score, quantity * grams, detail))
+                portion_count = COUNT["dozen"] if "dozen" in units else Decimal(1)
+                portions.append((score, quantity * COUNT[unit] / portion_count * grams, detail))
     if portions:
         _, grams, basis = max(portions, key=lambda item: item[0])
         return (grams, basis) if grams <= 1_000_000_000 else None

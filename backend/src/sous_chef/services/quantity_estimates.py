@@ -54,6 +54,7 @@ def needs_quantity_estimate(line: DraftIngredient) -> bool:
         in {
             "piece",
             "item",
+            "dozen",
             "bunch",
             "can",
             "package",

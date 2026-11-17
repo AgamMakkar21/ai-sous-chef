@@ -202,9 +202,22 @@ def tool_output(request: dict[str, object]) -> str:
         "food": dict(food, data_type="SR Legacy"),
         "nutrients": rows,
     }
-    if MODE == "volume_portion":
+    portions = {
+        "volume_portion": ("cup", "158"),
+        "fl_oz_portion": ("fl oz", "19.75"),
+        "fluid_ounce_portion": ("fluid ounce", "19.75"),
+        "count_portion": ("piece", "50"),
+        "dozen_portion": ("dozen", "600"),
+    }
+    if MODE in portions:
+        measure_unit, gram_weight = portions[MODE]
         result["portions"] = [
-            {"amount": "1", "gram_weight": "158", "measure_unit": "cup", "modifier": None}
+            {
+                "amount": "1",
+                "gram_weight": gram_weight,
+                "measure_unit": measure_unit,
+                "modifier": None,
+            }
         ]
     return json.dumps(result)
 

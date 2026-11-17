@@ -15,7 +15,13 @@ from sous_chef.adapters.usda_mcp import UsdaMcpClient, UsdaMcpConfig, UsdaMcpSes
 from sous_chef.domain.agent_identity import AgentRole
 from sous_chef.domain.foundry import FoundryFailure
 from sous_chef.domain.nutrition import UsdaFoodProfile, UsdaFoodSearch
-from sous_chef.domain.nutrition_inputs import MASS, VOLUME, ingredient_weight, recipe_food_query
+from sous_chef.domain.nutrition_inputs import (
+    COUNT,
+    MASS,
+    VOLUME,
+    ingredient_weight,
+    recipe_food_query,
+)
 from sous_chef.domain.recipes import (
     IngredientCalories,
     Nutrient,
@@ -240,7 +246,7 @@ class UsdaNutritionTool:
                         )
                     )
                     continue
-                if line.unit not in {*MASS, *VOLUME, "piece", "item"} and estimate is None:
+                if line.unit not in {*MASS, *VOLUME, *COUNT} and estimate is None:
                     unknown.append(
                         NutritionUnknownComponent(
                             ingredient_line_id=line.line_id,

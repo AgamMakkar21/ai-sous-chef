@@ -448,6 +448,16 @@ The backend converts these mass units exactly:
 | `oz` | 28.349523125 |
 | `lb` | 453.59237 |
 
+Volume inputs also accept US liquid measures: `fl oz` = 29.5735295625 ml,
+`qt` = 946.352946 ml and `gal` = 3785.411784 ml. `oz` remains weight, not
+volume. Nutrition converts volume only with a food-specific USDA portion;
+it never assumes that milliliters equal grams.
+
+Count-based estimates accept `dozen` as 12 items and scale a compatible USDA
+portion accordingly. A USDA portion already expressed in dozens is normalized
+before scaling. Without a compatible portion, counts remain unsupported rather
+than receiving an invented gram weight.
+
 ### Grams-first generated recipes
 
 The specialist chooses gram quantities for newly composed recipes, with the

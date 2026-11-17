@@ -119,6 +119,11 @@ Blank quantity means unknown, not zero or one; +/- is disabled until a quantity
 is explicitly supplied. Decrementing to zero or below asks for removal, and
 cancelling performs no write. Units are never converted or merged.
 
+The unit menu includes US fluid ounces (`fl oz`), quarts (`qt`), gallons (`gal`)
+and `dozen` alongside the existing options. `oz` remains a weight unit; `dozen`
+means 12 items. These units are also accepted in recipe amounts and preserved on
+reload. Nutrition conversion still requires a food-specific source portion.
+
 Writes use `If-Match`, the in-memory CSRF token and the authenticated backend
 owner; the UI cannot select another user or access Cosmos directly. All controls
 and shell navigation are disabled during a write/reconciliation, with a

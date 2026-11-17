@@ -171,6 +171,31 @@ test("keyboard add, change and delete persist after reload", async ({
   }
 });
 
+for (const unit of ["fl oz", "qt", "gal", "dozen"] as const) {
+  test(`standard unit ${unit} can be selected and survives reload`, async ({
+    page,
+  }) => {
+    const state = await backend(page);
+    await page.goto("/");
+    await page.getByLabel("Ingredient name", { exact: true }).fill("Milk");
+    await page.getByLabel("Quantity (optional)").fill("1.5");
+    await page.getByLabel("Unit (optional)").selectOption(unit);
+    await page.getByRole("button", { name: "Add ingredient" }).click();
+    await expect(row(page).locator(".grocery-amount")).toHaveText(
+      `1.5 ${unit}`,
+    );
+    expect(state.writes[0]?.body).toEqual({
+      name: "Milk",
+      quantity: 1.5,
+      unit,
+    });
+    await page.reload();
+    await expect(row(page).locator(".grocery-amount")).toHaveText(
+      `1.5 ${unit}`,
+    );
+  });
+}
+
 test("zero and fractional decrement require confirmation; cancellation writes nothing", async ({
   page,
 }) => {
