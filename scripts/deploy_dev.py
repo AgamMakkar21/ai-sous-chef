@@ -793,6 +793,7 @@ async def chat_smoke(deployed: dict[str, str]) -> None:
             for current_request in (
                 "Give me a recipe for a yogurt bowl.",
                 context.current_request,
+                "Make rice and beans using 1 cup dry rice and 1 can black beans.",
             ):
                 async with asyncio.timeout(POLICY.deadline_seconds + 30):
                     result = await OrchestratorService(gateway, specialist).run(

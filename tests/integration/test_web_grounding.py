@@ -461,6 +461,7 @@ def test_release_smoke_requires_complete_tool_free_recovery(
         ] == [
             "Give me a recipe for a yogurt bowl.",
             "Give me a recipe for a chicken dinner.",
+            "Make rice and beans using 1 cup dry rice and 1 can black beans.",
         ]
     else:
         with pytest.raises(deploy_dev.DeliveryError):
@@ -1382,6 +1383,53 @@ def test_current_information_search_cannot_be_skipped_even_without_web_claims() 
         harness.generate()
     assert caught.value.code == FoundryFailure.INVALID_RESULT
     assert len(harness.requests) == 1 and not harness.tools.nutrition_requests
+
+
+@pytest.mark.parametrize(
+    ("boundary", "event"),
+    [
+        ("completion", "foundry_response_rejected"),
+        ("tool_arguments", "recipe_grounding_failed"),
+        ("draft", "recipe_draft_rejected"),
+        ("web", "recipe_web_rejected"),
+    ],
+)
+def test_recipe_rejections_identify_the_boundary_without_logging_content(
+    boundary: str, event: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    configure_safe_telemetry()
+    harness = CombinedHarness(use_web=False)
+    content = harness.combined["output"][-1]["content"][0]
+    if boundary == "completion":
+        harness.combined.update(
+            status="incomplete", incomplete_details={"reason": "max_output_tokens"}
+        )
+    elif boundary == "tool_arguments":
+        call = next(item for item in harness.combined["output"] if item["type"] == "mcp_call")
+        call["arguments"] = json.dumps({"query_variants": ["PRIVATE_CANARY"]})
+    elif boundary == "draft":
+        draft = json.loads(content["text"])
+        draft.update(servings=0, title="PRIVATE_CANARY")
+        content["text"] = json.dumps(draft)
+    else:
+        content["annotations"] = [
+            {
+                "type": "url_citation",
+                "url": URL,
+                "title": "PRIVATE_CANARY",
+                "start_index": 0,
+                "end_index": 1,
+            }
+        ]
+    with pytest.raises(FoundryGatewayError) as caught:
+        harness.generate()
+    assert caught.value.code == FoundryFailure.INVALID_RESULT
+    assert len(harness.requests) == 1 and not harness.tools.nutrition_requests
+    events = [json.loads(record.getMessage()) for record in caplog.records]
+    assert any(item["event"] == event for item in events)
+    if boundary == "tool_arguments":
+        assert any(item.get("grounding_stage") == "tool_arguments" for item in events)
+    assert "PRIVATE_CANARY" not in caplog.text
 
 
 def test_calorie_generation_has_its_own_deadline_for_larger_responses(

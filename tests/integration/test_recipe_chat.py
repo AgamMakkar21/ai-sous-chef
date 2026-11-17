@@ -284,6 +284,7 @@ def test_release_chat_check_requires_live_recipe_and_attributed_calories(
             assert [context.current_request for context in recipe_transport.contexts] == [
                 "Give me a recipe for a yogurt bowl.",
                 "Give me a recipe for a chicken dinner.",
+                "Make rice and beans using 1 cup dry rice and 1 can black beans.",
             ]
             recovery = json.loads(recipe_transport.requests[-1].content)
             assert recovery["agent_reference"]["version"] == (

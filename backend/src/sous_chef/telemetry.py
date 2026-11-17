@@ -8,6 +8,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import StrEnum
 from math import isfinite
+from typing import Literal, get_args
 from uuid import uuid4
 
 from azure.core.settings import settings as azure_settings
@@ -34,6 +35,28 @@ CAPTURE_DISABLED_ENV = {
     "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED": "true",
     "APPLICATIONINSIGHTS_OPENTELEMETRY_RESOURCE_METRIC_DISABLED": "true",
 }
+
+GroundingStage = Literal[
+    "empty",
+    "output_size",
+    "output_json",
+    "mcp_envelope",
+    "document_schema",
+    "document_source",
+    "mcp_tool_error",
+    "tool_arguments",
+    "chunk_json",
+    "chunk_list",
+    "chunk_count",
+    "chunk_schema",
+    "duplicate_reference",
+    "recipe_schema",
+    "provenance",
+    "source_set",
+    "reference_count",
+    "reference_schema",
+    "reference_match",
+]
 
 
 class ErrorCategory(StrEnum):
@@ -106,6 +129,7 @@ class Event(StrEnum):
     FOUNDRY_COMPLETED = "foundry_completed"
     FOUNDRY_FAILED = "foundry_failed"
     FOUNDRY_CANCELLED = "foundry_cancelled"
+    FOUNDRY_RESPONSE_REJECTED = "foundry_response_rejected"
     COSMOS_FAILED = "cosmos_failed"
     ORCHESTRATOR_COMPLETED = "orchestrator_completed"
     ORCHESTRATOR_FAILED = "orchestrator_failed"
@@ -114,6 +138,9 @@ class Event(StrEnum):
     RECIPE_INVOKED = "recipe_invoked"
     RECIPE_COMPLETED = "recipe_completed"
     RECIPE_ATTRIBUTION_NORMALIZED = "recipe_attribution_normalized"
+    RECIPE_GROUNDING_FAILED = "recipe_grounding_failed"
+    RECIPE_DRAFT_REJECTED = "recipe_draft_rejected"
+    RECIPE_WEB_REJECTED = "recipe_web_rejected"
     RECIPE_FAILED = "recipe_failed"
     RECIPE_CANCELLED = "recipe_cancelled"
     RECIPE_SAFETY_REJECTED = "recipe_safety_rejected"
@@ -151,6 +178,7 @@ class _OperationalEvent:
     agent_principal_id: str | None = None
     attempt: int | None = None
     generation: int | None = None
+    grounding_stage: GroundingStage | None = None
 
     def serialize(self) -> str:
         fields: dict[str, str | int | float] = {"event": self.event.value}
@@ -166,6 +194,8 @@ class _OperationalEvent:
             fields["attempt"] = self.attempt
         if self.generation is not None:
             fields["generation"] = self.generation
+        if self.grounding_stage is not None:
+            fields["grounding_stage"] = self.grounding_stage
         if self.event in {Event.ORCHESTRATOR_INVOKED, Event.RECIPE_INVOKED}:
             fields["agent_role"] = (
                 "orchestrator" if self.event == Event.ORCHESTRATOR_INVOKED else "recipe_nutrition"
@@ -191,6 +221,7 @@ def operational_event(
     agent_principal_id: str | None = None,
     attempt: int | None = None,
     generation: int | None = None,
+    grounding_stage: GroundingStage | None = None,
 ) -> None:
     if status is not None and not 100 <= status <= 599:
         raise ValueError("Operational status must be an HTTP status code.")
@@ -201,6 +232,11 @@ def operational_event(
         for value in (attempt, generation)
     ):
         raise ValueError("Operational learning counts must be bounded nonnegative integers.")
+    if event == Event.RECIPE_GROUNDING_FAILED:
+        if grounding_stage not in get_args(GroundingStage):
+            raise ValueError("Grounding failure stage must be allowlisted.")
+    elif grounding_stage is not None:
+        raise ValueError("Grounding failure stage requires a grounding failure event.")
     if event in {Event.ORCHESTRATOR_INVOKED, Event.RECIPE_INVOKED}:
         if (
             agent_name is None
@@ -221,9 +257,13 @@ def operational_event(
         in {
             Event.REQUEST_FAILED,
             Event.FOUNDRY_FAILED,
+            Event.FOUNDRY_RESPONSE_REJECTED,
             Event.COSMOS_FAILED,
             Event.ORCHESTRATOR_FAILED,
             Event.RECIPE_FAILED,
+            Event.RECIPE_GROUNDING_FAILED,
+            Event.RECIPE_DRAFT_REJECTED,
+            Event.RECIPE_WEB_REJECTED,
             Event.USDA_FAILED,
         }
         else logging.INFO
@@ -250,6 +290,7 @@ def operational_event(
             agent_principal_id,
             attempt,
             generation,
+            grounding_stage,
         ),
     )
     span = trace.get_current_span()

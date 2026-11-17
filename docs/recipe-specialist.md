@@ -109,6 +109,17 @@ name/version, inherits its published capabilities, permits at most one
 Its exact arguments are `{"query_variants":["rice dinner"]}`, matching the
 Search MCP input schema. The array must contain that one unchanged string;
 extra variants, additional fields and the legacy `query` field are rejected.
+Runtime retrieval queries use human-readable recipe requirements, time/skill,
+allergies, dietary preferences and available ingredient names, not a serialized
+context JSON document. The single unchanged string still crosses the MCP
+boundary; history, user identifiers and learned evidence stay out. This avoids
+searching profile field names and JSON syntax instead of the requested dish.
+Native whitespace-only results count as no results, never fabricated grounding.
+The app records `recipe_grounding_failed` with an allowlisted `grounding_stage`
+to distinguish empty search, output/schema and provenance failures without
+recording queries, snippets or model output.
+Response-completion, recipe-draft and web-evidence rejection events similarly
+identify their failing boundary without logging the rejected content.
 The fixed check does not authorize web; any returned web call is rejected. With a
 combined native-web source that is a post-call rejection, not a pre-execution
 disable of the attached tool. No USDA call, source publication, role assignment, resource configuration
@@ -636,9 +647,10 @@ AI nutrient recovery. Rejected USDA data never becomes a mapping or a zero
 placeholder. Invalid startup contracts and exact ingredient lookups still raise
 errors. The authenticated send regression covers malformed search results and
 invalid profile values through durable answer persistence and idempotent replay.
-The live release smoke requires both an ordinary no-cook yogurt bowl and a
-chicken dinner rather than prescribing mass-only ingredient amounts, so generated
-quantities and recovery are exercised together. Offline release-smoke regressions
+The live release smoke requires an ordinary no-cook yogurt bowl, a chicken
+dinner and rice/beans with household quantities rather than prescribing mass-only
+ingredient amounts, so query construction, generated quantities and recovery are
+exercised together. Offline release-smoke regressions
 also require completion when the optional quantity search is skipped without web
 claims or native citations. No-cook bowls, salads, sandwiches and smoothies do not
 need cooking steps or temperature templates to pass recipe validation.
