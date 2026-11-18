@@ -3,11 +3,13 @@ import { ApiError } from "./api";
 import ChatComposer from "./ChatComposer";
 import {
   createConversation,
+  deleteConversation,
   listConversations,
   listTurns,
   navigationKey,
   navigationOwner,
   readNavigation,
+  rememberOperation,
   safeTitle,
   type Conversation,
   type Navigation,
@@ -69,6 +71,9 @@ function Transcript({
   onBusy,
   onDirty,
   focusRequest,
+  prepare,
+  onStarted,
+  blocked,
 }: {
   id: string;
   title: string;
@@ -79,11 +84,16 @@ function Transcript({
   onBusy: (busy: boolean) => void;
   onDirty: (dirty: boolean) => void;
   focusRequest: number;
+  prepare?: (signal: AbortSignal) => Promise<string>;
+  onStarted?: (turn: Turn) => void;
+  blocked: boolean;
 }) {
   const load = useCallback(
     (cursor: string | null, signal: AbortSignal) =>
-      listTurns(session, id, cursor, signal),
-    [id, session],
+      prepare
+        ? Promise.resolve({ items: [], nextCursor: null })
+        : listTurns(session, id, cursor, signal),
+    [id, session, prepare],
   );
   const history = usePage(load, onExpired);
   const [recipeBusy, setRecipeBusy] = useState(false);
@@ -95,15 +105,16 @@ function Transcript({
   const [updates, setUpdates] = useState<Turn[]>([]);
   const recordTurn = useCallback(
     (turn: Turn) => {
+      onStarted?.(turn);
       setUpdates((previous) =>
         [...previous.filter((item) => item.turnId !== turn.turnId), turn].slice(
           -20,
         ),
       );
       if (turn.turnIndex === 0 && turn.messages[0])
-        onTitle(id, safeTitle(turn.messages[0].content));
+        onTitle(turn.conversationId, safeTitle(turn.messages[0].content));
     },
-    [id, onTitle],
+    [onTitle, onStarted],
   );
   const loaded = history.state.kind === "ready" ? history.state.page.items : [];
   const byId = new Map(updates.map((turn) => [turn.turnId, turn]));
@@ -139,7 +150,7 @@ function Transcript({
         </h2>
         <button
           className="text-button"
-          disabled={recipeBusy || chatBusy}
+          disabled={blocked || recipeBusy || chatBusy}
           onClick={refresh}
         >
           Refresh history
@@ -202,7 +213,7 @@ function Transcript({
                               session={session}
                               onExpired={onExpired}
                               onBusy={setRecipeBusy}
-                              disabled={recipeBusy || chatBusy}
+                              disabled={blocked || recipeBusy || chatBusy}
                             />
                           )
                         }
@@ -221,7 +232,7 @@ function Transcript({
         ))}
       <Pager
         index={history.index}
-        ready={history.state.kind === "ready"}
+        ready={!blocked && history.state.kind === "ready"}
         next={
           history.state.kind === "ready" &&
           history.state.page.nextCursor !== null
@@ -256,7 +267,7 @@ function Transcript({
                             session={session}
                             onExpired={onExpired}
                             onBusy={setRecipeBusy}
-                            disabled={recipeBusy || chatBusy}
+                            disabled={blocked || recipeBusy || chatBusy}
                           />
                         )
                       }
@@ -283,8 +294,9 @@ function Transcript({
         onRefresh={refresh}
         onExpired={onExpired}
         onBusy={setChatBusy}
-        blocked={recipeBusy}
+        blocked={blocked || recipeBusy}
         onDirty={onDirty}
+        prepare={prepare}
       />
     </section>
   );
@@ -307,8 +319,9 @@ export default function ConversationPanel({
   const [initializationFailed, setInitializationFailed] = useState(false);
   const [storageNotice, setStorageNotice] = useState("");
   const [notice, setNotice] = useState("");
-  const [creating, setCreating] = useState(false);
-  const creatingRef = useRef(false);
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const deletingRef = useRef(false);
   const [sending, setSending] = useState(false);
   const chatDirty = useRef(false);
   const trackDirty = useCallback(
@@ -320,9 +333,9 @@ export default function ConversationPanel({
   );
   const trackBusy = useCallback((value: boolean) => setSending(value), []);
   useEffect(() => {
-    onBusy(creating || sending);
+    onBusy(deleting || sending);
     return () => onBusy(false);
-  }, [creating, sending, onBusy]);
+  }, [deleting, sending, onBusy]);
   const lifetime = useRef<AbortController | null>(null);
   const [titles, setTitles] = useState<Record<string, string>>({});
   const [focusRequest, setFocusRequest] = useState(0);
@@ -354,6 +367,7 @@ export default function ConversationPanel({
       }
       current.current = restored;
       setNavigation(restored);
+      setDraftId(restored.selectedId ? null : restored.creationKey);
     }
     void restore().catch(() => {
       if (!controller.signal.aborted) setInitializationFailed(true);
@@ -361,7 +375,7 @@ export default function ConversationPanel({
     return () => controller.abort();
   }, [session.userId, initialization]);
 
-  function remember(next: Navigation) {
+  const remember = useCallback((next: Navigation) => {
     current.current = next;
     setNavigation(next);
     try {
@@ -373,7 +387,7 @@ export default function ConversationPanel({
         );
       else throw error;
     }
-  }
+  }, []);
 
   const recordTitle = useCallback((id: string, title: string) => {
     setTitles((previous) =>
@@ -382,25 +396,25 @@ export default function ConversationPanel({
   }, []);
 
   function select(id: string) {
-    if (!current.current || creatingRef.current || sending) return;
+    if (!current.current || deletingRef.current || sending) return;
     if (
-      id !== current.current.selectedId &&
+      (draftId || id !== current.current.selectedId) &&
       chatDirty.current &&
       !window.confirm(
         "Leave this recipe request? Unsaved input will be discarded; accepted requests are not cancelled.",
       )
     )
       return;
-    remember({ ...current.current, selectedId: id });
+    remember({ ...current.current, selectedId: id, creationKey: null });
+    setDraftId(null);
     setFocusRequest((value) => value + 1);
     setNotice("");
     if (window.matchMedia("(max-width: 720px)").matches) setSidebarOpen(false);
   }
 
-  async function create() {
+  function create() {
     const previous = current.current;
-    const controller = lifetime.current;
-    if (!previous || !controller || creatingRef.current || sending) return;
+    if (!previous || deletingRef.current || sending) return;
     if (
       chatDirty.current &&
       !window.confirm(
@@ -408,50 +422,90 @@ export default function ConversationPanel({
       )
     )
       return;
-    creatingRef.current = true;
-    setCreating(true);
     setNotice("");
-    const key = previous.creationKey ?? crypto.randomUUID();
-    remember({ ...previous, creationKey: key });
-    try {
-      const conversation = await createConversation(
-        session,
-        key,
-        controller.signal,
-      );
-      if (controller.signal.aborted || !current.current) return;
+    setDraftId(crypto.randomUUID());
+    remember({ ...previous, selectedId: null, creationKey: null });
+    setFocusRequest((value) => value + 1);
+    if (window.matchMedia("(max-width: 720px)").matches) setSidebarOpen(false);
+  }
+
+  const prepare = useCallback(
+    async (signal: AbortSignal) => {
+      if (!draftId || !current.current)
+        throw new Error("No chat draft is open.");
+      remember({ ...current.current, creationKey: draftId });
+      const conversation = await createConversation(session, draftId, signal);
+      if (signal.aborted || !current.current)
+        throw new DOMException("Aborted", "AbortError");
       remember({
         ...current.current,
         selectedId: conversation.conversationId,
         creationKey: null,
       });
-      setFocusRequest((value) => value + 1);
-      recordTitle(
-        conversation.conversationId,
-        conversation.title === "New conversation"
-          ? "New chat"
-          : safeTitle(conversation.title),
-      );
+      return conversation.conversationId;
+    },
+    [draftId, session, remember],
+  );
+
+  const refreshChats = chats.refresh;
+  const started = useCallback(
+    (turn: Turn) => {
+      if (!current.current) return;
+      remember({
+        ...current.current,
+        selectedId: turn.conversationId,
+        creationKey: null,
+      });
+      setDraftId(null);
+      refreshChats(true);
+    },
+    [refreshChats, remember],
+  );
+
+  async function remove() {
+    const previous = current.current;
+    const controller = lifetime.current;
+    if (!previous?.selectedId || !controller || deletingRef.current || sending)
+      return;
+    if (
+      !window.confirm(
+        "Delete this chat and its messages? This cannot be undone. Saved recipes will be kept.",
+      )
+    )
+      return;
+    deletingRef.current = true;
+    setDeleting(true);
+    setNotice("");
+    try {
+      await deleteConversation(session, previous.selectedId, controller.signal);
+      if (controller.signal.aborted || !current.current) return;
+      remember({ ...current.current, selectedId: null, creationKey: null });
+      trackDirty(false);
+      try {
+        rememberOperation(previous.owner, previous.selectedId, null);
+      } catch {
+        setStorageNotice(
+          "Deleted chat navigation could not be cleared from browser storage.",
+        );
+      }
       chats.refresh(true);
-      if (window.matchMedia("(max-width: 720px)").matches)
-        setSidebarOpen(false);
     } catch (error) {
       if (controller.signal.aborted) return;
       if (error instanceof ApiError && error.status === 401) onExpired();
       else
         setNotice(
-          error instanceof ApiError && error.code === "csrf_failed"
-            ? "Your security token changed. Check chat creation again to use a fresh token. Nothing was replayed."
-            : "Chat creation is not confirmed. Check it again with the same request; no additional chat will be created for this request.",
+          error instanceof ApiError && error.status === 409
+            ? "This chat has an active request or changed. Check its saved status before deleting it."
+            : "Chat deletion could not be confirmed. Try deleting it again; nothing was replayed automatically.",
         );
     } finally {
-      creatingRef.current = false;
-      if (!controller.signal.aborted) setCreating(false);
+      deletingRef.current = false;
+      if (!controller.signal.aborted) setDeleting(false);
     }
   }
 
   const items = chats.state.kind === "ready" ? chats.state.page.items : [];
-  const selected = navigation?.selectedId ?? null;
+  const selected = draftId ? null : (navigation?.selectedId ?? null);
   function titleFor(conversation: Conversation) {
     return conversation.title === "New conversation"
       ? (titles[conversation.conversationId] ?? "New chat")
@@ -475,15 +529,20 @@ export default function ConversationPanel({
         </div>
         <button
           className="button primary"
-          disabled={!navigation || creating || sending}
-          onClick={() => void create()}
+          disabled={!navigation || deleting || sending}
+          onClick={create}
         >
-          {creating
-            ? "Creating chat..."
-            : navigation?.creationKey
-              ? "Check chat creation"
-              : "New Chat"}
+          New Chat
         </button>
+        {selected && !draftId && (
+          <button
+            className="button secondary"
+            disabled={deleting || sending}
+            onClick={() => void remove()}
+          >
+            {deleting ? "Deleting chat..." : "Delete chat"}
+          </button>
+        )}
       </div>
       {storageNotice && (
         <p className="notice" role="status">
@@ -493,12 +552,6 @@ export default function ConversationPanel({
       {notice && (
         <p className="notice" role="alert">
           {notice}
-        </p>
-      )}
-      {navigation?.creationKey && !creating && !notice && (
-        <p className="notice" role="status">
-          A previous chat creation has not been confirmed. Select Check chat
-          creation to reconcile the same request.
         </p>
       )}
       {initializationFailed && (
@@ -529,7 +582,7 @@ export default function ConversationPanel({
             <h2>Chats</h2>
             <button
               className="text-button"
-              disabled={creating || sending}
+              disabled={deleting || sending}
               onClick={() => chats.refresh(true)}
             >
               Refresh chats
@@ -560,7 +613,7 @@ export default function ConversationPanel({
             <button
               className="conversation-choice"
               aria-current="true"
-              disabled={creating || sending}
+              disabled={deleting || sending}
               onClick={() => select(selected)}
             >
               <span>{title}</span>
@@ -579,7 +632,7 @@ export default function ConversationPanel({
                     aria-current={
                       item.conversationId === selected ? "true" : undefined
                     }
-                    disabled={!navigation || creating || sending}
+                    disabled={!navigation || deleting || sending}
                     onClick={() => select(item.conversationId)}
                   >
                     <span>{titleFor(item)}</span>
@@ -602,11 +655,11 @@ export default function ConversationPanel({
             move={chats.move}
           />
         </aside>
-        {selected ? (
+        {selected || draftId ? (
           <Transcript
-            key={selected}
-            id={selected}
-            title={title}
+            key={selected ?? draftId}
+            id={(selected ?? draftId)!}
+            title={draftId ? "New chat" : title}
             session={session}
             onExpired={onExpired}
             onTitle={recordTitle}
@@ -614,6 +667,9 @@ export default function ConversationPanel({
             onBusy={trackBusy}
             onDirty={trackDirty}
             focusRequest={focusRequest}
+            prepare={draftId ? prepare : undefined}
+            onStarted={draftId ? started : undefined}
+            blocked={deleting}
           />
         ) : (
           <section

@@ -10,6 +10,7 @@ from pydantic import UUID4, AwareDatetime, ConfigDict, Field, ValidationError
 
 from sous_chef.adapters.cosmos import CosmosRepository, open_cosmos
 from sous_chef.domain.authorization import AuthenticatedUser, OwnedResourceNotFound
+from sous_chef.domain.chat import SendConflict
 from sous_chef.domain.conversations import (
     ConversationModel,
     ConversationSummary,
@@ -28,6 +29,7 @@ from sous_chef.domain.cosmos import (
     PageRequest,
     ProductContainer,
     RecordKind,
+    RecordPatch,
     StoredRecord,
 )
 from sous_chef.services.pagination import HistoryPagination
@@ -46,6 +48,7 @@ class StoredConversation(ConversationModel):
     updated_at: AwareDatetime
     next_turn_index: int = Field(ge=0, strict=True)
     active_operation_id: UUID4 | None
+    deleted: bool = False
 
 
 class StoredTurn(ConversationTurn):
@@ -65,11 +68,15 @@ class CreationReceipt(ConversationModel):
 
 class ConversationService(HistoryPagination):
     @staticmethod
-    def _conversation(record: StoredRecord) -> ConversationSummary:
+    def _conversation(
+        record: StoredRecord, *, include_deleted: bool = False
+    ) -> ConversationSummary:
         try:
             stored = StoredConversation.model_validate_json(json.dumps(record.body))
             if stored.id != stored.conversation_id:
                 raise ValueError
+            if stored.deleted and not include_deleted:
+                raise OwnedResourceNotFound
             return ConversationSummary(
                 conversation_id=stored.id,
                 title=stored.title,
@@ -146,6 +153,23 @@ class ConversationService(HistoryPagination):
                 return await self._replay(repository, user, receipt, request_hash)
             return self._conversation(record), record.etag
 
+    async def delete(self, user: AuthenticatedUser, conversation_id: UUID4) -> None:
+        async with open_cosmos(self.settings) as repository:
+            record = await repository.read(user, CHAT, str(conversation_id))
+            if record is None:
+                raise OwnedResourceNotFound
+            self._conversation(record, include_deleted=True)
+            if record.body.get("deleted") is True:
+                return
+            if record.body.get("activeOperationId") is not None:
+                raise SendConflict
+            await repository.patch(
+                user,
+                CHAT,
+                str(conversation_id),
+                RecordPatch(etag=record.etag, fields={"deleted": True}),
+            )
+
     async def list(
         self, user: AuthenticatedUser, parameters: HistoryParameters
     ) -> HistoryPage[ConversationSummary]:
@@ -153,7 +177,9 @@ class ConversationService(HistoryPagination):
         async with open_cosmos(self.settings) as repository:
             page = await repository.query(
                 user,
-                HistoryQuery(kind="conversation", created_before=state.created_before),
+                HistoryQuery(
+                    kind="conversation", created_before=state.created_before, nonempty_only=True
+                ),
                 PageRequest(limit=state.limit, continuation_token=state.continuation_token),
             )
             return HistoryPage(

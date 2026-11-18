@@ -1134,6 +1134,10 @@ class CosmosRepository:
         ]
         if container == ProductContainer.CHAT_HISTORY:
             sql += self._chat_filter(parameters)
+        if query.kind == "conversation":
+            sql += " AND (NOT IS_DEFINED(c.deleted) OR c.deleted = false)"
+            if query.nonempty_only:
+                sql += " AND c.nextTurnIndex > 0"
         if query.recipe_filter != "all":
             sql += " AND IS_DEFINED(c.cookedAt) AND NOT IS_NULL(c.cookedAt)"
             if query.recipe_filter == "awaitingFeedback":
@@ -1183,6 +1187,8 @@ class CosmosRepository:
                     continue
                 if (
                     record.body["recordKind"] != query.kind
+                    or (query.kind == "conversation" and record.body.get("deleted") is True)
+                    or (query.nonempty_only and not record.body.get("nextTurnIndex"))
                     or (
                         query.conversation_id is not None
                         and record.body.get("conversationId") != str(query.conversation_id)
