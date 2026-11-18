@@ -263,19 +263,36 @@ checks do not replace backend ownership, deterministic safety or current-profile
 revalidation.
 
 Cards show time, skill, servings, concise fit reasons, ordered steps and ingredient
-quantities. **Need to buy** uses `shoppingItems` (the purchase shortfall), with the
-recipe's total quantity shown when different. **Already have** means confirmed
-inventory; unknown availability gets a separate **Check your pantry** group.
+quantities. One ingredient list preserves recipe order and uses
+**quantity - ingredient name - availability**. **Already have** means confirmed
+inventory, **Need to buy** means a purchase is required, and unknown availability
+says **Check your pantry**. The quantity is the full recipe amount;
+when `shoppingItems` specifies a different purchase shortfall, a concise
+**Buy quantity** note preserves that distinction without separate pantry/shopping sections.
 Missing quantities/units are explicitly unavailable, never inferred.
 
 Nutrition preserves its supplied per-serving/whole-recipe basis and real zeroes.
 All six supported nutrients remain visible: absent values say **Unavailable**,
 partial amounts are labelled **Partial**, and detailed coverage names unknown
 ingredients when supplied. Legacy partial evidence without detailed coverage is
-conservatively labelled partial. USDA source versions/food mappings and the
-informational-estimate disclaimer remain visible. Exact grounded source quotes,
+conservatively labelled partial. A collapsed **Nutrition details** disclosure holds
+one whole-recipe table: ingredient, calories, protein, carbohydrates, fat, fiber
+and sodium. Each ingredient appears once, with its source linked from its name;
+web/AI estimates are labelled on the affected cells so mixed USDA/estimate rows
+do not imply USDA verification of every value. Missing ingredient values remain
+**Unavailable**, including legacy snapshots without per-ingredient amounts.
+Estimated matches and quantities retain concise labels and quantity-source links.
+The table scrolls horizontally within a keyboard-focusable region on narrow screens.
+Calculation prose, conversion formulas and a redundant nutrition-source list are
+not rendered; the original evidence, full-precision values and source versions
+remain unchanged in the validated/stored payload. The informational-estimate
+disclaimer remains visible inside the disclosure. Exact grounded recipe source quotes,
 creative adaptations/substitutions and additional Web IQ context have distinct
 sections; citations do not imply that creative changes are source-verified.
+
+These are presentation-only changes shared by chat and Recipe History: generation,
+nutrition calculations, retries, persistence and response validation are unchanged.
+Recipes still appear only after a completed, validated response.
 
 Model/source text is escaped React text, not HTML or Markdown. Citation links
 accept only credential-free HTTPS on the default port, open with no opener or

@@ -758,13 +758,48 @@ input[type="checkbox"] {
 .recipe-skill {
   text-transform: capitalize;
 }
-.recipe-ingredients {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
-  gap: 24px;
+.recipe-card .recipe-ingredients {
+  list-style: none;
+  padding-left: 0;
 }
 .recipe-quantity {
   display: block;
+}
+.recipe-nutrition-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.recipe-nutrition-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.recipe-nutrition-table caption {
+  text-align: left;
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+.recipe-nutrition-table th,
+.recipe-nutrition-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--cp-border);
+  text-align: right;
+  vertical-align: top;
+}
+.recipe-nutrition-table th:first-child {
+  min-width: 160px;
+  text-align: left;
+}
+.recipe-nutrition-table thead th,
+.recipe-nutrition-table td {
+  white-space: nowrap;
+}
+.recipe-nutrition-source {
+  display: block;
+  white-space: normal;
+  font-size: 0.8125rem;
+  font-weight: 400;
+  color: var(--cp-text-soft);
 }
 .recipe-card .recipe-steps li {
   padding-left: 8px;

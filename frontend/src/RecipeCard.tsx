@@ -42,6 +42,14 @@ const calorieSources = {
   web_iq: "Web estimate",
   ai_knowledge: "AI estimate",
 };
+const nutrientNames = Object.keys(
+  nutrientLabels,
+) as (keyof typeof nutrientLabels)[];
+const inventoryLabels = {
+  available: "Already have",
+  missing: "Need to buy",
+  unknown: "Check your pantry",
+};
 
 export default function RecipeCard({
   recipe,
@@ -52,39 +60,56 @@ export default function RecipeCard({
 }) {
   const id = useId();
   const nutrition = recipe.nutrition;
-  const groups = [
-    { title: "Already have", status: "available" },
-    { title: "Need to buy", status: "missing" },
-    { title: "Check your pantry", status: "unknown" },
-  ];
   const ingredientName = (lineId: string) =>
     recipe.ingredients.find((line) => line.lineId === lineId)!.name;
   const sources = recipe.sources.filter(
     (source) => source.kind === "curated_recipe",
   );
-  const ingredientNutrients = [
-    ...nutrition.mappings
-      .filter((mapping) =>
-        mapping.nutrients?.some((item) => item.name !== "energy"),
-      )
-      .map((mapping) => ({
-        ingredientLineId: mapping.ingredientLineId,
-        nutrients: mapping.nutrients!.filter((item) => item.name !== "energy"),
-        source: "usda_mcp" as const,
-        reference: nutrition.sources.find(
-          (source) => source.sourceId === mapping.sourceId,
-        )!.reference,
-        basis:
-          mapping.conversionBasis ??
-          "USDA amounts for this ingredient's recipe quantity.",
-      })),
-    ...(nutrition.nutrientEstimates ?? []),
-  ];
-  const nutritionSources = new Set([
-    ...(nutrition.mappings.length ? (["usda_mcp"] as const) : []),
-    ...(nutrition.ingredientCalories ?? []).map((item) => item.source),
-    ...(nutrition.nutrientEstimates ?? []).map((item) => item.source),
-  ]);
+  const nutritionRows = recipe.ingredients.map((ingredient) => {
+    const mapping = nutrition.mappings.find(
+      (item) => item.ingredientLineId === ingredient.lineId,
+    );
+    const source = nutrition.sources.find(
+      (item) => item.sourceId === mapping?.sourceId,
+    );
+    const calories = nutrition.ingredientCalories?.find(
+      (item) => item.ingredientLineId === ingredient.lineId,
+    );
+    const estimates = (nutrition.nutrientEstimates ?? []).filter(
+      (item) => item.ingredientLineId === ingredient.lineId,
+    );
+    return {
+      ingredient,
+      mapping,
+      reference:
+        source?.reference ??
+        calories?.reference ??
+        estimates.find((item) => item.reference)?.reference,
+      values: nutrientNames.map((name) => {
+        if (name === "energy" && calories) return { ...calories, unit: "kcal" };
+        const nutrient = mapping?.nutrients?.find((item) => item.name === name);
+        if (nutrient)
+          return {
+            ...nutrient,
+            source: "usda_mcp" as const,
+            reference: source?.reference,
+          };
+        const estimate = estimates.find((item) =>
+          item.nutrients.some((nutrient) => nutrient.name === name),
+        );
+        const estimatedNutrient = estimate?.nutrients.find(
+          (item) => item.name === name,
+        );
+        return estimate && estimatedNutrient
+          ? {
+              ...estimatedNutrient,
+              source: estimate.source,
+              reference: estimate.reference,
+            }
+          : null;
+      }),
+    };
+  });
 
   return (
     <section className="recipe-card" aria-labelledby={`${id}-title`}>
@@ -93,7 +118,8 @@ export default function RecipeCard({
         {recipe.generationSource === "ai_knowledge" && (
           <p className="notice">
             AI-knowledge recipe: recipe sources were unavailable. This recipe is
-            not externally verified; nutrition sources are listed separately.
+            not externally verified; nutrition is attributed in Nutrition
+            details.
           </p>
         )}
         <dl className="recipe-meta">
@@ -134,55 +160,26 @@ export default function RecipeCard({
 
       <section aria-labelledby={`${id}-ingredients`}>
         <h4 id={`${id}-ingredients`}>Ingredients</h4>
-        <div className="recipe-ingredients">
-          {groups.map((group) => {
-            const lines = recipe.ingredients.filter(
-              (line) => line.inventoryStatus === group.status,
+        <ul className="recipe-ingredients">
+          {recipe.ingredients.map((line) => {
+            const purchase = recipe.shoppingItems.find(
+              (item) => item.ingredientLineId === line.lineId,
             );
-            if (group.status === "unknown" && !lines.length) return null;
             return (
-              <section key={group.status} aria-label={group.title}>
-                <h5>{group.title}</h5>
-                {group.status === "unknown" && (
-                  <p>Availability is unknown; check before shopping.</p>
-                )}
-                {lines.length ? (
-                  <ul>
-                    {lines.map((line) => {
-                      const purchase =
-                        group.status === "missing"
-                          ? recipe.shoppingItems.find(
-                              (item) => item.ingredientLineId === line.lineId,
-                            )!
-                          : line;
-                      return (
-                        <li key={line.lineId}>
-                          <span>{line.name}</span>
-                          <span className="recipe-quantity">
-                            {quantity(purchase.quantity, purchase.unit)}
-                          </span>
-                          {group.status === "missing" &&
-                            purchase.quantity !== line.quantity && (
-                              <span className="recipe-quantity">
-                                Recipe needs{" "}
-                                {quantity(line.quantity, line.unit)} in total
-                              </span>
-                            )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                ) : (
-                  <p>
-                    {group.status === "available"
-                      ? "None confirmed in your groceries."
-                      : "Nothing to buy."}
-                  </p>
-                )}
-              </section>
+              <li key={line.lineId}>
+                {quantity(line.quantity, line.unit)} - {line.name} -{" "}
+                {inventoryLabels[line.inventoryStatus]}
+                {purchase &&
+                  (purchase.quantity !== line.quantity ||
+                    purchase.unit !== line.unit) && (
+                    <span className="recipe-quantity">
+                      Buy {quantity(purchase.quantity, purchase.unit)}.
+                    </span>
+                  )}
+              </li>
             );
           })}
-        </div>
+        </ul>
       </section>
 
       <section aria-labelledby={`${id}-steps`}>
@@ -205,13 +202,8 @@ export default function RecipeCard({
         <div
           className="recipe-nutrition-tags"
           role="group"
-          aria-label="Nutrition sources"
+          aria-label="Nutrition status"
         >
-          {[...nutritionSources].map((source) => (
-            <span className="recipe-source-tag" key={source}>
-              {calorieSources[source]}
-            </span>
-          ))}
           {nutrition.status !== "known" && (
             <span className="recipe-source-tag">
               {nutrition.status === "partial"
@@ -248,62 +240,92 @@ export default function RecipeCard({
         </dl>
         <details className="recipe-nutrition-details">
           <summary>Nutrition details</summary>
-          {!!nutrition.ingredientCalories?.length && (
-            <>
-              <h5>Calories by ingredient (whole recipe)</h5>
-              <ul>
-                {nutrition.ingredientCalories.map((item) => (
-                  <li key={item.ingredientLineId}>
-                    {ingredientName(item.ingredientLineId)}:{" "}
-                    {item.amount.toLocaleString(undefined, {
-                      maximumFractionDigits: 2,
-                    })}{" "}
-                    kcal
-                    {" / "}
-                    {item.reference ? (
-                      <Reference
-                        reference={item.reference}
-                        label={calorieSources[item.source]}
-                      />
-                    ) : (
-                      calorieSources[item.source]
-                    )}
-                    {" / "}
-                    {item.basis}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          {!!ingredientNutrients.length && (
-            <>
-              <h5>Nutrition by ingredient (whole recipe)</h5>
-              <ul>
-                {ingredientNutrients.map((item, index) => (
-                  <li key={`${item.ingredientLineId}:${item.source}:${index}`}>
-                    {ingredientName(item.ingredientLineId)}:{" "}
-                    {item.nutrients
-                      .map(
-                        (nutrient) =>
-                          `${nutrientLabels[nutrient.name]}: ${nutrient.amount.toLocaleString()} ${nutrient.unit}`,
-                      )
-                      .join(", ")}
-                    {" / "}
-                    {item.reference ? (
-                      <Reference
-                        reference={item.reference}
-                        label={calorieSources[item.source]}
-                      />
-                    ) : (
-                      calorieSources[item.source]
-                    )}
-                    {" / "}
-                    {item.basis}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
+          <div
+            className="recipe-nutrition-scroll"
+            role="region"
+            aria-label="Ingredient nutrition"
+            tabIndex={0}
+          >
+            <table className="recipe-nutrition-table">
+              <caption>Nutrition by ingredient (whole recipe)</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Ingredient</th>
+                  {nutrientNames.map((name) => (
+                    <th scope="col" key={name}>
+                      {nutrientLabels[name]}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {nutritionRows.map(
+                  ({ ingredient, mapping, reference, values }) => (
+                    <tr key={ingredient.lineId}>
+                      <th scope="row">
+                        {reference ? (
+                          <Reference
+                            reference={reference}
+                            label={ingredient.name}
+                          />
+                        ) : (
+                          ingredient.name
+                        )}
+                        {mapping && (
+                          <span className="recipe-nutrition-source">
+                            USDA
+                            {mapping.approximateMatch &&
+                              mapping.foodDescription &&
+                              ` / Estimated match: ${mapping.foodDescription}`}
+                          </span>
+                        )}
+                        {mapping?.quantityEstimate && (
+                          <span className="recipe-nutrition-source">
+                            Estimated quantity
+                            {mapping.quantityEstimate.sources.map((source) => (
+                              <span key={source.reference}>
+                                {" / "}
+                                <Reference
+                                  reference={source.reference}
+                                  label="Quantity estimate source"
+                                />
+                              </span>
+                            ))}
+                          </span>
+                        )}
+                      </th>
+                      {values.map((value, index) => (
+                        <td key={nutrientNames[index]}>
+                          {value ? (
+                            <>
+                              {value.amount.toLocaleString(undefined, {
+                                maximumFractionDigits: 2,
+                              })}{" "}
+                              {value.unit}
+                              {value.source !== "usda_mcp" && (
+                                <span className="recipe-nutrition-source">
+                                  {value.reference ? (
+                                    <Reference
+                                      reference={value.reference}
+                                      label={calorieSources[value.source]}
+                                    />
+                                  ) : (
+                                    calorieSources[value.source]
+                                  )}
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            "Unavailable"
+                          )}
+                        </td>
+                      ))}
+                    </tr>
+                  ),
+                )}
+              </tbody>
+            </table>
+          </div>
           {!!nutrition.coverage?.some(
             (item) => item.unknownIngredientLineIds.length,
           ) && (
@@ -336,60 +358,6 @@ export default function RecipeCard({
             </ul>
           )}
           <p className="recipe-disclaimer">{nutrition.notice}</p>
-          {nutrition.sources.length > 0 && (
-            <>
-              <h5>Nutrition sources</h5>
-              <ul>
-                {nutrition.sources.map((source) => (
-                  <li key={source.sourceId}>
-                    <Reference
-                      reference={source.reference}
-                      label={`USDA MCP / ${source.sourceId}`}
-                    />{" "}
-                    / Version: {source.version}
-                    <ul>
-                      {nutrition.mappings
-                        .filter((item) => item.sourceId === source.sourceId)
-                        .map((item) => (
-                          <li key={item.ingredientLineId}>
-                            {ingredientName(item.ingredientLineId)} / Food ID:{" "}
-                            {item.usdaFoodId}
-                            {item.foodDescription && (
-                              <>
-                                {" "}
-                                /{" "}
-                                {item.approximateMatch
-                                  ? "Estimated match"
-                                  : "USDA food"}
-                                : {item.foodDescription}
-                              </>
-                            )}
-                            {item.conversionBasis && (
-                              <> / {item.conversionBasis}</>
-                            )}
-                            {item.quantityEstimate && (
-                              <ul>
-                                {item.quantityEstimate.sources.map((source) => (
-                                  <li key={source.reference}>
-                                    <Reference
-                                      reference={source.reference}
-                                      label="Quantity estimate source"
-                                    />{" "}
-                                    / {source.weightGrams.toLocaleString()} g
-                                    for {source.servings} source servings
-                                    <blockquote>{source.quote}</blockquote>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                          </li>
-                        ))}
-                    </ul>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
         </details>
       </section>
 
