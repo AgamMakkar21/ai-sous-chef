@@ -1,6 +1,7 @@
 import { expect, test, type Page as BrowserPage } from "@playwright/test";
 import type { Conversation, Page, Turn } from "../src/conversations.ts";
 import { backend } from "./backend.ts";
+import { recipeFixture } from "./recipe-fixture.ts";
 
 const firstId = "11111111-1111-4111-8111-111111111111";
 const secondId = "22222222-2222-4222-8222-222222222222";
@@ -64,6 +65,7 @@ async function conversations(page: BrowserPage) {
     writes: [] as { key: string; token: string | undefined; body: unknown }[],
     sends: [] as string[],
     loseSendResponse: false,
+    recipe: null as ReturnType<typeof recipeFixture> | null,
     deletes: [] as { id: string; token: string | undefined }[],
     receipts: new Map<string, Conversation>(),
     failure: null as {
@@ -81,6 +83,12 @@ async function conversations(page: BrowserPage) {
     if (request.method() === "POST" && url.pathname.endsWith("/turns")) {
       if (!id) throw new Error("Missing conversation ID.");
       const saved = turn(id, request.postDataJSON().content as string);
+      if (state.recipe) {
+        saved.recipe = state.recipe;
+        saved.generatedRecipeId = crypto.randomUUID();
+        const chat = state.chats.find((item) => item.conversationId === id);
+        if (chat?.title === "New conversation") chat.title = state.recipe.title;
+      }
       state.sends.push(id);
       state.turns.set(`${id}:`, { items: [saved], nextCursor: null });
       if (state.loseSendResponse) {
@@ -252,6 +260,50 @@ test("empty drafts are not saved and the first send creates one chat with curren
   await expect(
     page.locator(".conversation-list .conversation-choice"),
   ).toHaveCount(1);
+});
+
+test("completed recipes replace new-chat labels and keep their titles after reload", async ({
+  page,
+}) => {
+  const { chat } = await conversations(page);
+  chat.chats = [];
+  chat.recipe = { ...recipeFixture(), title: "Quick lemon rice dinner" };
+  await page.goto("/#sous-chef");
+  await page.getByRole("button", { name: "New Chat", exact: true }).click();
+  await page.getByRole("textbox").fill("What can I cook with rice and lemons?");
+  await page.getByRole("button", { name: "Send request", exact: true }).click();
+  await expect(page.locator("#transcript-title")).toHaveText(chat.recipe.title);
+  await openChats(page);
+  const titles = page.locator(".conversation-list .conversation-choice");
+  await expect(titles).toHaveCount(1);
+  await expect(titles).toContainText(chat.recipe.title);
+  await page.reload();
+  await openChats(page);
+  await expect(titles).toContainText(chat.recipe.title);
+  await expect(titles).not.toContainText("New chat");
+});
+
+test("an existing default-named chat refreshes its saved title after a reply", async ({
+  page,
+}) => {
+  const { chat } = await conversations(page);
+  chat.chats[0]!.title = "New conversation";
+  chat.recipe = { ...recipeFixture(), title: "High protein rice lunch" };
+  await page.goto("/#sous-chef");
+  await openChats(page);
+  await page
+    .locator(".conversation-list")
+    .getByRole("button", { name: "New chat", exact: false })
+    .click();
+  await page.getByRole("textbox").fill("Make that a high protein lunch");
+  await page.getByRole("button", { name: "Send request", exact: true }).click();
+  await openChats(page);
+  await expect(
+    page.locator(".conversation-list [aria-current='true']"),
+  ).toContainText(chat.recipe.title);
+  await expect(
+    page.getByRole("button", { name: "Weekend dinners", exact: false }),
+  ).toBeVisible();
 });
 
 test("selecting, switching tabs and reloading preserve the right transcript and highlight", async ({

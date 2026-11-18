@@ -40,7 +40,12 @@ from sous_chef.domain.orchestrator import POLICY
 from sous_chef.domain.profiles import OnboardingRequired
 from sous_chef.domain.recipe_safety import UNABLE, RecipeSafetyError
 from sous_chef.services.context import ContextService
-from sous_chef.services.conversations import ConversationService, StoredConversation
+from sous_chef.services.conversations import (
+    DEFAULT_TITLES,
+    ConversationService,
+    StoredConversation,
+    automatic_title,
+)
 from sous_chef.services.profiles import _view as profile_view
 from sous_chef.services.recipe_safety import check_current_recipe
 from sous_chef.settings import ConfigurationError, Settings
@@ -199,6 +204,24 @@ class ChatService:
             if reply and reply.generated_recipe_id
             else None,
         }
+        conversation_fields: dict[str, JsonValue] = {
+            "activeOperationId": str(operation.id) if status == "outcomeUnknown" else None
+        }
+        if (
+            reply is not None
+            and status == "completed"
+            and conversation.body.get("titleSource") != "recipe"
+            and (
+                conversation.body.get("title") in DEFAULT_TITLES
+                or (reply.recipe is not None and conversation.body.get("titleSource") == "request")
+            )
+        ):
+            conversation_fields.update(
+                title=automatic_title(
+                    reply.recipe.title if reply.recipe else public_turn.messages[0].content
+                ),
+                titleSource="recipe" if reply.recipe else "request",
+            )
         try:
             records = await repository.commit_chat(
                 user,
@@ -207,11 +230,7 @@ class ChatService:
                         conversation,
                         RecordPatch(
                             etag=conversation.etag,
-                            fields={
-                                "activeOperationId": str(operation.id)
-                                if status == "outcomeUnknown"
-                                else None
-                            },
+                            fields=conversation_fields,
                         ),
                     ),
                     (turn, RecordPatch(etag=turn.etag, fields=turn_fields)),
