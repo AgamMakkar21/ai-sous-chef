@@ -687,8 +687,9 @@ def smoke(
         raise DeliveryError("The deployed agent feature flag does not match the reviewed manifest.")
     origin = f"https://{app['defaultHostName']}"
     opener = build_opener(NoRedirect())
-    deadline = time.monotonic() + 300
+    deadline = time.monotonic() + 600
     last_failure = "health"
+    last_reason = "startup not yet checked"
     while time.monotonic() < deadline:
         try:
             for path, expected in (
@@ -714,10 +715,18 @@ def smoke(
                 else:
                     raise DeliveryError("Anonymous access unexpectedly succeeded.")
             break
-        except (HTTPError, URLError, TimeoutError, DeliveryError):
+        except (HTTPError, URLError, TimeoutError, DeliveryError) as exc:
+            if isinstance(exc, HTTPError):
+                last_reason = f"HTTP {exc.code}"
+            elif isinstance(exc, (URLError, TimeoutError)):
+                last_reason = "connection not ready"
+            else:
+                last_reason = "unexpected response or source commit"
             time.sleep(10)
     else:
-        raise DeliveryError(f"{environment} smoke failed at {last_failure} after five minutes.")
+        raise DeliveryError(
+            f"{environment} smoke failed at {last_failure} after ten minutes ({last_reason})."
+        )
     if enabled:
         asyncio.run(chat_smoke(settings))
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:

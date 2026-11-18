@@ -1133,6 +1133,8 @@ class DeliveryTests(unittest.TestCase):
 
         for mode in (
             "ok",
+            "slow_start",
+            "unavailable",
             "agents_enabled",
             "wrong_commit",
             "redirect",
@@ -1148,6 +1150,14 @@ class DeliveryTests(unittest.TestCase):
                 HTTPError("", 302 if mode == "redirect" else 401, "", Message(), None),
                 HTTPError("", 401, "", Message(), None),
             ]
+            if mode == "slow_start":
+                opener.open.side_effect = [
+                    HTTPError("", 503, "", Message(), None),
+                    Response({"status": "ok"}, HEAD),
+                    *opener.open.side_effect,
+                ]
+            elif mode == "unavailable":
+                opener.open.side_effect = HTTPError("", 503, "PRIVATE_CANARY", Message(), None)
             with tempfile.TemporaryDirectory() as directory:
                 with (
                     patch.dict(
@@ -1191,16 +1201,29 @@ class DeliveryTests(unittest.TestCase):
                         delivery,
                         "time",
                         SimpleNamespace(
-                            monotonic=MagicMock(side_effect=[0, 0, 301]),
+                            monotonic=MagicMock(
+                                side_effect=[0, 0, 310, 320]
+                                if mode == "slow_start"
+                                else [0, 0, 601]
+                            ),
                             sleep=MagicMock(),
                         ),
                     ),
                 ):
-                    if mode in {"ok", "agents_enabled"}:
+                    if mode in {"ok", "slow_start", "agents_enabled"}:
                         delivery.smoke()
                     else:
-                        with self.assertRaises(delivery.DeliveryError):
+                        with self.assertRaises(delivery.DeliveryError) as failure:
                             delivery.smoke()
+                        if mode in {"wrong_commit", "unready", "redirect", "unavailable"}:
+                            self.assertIn("after ten minutes", str(failure.exception))
+                            self.assertIn(
+                                "HTTP 503"
+                                if mode == "unavailable"
+                                else "unexpected response or source commit",
+                                str(failure.exception),
+                            )
+                            self.assertNotIn("PRIVATE_CANARY", str(failure.exception))
                     if mode in {"agents_enabled", "chat_failed"}:
                         chat.assert_awaited_once()
                     else:
