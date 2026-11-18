@@ -524,7 +524,7 @@ export default function ConversationPanel({
       <div className="conversation-toolbar">
         <div>
           <p className="eyebrow">YOUR SOUS CHEF</p>
-          <h1>Your conversations</h1>
+          <h1 className="kitchen-title">Your conversations</h1>
           <p>Separate chats. Your kitchen context, kept in its place.</p>
         </div>
         <button

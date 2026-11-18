@@ -309,13 +309,14 @@ main {
   height: 14px;
 }
 
-.kitchen-hero h1 {
+h1.kitchen-title {
   font-family: "Jersey 10", Consolas, "Courier New", monospace;
   font-size: clamp(64px, 8vw, 112px);
   font-weight: 400;
   font-synthesis: none;
   line-height: 0.95;
   letter-spacing: 0;
+  text-transform: uppercase;
   margin: 0 0 20px;
   background: linear-gradient(
     180deg,
@@ -778,7 +779,7 @@ main {
     grid-template-columns: minmax(0, 1.5fr) minmax(250px, 1fr);
     gap: 16px;
   }
-  .kitchen-hero h1 {
+  h1.kitchen-title {
     font-size: clamp(56px, 8vw, 72px);
   }
   .grocery-entry {
@@ -854,7 +855,7 @@ main {
     width: 100%;
     padding: 20px 0 28px;
   }
-  .kitchen-hero h1 {
+  h1.kitchen-title {
     font-size: clamp(52px, 14vw, 80px);
     max-width: 100%;
   }
