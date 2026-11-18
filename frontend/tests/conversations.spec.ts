@@ -260,6 +260,11 @@ test("selecting, switching tabs and reloading preserve the right transcript and 
   await conversations(page);
   await page.goto("/#sous-chef");
   await choose(page, "Quick lunches");
+  const entry = page.locator(".conversation-list .conversation-choice").first();
+  await expect(entry).not.toHaveClass(/cartoon-button/);
+  await expect(entry).toHaveCSS("border-radius", "10px");
+  await expect(entry).toHaveCSS("box-shadow", "none");
+  await expect(entry.locator(".cartoon-highlight")).toHaveCount(0);
   await expect(
     page.getByText("Lemony lunch ideas", { exact: true }),
   ).toBeVisible();

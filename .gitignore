@@ -16,6 +16,7 @@ node_modules/
 frontend/dist/
 frontend/playwright-report/
 frontend/test-results/
+.taste-skill/
 backend/src/sous_chef/static/
 worker/local.settings.json
 worker/release.json

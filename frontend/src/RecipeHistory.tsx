@@ -7,6 +7,7 @@ import {
   type FormEvent,
 } from "react";
 import { ApiError } from "./api";
+import { CartoonButton } from "@/components/ui/cartoon-button";
 import type { Session } from "./profile";
 import RecipeCard from "./RecipeCard";
 import {
@@ -202,13 +203,17 @@ function FeedbackForm({
         <p id={`${id}-note-help`} className="privacy-note">
           Up to 2,000 characters. These notes stay with this recipe.
         </p>
-        <button className="button primary" disabled={!rating || !dirty}>
-          {busy
-            ? "Saving rating..."
-            : current.data.rating
-              ? "Save feedback changes"
-              : "Save rating"}
-        </button>
+        <CartoonButton
+          label={
+            busy
+              ? "Saving rating..."
+              : current.data.rating
+                ? "Save feedback changes"
+                : "Save rating"
+          }
+          type="submit"
+          disabled={!rating || !dirty}
+        />
       </fieldset>
       {error && (
         <p id={`${id}-error`} role="alert">
@@ -216,14 +221,14 @@ function FeedbackForm({
         </p>
       )}
       {needsReview && (
-        <button
+        <CartoonButton
           type="button"
-          className="button secondary"
+          className="secondary"
           disabled={busy}
           onClick={() => void reload()}
         >
           Load saved version
-        </button>
+        </CartoonButton>
       )}
       {notice && <p role="status">{notice}</p>}
     </form>
@@ -294,9 +299,9 @@ function RecipeDetail({
 
   return (
     <section className="history-detail" aria-label="Recipe detail">
-      <button className="text-button" disabled={busy} onClick={onBack}>
+      <CartoonButton className="secondary" disabled={busy} onClick={onBack}>
         &larr; Back to Recipe History
-      </button>
+      </CartoonButton>
       {failed ? (
         <div className="notice" role="alert">
           <h2>Recipe could not be confirmed</h2>
@@ -304,8 +309,8 @@ function RecipeDetail({
             Reload the stored recipe before making changes. No update will be
             replayed.
           </p>
-          <button
-            className="button secondary"
+          <CartoonButton
+            className="secondary"
             onClick={() => {
               setCurrent(null);
               setFailed(false);
@@ -314,7 +319,7 @@ function RecipeDetail({
             }}
           >
             Reload recipe
-          </button>
+          </CartoonButton>
         </div>
       ) : !current ? (
         <p role="status">Loading saved recipe...</p>
@@ -347,13 +352,13 @@ function RecipeDetail({
                 This recipe is planned, not cooked. Confirm only after making
                 it.
               </p>
-              <button
-                className="button primary"
+              <CartoonButton
+                className="primary"
                 disabled={busy}
                 onClick={() => void cook()}
               >
                 {busy ? "Saving..." : "I've cooked this"}
-              </button>
+              </CartoonButton>
             </div>
           ) : (
             <FeedbackForm
@@ -412,9 +417,9 @@ function HistoryList({
             {heading} could not be loaded. Your saved recipes have not been
             replaced.
           </p>
-          <button className="button secondary" onClick={() => refresh(true)}>
+          <CartoonButton className="secondary" onClick={() => refresh(true)}>
             Try again
-          </button>
+          </CartoonButton>
         </div>
       )}
       {page.state.kind === "ready" &&
@@ -433,13 +438,13 @@ function HistoryList({
                 {!pending && (
                   <span className="history-state">{stateLabel(item)}</span>
                 )}
-                <button
-                  className={`button ${pending ? "primary" : "secondary"}`}
+                <CartoonButton
+                  className={`${pending ? "primary" : "secondary"}`}
                   aria-label={`${pending ? "Rate" : "View"} ${item.title}`}
                   onClick={() => onOpen(item.historyId)}
                 >
                   {pending ? "Rate recipe" : "View recipe"}
-                </button>
+                </CartoonButton>
               </li>
             ))}
           </ul>
@@ -451,21 +456,21 @@ function HistoryList({
           </p>
         ))}
       <nav className="conversation-pager" aria-label={`${heading} pages`}>
-        <button
-          className="button secondary"
+        <CartoonButton
+          className="secondary"
           disabled={page.state.kind !== "ready" || page.index === 0}
           onClick={() => page.move(false)}
         >
           Previous
-        </button>
+        </CartoonButton>
         <span>Page {page.index + 1}</span>
-        <button
-          className="button secondary"
+        <CartoonButton
+          className="secondary"
           disabled={page.state.kind !== "ready" || !page.state.page.nextCursor}
           onClick={() => page.move(true)}
         >
           Next
-        </button>
+        </CartoonButton>
       </nav>
     </section>
   );

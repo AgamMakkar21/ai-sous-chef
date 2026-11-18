@@ -1,9 +1,16 @@
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import { viteSingleFile } from "vite-plugin-singlefile";
 
 export default defineConfig({
-  plugins: [react(), viteSingleFile()],
+  plugins: [react(), tailwindcss(), viteSingleFile()],
+  resolve: {
+    alias: {
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
+    },
+  },
   publicDir: false,
   build: {
     outDir: "../backend/src/sous_chef/static",

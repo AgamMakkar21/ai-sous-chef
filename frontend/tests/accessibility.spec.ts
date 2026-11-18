@@ -296,7 +296,7 @@ async function onboarding(page: Page) {
   );
   await expect(
     page.getByRole("heading", {
-      name: "YOUR KITCHEN",
+      name: "YOUR PANTRY",
     }),
   ).toBeVisible();
 }
@@ -334,15 +334,6 @@ for (const theme of ["light", "dark"]) {
     await expect(ingredient).toHaveAccessibleDescription(/1 to 100 characters/);
     await accessible(page, info, "grocery-error");
     await ingredient.fill("");
-    const nutrition = page.getByLabel("USDA ingredient name", { exact: true });
-    await nutrition.fill("%");
-    await page
-      .getByRole("button", { name: "Look up calories", exact: true })
-      .click();
-    await expect(nutrition).toBeFocused();
-    await expect(nutrition).toHaveAttribute("aria-invalid", "true");
-    await expect(nutrition).toHaveAccessibleDescription(/without wildcards/);
-    await accessible(page, info, "nutrition-error");
     await page.getByRole("tab", { name: "Recipe History" }).click();
     await expect(
       page.getByText("No recipes saved yet.", { exact: false }),
@@ -456,8 +447,8 @@ test("keyboard alone completes onboarding, groceries, recipe save/cooking and fe
     exact: true,
   });
   await type(page, ingredient, "Carrots");
-  await expect(ingredient).toHaveCSS("outline-style", "solid");
-  await expect(ingredient).toHaveCSS("outline-width", "2px");
+  await expect(ingredient).toHaveCSS("outline-style", "none");
+  await expect(ingredient).toHaveCSS("border-color", "rgb(251, 191, 36)");
   await page.keyboard.press("Tab");
   await page.keyboard.press("Shift+Tab");
   await expect(ingredient).toBeFocused();
@@ -630,7 +621,7 @@ test("grocery removal restores focus after cancelling or deleting the focused ro
   );
   await expect(ingredient).toBeFocused();
   await expect(ingredient).toHaveAttribute("aria-invalid", "false");
-  await expect(ingredient).toHaveAttribute("aria-describedby", "grocery-help");
+  await expect(ingredient).not.toHaveAttribute("aria-describedby");
   expect(state.groceries).toEqual([]);
 });
 

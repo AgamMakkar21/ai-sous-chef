@@ -2,6 +2,16 @@
 
 Use this document to reproduce the current Sous Chef interface in another chat. Preserve the visual identity and product controls; do not reinterpret it as a new design.
 
+Current implementation updates take priority over the original layout examples below:
+the headline is **YOUR PANTRY**. The welcome paragraphs, hero footnote, footer UI,
+standalone calorie lookup, inspiration card and ingredient-row sprites are removed.
+The pantry now spans the workspace. All action buttons, including secondary actions
+and icon controls, use theme-colored cartoon pills with restrained
+pointer feedback. The three main destinations share one sliding orange navigation
+pill rather than separate buttons. Button-shaped links retain real navigation. Focused text fields use their own yellow
+border, not an outer ring. Keep keyboard actions instant and respect reduced motion.
+See `docs/frontend.md` for the maintained implementation details.
+
 ## Overview
 
 **Direction: a warm pixel kitchen, built around a practical cooking workspace.**
@@ -12,7 +22,7 @@ This is primarily a task-oriented application, not a full-screen marketing landi
 
 ### Locked decisions
 
-- The hero says **YOUR KITCHEN**, with no second phrase or trailing period.
+- The hero says **YOUR PANTRY**, with no second phrase or trailing period.
 - Use **Jersey 10**, weight **400**, for the hero; its glyphs are already thick.
 - Do not substitute Press Start 2P, a thin pixel font, or a bolded monospace approximation.
 - Keep the yellow-to-orange-to-coral headline gradient and hard downward pixel shadow.

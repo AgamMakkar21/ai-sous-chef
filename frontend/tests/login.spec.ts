@@ -121,6 +121,47 @@ test("login themes persist appearance only and tolerate unavailable storage", as
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 });
 
+test("public sign-in controls share the app's cartoon buttons without changing links", async ({
+  page,
+}, info) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/auth/login");
+  for (const theme of ["dark", "light"]) {
+    if (theme === "light")
+      await page.getByRole("button", { name: "Switch to light theme" }).click();
+    const controls = page.locator(".provider-link, .theme-toggle");
+    await expect(controls).toHaveCount(4);
+    for (const control of await controls.all()) {
+      await expect(control).toHaveCSS("border-radius", "9999px");
+      await expect(control).toHaveCSS("border-top-width", "2px");
+      await expect(control).toHaveCSS("min-height", "48px");
+    }
+    const link = page.getByRole("link", {
+      name: "Sign in with Microsoft",
+      exact: true,
+    });
+    await expect(link).toHaveAttribute("href", "/auth/login/aad");
+    await link.hover();
+    if (info.project.name === "desktop") {
+      await expect(link).toHaveCSS("transition-duration", "0.12s");
+      expect(
+        await link.evaluate(
+          (element) => getComputedStyle(element, "::after").transitionDuration,
+        ),
+      ).toBe("0.25s");
+    }
+    await link.focus();
+    await page.keyboard.press("Shift");
+    await expect(link).toHaveCSS("transition-duration", "0s");
+  }
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.getByRole("link", { name: "Sign in with Google" }).hover();
+  await expect(page.locator(".provider-link").first()).toHaveCSS(
+    "transition-duration",
+    "0s",
+  );
+});
+
 test("login is self-contained, responsive and accessible in both themes", async ({
   page,
 }, info) => {

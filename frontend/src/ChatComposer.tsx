@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "./api";
+import { CartoonButton } from "@/components/ui/cartoon-button";
 import {
   CHAT_TIMEOUT_MS,
   closeOperation,
@@ -416,24 +417,22 @@ export default function ChatComposer({
           </p>
         )}
         <div className="chat-actions">
-          <button
-            className="button primary"
+          <CartoonButton
+            label={phase === "sending" ? "Sending..." : "Send request"}
             type="submit"
             disabled={
               locked || unresolved || !historyReady || phase === "failed"
             }
-          >
-            {phase === "sending" ? "Sending..." : "Send request"}
-          </button>
+          />
           {(phase === "uncertain" || phase === "unknown") &&
             !persistedOperationId && (
-              <button
-                className="button secondary"
+              <CartoonButton
+                className="secondary"
                 type="button"
                 onClick={() => void check()}
               >
                 {operationId ? "Check saved status" : "Check this request"}
-              </button>
+              </CartoonButton>
             )}
         </div>
       </form>
@@ -453,8 +452,8 @@ export default function ChatComposer({
                       I couldn't complete that recipe request. No completed
                       answer was saved.
                     </p>
-                    <button
-                      className="button secondary"
+                    <CartoonButton
+                      className="secondary"
                       disabled={
                         working ||
                         locked ||
@@ -472,7 +471,7 @@ export default function ChatComposer({
                       }
                     >
                       Retry saved request
-                    </button>
+                    </CartoonButton>
                   </>
                 ) : (
                   <>
@@ -482,36 +481,36 @@ export default function ChatComposer({
                         : "The outcome is unknown. Closing this attempt marks it failed without generating another answer. Retry remains a separate action."}
                     </p>
                     {turn.operationId && (
-                      <button
-                        className="button secondary"
+                      <CartoonButton
+                        className="secondary"
                         disabled={working}
                         onClick={() =>
                           void check(turn.operationId ?? undefined)
                         }
                       >
                         Check saved status
-                      </button>
+                      </CartoonButton>
                     )}
                     {turn.status === "outcomeUnknown" && turn.operationId && (
-                      <button
-                        className="button secondary"
+                      <CartoonButton
+                        className="secondary"
                         disabled={working}
                         onClick={() => void close(turn.operationId!)}
                       >
                         Close interrupted request without retrying
-                      </button>
+                      </CartoonButton>
                     )}
                   </>
                 )}
               </div>
             ))}
-          <button
-            className="text-button"
+          <CartoonButton
+            className="secondary"
             disabled={working}
             onClick={onRefresh}
           >
             Check saved history
-          </button>
+          </CartoonButton>
         </section>
       )}
       <p className="privacy-note">

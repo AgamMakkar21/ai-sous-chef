@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { ApiError } from "./api";
+import { CartoonButton } from "@/components/ui/cartoon-button";
 import type { Session } from "./profile";
 import { changeRecipe, type RecipeSnapshot } from "./recipeHistoryApi";
 
@@ -73,9 +74,9 @@ export default function RecipeActions({
   return (
     <div>
       <div className="recipe-actions">
-        <button
+        <CartoonButton
+          label={saved?.data.state === "cooked" ? "Marked cooked" : "Cook This"}
           type="button"
-          className="button primary"
           disabled={
             busy ||
             disabled ||
@@ -83,17 +84,15 @@ export default function RecipeActions({
             pendingCook === false
           }
           onClick={() => void save(true)}
-        >
-          {saved?.data.state === "cooked" ? "Marked cooked" : "Cook This"}
-        </button>
-        <button
+        />
+        <CartoonButton
           type="button"
-          className="button secondary"
+          className="secondary"
           disabled={busy || disabled || !!saved || pendingCook === true}
           onClick={() => void save(false)}
         >
           {saved ? "Saved to Recipe History" : "Save to Cook"}
-        </button>
+        </CartoonButton>
       </div>
       <p>
         Save to Cook keeps this planned. Cook This confirms you cooked it and

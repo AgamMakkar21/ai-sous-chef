@@ -50,25 +50,73 @@ including the recorded walkthrough, browser evidence and testing limitations.
 ## Visual design
 
 The [supplied design guide](../AI%20SOUS%20DESIGN.md) defines the compact pixel
-kitchen: **YOUR KITCHEN** in Jersey 10, warm orange actions, original inline
-produce sprites, underlined tabs, and a two-column groceries/nutrition workspace.
+kitchen: **YOUR PANTRY** in Jersey 10, warm orange actions, original inline
+produce sprites, one sliding navigation pill, and a full-width grocery workspace.
 `frontend/src/kitchen.css` applies the design tokens and responsive presentation
 over the existing component styles, including chat, history, and the full profile.
 Light-mode functional accents are darkened for readable text contrast; decorative
 produce and headline colors retain the reference palette.
 
 This is a visual adaptation, not the guide's standalone demo. Authentication,
-one server-saved inventory, profile safety fields, recipe workflows, and live USDA
-requests are unchanged. There are no sample kitchens, reset controls, canned
-replies, or browser-stored account data. The inspiration action opens the existing
-Sous Chef tab without sending a request.
+one server-saved inventory, profile safety fields, recipe workflows, and recipe
+nutrition are unchanged. There are no sample kitchens, reset controls, canned
+replies, or browser-stored account data. The promotional welcome text, footer,
+row decorations, inspiration card and standalone ingredient-calorie form have
+been removed. Recipe nutrition and its backend APIs remain unchanged.
 
 Dark is the default. The theme button persists only `sous-chef-theme` in browser
 storage and still works for the current page when storage is unavailable.
 `?scoutTheme=light` and `?scoutTheme=dark` override that preference for previews.
 The supplied Jersey 10 headline subset and its SIL Open Font License are bundled
-inside the existing single-file build; no font CDN is contacted. The license is
-also readable in the footer. Rebuild the subset before changing the headline.
+inside the existing single-file build; no font CDN is contacted. The license
+remains in an inert template rather than a visible footer. Rebuild the subset
+before changing the headline.
+
+### Buttons, motion and focus
+
+The full-width Add ingredient action uses the supplied hover shine.
+Its higher-contrast sheen takes 500ms to cross the wider surface, matching the
+supplied button example without delaying clicks. Keyboard and reduced-motion
+interactions do not animate the sweep.
+
+`frontend/src/components/ui/cartoon-button.tsx` adapts the supplied cartoon button
+to native button props, refs and form behavior. Every action, including secondary
+actions, retries, pagination, profile controls, icon buttons
+and tab triggers, uses this control. Button-shaped sign-in/sign-out links share its
+label/highlight treatment while remaining real links. Active tabs retain their
+ARIA state inside one shared rail. A single orange pill slides between the three
+destinations over 200ms, with clipped visual label copies keeping text readable
+throughout the slide. These copies are hidden from assistive technology; the
+original Radix tab controls retain their keyboard and navigation behavior.
+Keyboard and reduced-motion selection changes remain instant, and only the
+navigation indicator moves, not the functional page content. `demo.tsx` contains an unmounted
+example. `@/components/ui` resolves through TypeScript and Vite aliases;
+`components.json` records that conventional shadcn-compatible location so shared
+controls are not mixed with page components.
+Chat-history entries are the deliberate exception: they remain simple selectable
+rows with their original active-state highlight, not cartoon pills or shine.
+
+The app already uses TypeScript. Tailwind v4 utilities are connected through
+`@tailwindcss/vite`, without Preflight or replacement of the chosen design tokens.
+Run `npm ci` in `frontend` to restore them. The component uses the current theme's
+accessible action colors by default; `color` accepts a Tailwind background class.
+It needs no provider, icon library, stock imagery or additional runtime dependency.
+This custom control does not install stock shadcn primitives or their `cn` helper.
+For a fresh project's stock setup, use `npx shadcn@latest init`, then
+`npx shadcn@latest add <component>`; review generated global styles rather than
+overwriting this app's theme.
+
+Pointer feedback uses 120ms transform transitions, a 250ms highlight sweep and
+200ms theme-icon/success feedback. Hover movement requires a fine hover pointer.
+Keyboard-triggered actions are instant; input modality is tracked only in a DOM
+attribute, never stored or sent to the server. Reduced motion removes movement
+and retains only a shorter success fade. Grocery rows, chat text and functional
+data never animate on entry or while updating.
+
+Focused textboxes, number fields, selects and textareas use their own yellow
+border without an outer outline or layout shift. Light mode uses a darker gold
+for contrast. Buttons, tabs, checkboxes and other keyboard controls retain
+visible focus outlines.
 
 `design.spec.ts` checks the font, theme behavior, reduced motion, and both themes
 at 320, 390, 680, 768, 1024, and 1440 pixels. Existing grocery, profile, recipe,
@@ -82,6 +130,10 @@ Jersey 10 headline, and appearance preference. A centered card stacks equal-widt
 Microsoft, Google, and GitHub links with inline provider logos. A decorative
 pixel frying pan flips an egg below the card once over four seconds; reduced
 motion disables the animation. All sign-in links work without JavaScript.
+Provider links and the theme toggle match the app's cartoon-pill borders, hard
+shadows, pointer press/lift and shine. The independently served HTML mirrors these
+small CSS rules rather than importing the protected React app; provider URLs,
+script-free navigation and the dynamically hashed CSP remain unchanged.
 
 The backend renders `backend/src/sous_chef/templates/login.html` with a packaged
 copy of the existing font and its full license. These resources intentionally
@@ -167,6 +219,15 @@ warn before discarding an edited draft.
 The Groceries tab reads the full bounded collection with its ETag. Quick entry
 accepts an ingredient name and optional quantity/unit. Each saved row offers
 keyboard-accessible quantity editing, +/- controls and confirmed deletion.
+Edited quantities autosave after 600ms without further typing; Enter saves
+pending valid edits immediately. There is no separate Save quantity button.
+Unchanged and invalid values are not written. Invalid input has an associated
+error, and clearing a quantity saves it as unknown.
+Pending changes block navigation and other pantry actions. Multiple edited rows
+save sequentially with a fresh collection ETag after each confirmed write.
+The active field remains focused and becomes read-only during a write.
+A failure discards unsent edits, restores confirmed values and requires the
+existing explicit reload/review; no queued update is replayed automatically.
 Blank quantity means unknown, not zero or one; +/- is disabled until a quantity
 is explicitly supplied. Decrementing to zero or below asks for removal, and
 cancelling performs no write. Units are never converted or merged.
@@ -197,13 +258,6 @@ identity change clears the grocery view through the existing sign-in flow.
 No additional environment settings, services or AI dependencies are required;
 reuse [grocery API setup](groceries.md). Grocery data and drafts stay in memory.
 The layout wraps long names/labels and stacks quick entry on narrow screens.
-
-The ingredient-calorie lookup distinguishes a stale CSRF token from a USDA failure.
-On `csrf_failed`, it renews the session, verifies the same account and updates the
-shell's in-memory token. It preserves the ingredient input but requires another
-explicit lookup; neither the lookup nor a grocery mutation is replayed.
-Renewal failure is visible. Expiry or a changed account clears private content
-through the existing sign-in flow, and late responses after navigation are ignored.
 
 ## Conversation navigation (ASC-39)
 

@@ -112,26 +112,6 @@ export function KitchenIcon({ name }: { name: keyof typeof icons }) {
   );
 }
 
-export function IngredientArt({ name }: { name: string }) {
-  const ingredient = name.toLowerCase();
-  const kind = /tomato|pepper|apple|strawber/.test(ingredient)
-    ? "tomato"
-    : /carrot|sweet potato/.test(ingredient)
-      ? "carrot"
-      : /avocado/.test(ingredient)
-        ? "avocado"
-        : /lemon|orange|lime/.test(ingredient)
-          ? "lemon"
-          : /broccoli|spinach|basil|lettuce/.test(ingredient)
-            ? "broccoli"
-            : "pot";
-  return (
-    <span className="ingredient-art" aria-hidden="true">
-      <PixelArt kind={kind} />
-    </span>
-  );
-}
-
 export function KitchenHero() {
   return (
     <section className="kitchen-hero" aria-labelledby="kitchen-title">
@@ -139,15 +119,7 @@ export function KitchenHero() {
         <p className="eyebrow">
           <KitchenIcon name="flame" /> DINNER STARTS HERE
         </p>
-        <h1 id="kitchen-title">YOUR KITCHEN</h1>
-        <p className="welcome-copy">
-          What you&apos;ve got is a pretty good place to start.
-          <br />
-          Add your groceries. Find your next favorite.
-        </p>
-        <p className="hero-footnote">
-          LESS FOOD WASTE <span>+</span> MORE &quot;I MADE THAT&quot;
-        </p>
+        <h1 id="kitchen-title">YOUR PANTRY</h1>
       </div>
       <div className="produce-scene" aria-hidden="true">
         {(
