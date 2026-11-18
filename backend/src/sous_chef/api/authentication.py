@@ -15,6 +15,7 @@ from sous_chef.adapters.app_service_auth import (
     SESSION_COOKIE,
     AppServiceSessionVerifier,
 )
+from sous_chef.api.login_page import render_login_page
 from sous_chef.api.problems import problem_response
 from sous_chef.domain.authorization import AuthenticatedUser as AuthenticatedUser
 from sous_chef.settings import Settings
@@ -174,18 +175,12 @@ def create_auth_router(settings: Settings) -> APIRouter:
                 "Use the dev App Service login or a signed consumer token for local API testing.",
             )
         if settings.auth_mode == "app_service":
-            links = "".join(
-                f'<li><a href="/auth/login/{provider}">Sign in with {label}</a></li>'
-                for provider, label in PROVIDERS.items()
-            )
+            document, policy = render_login_page()
             return HTMLResponse(
-                '<!doctype html><html lang="en"><head><meta charset="utf-8">'
-                "<title>Sign in - AI Sous Chef</title></head>"
-                f"<body><h1>Sign in to AI Sous Chef</h1><ul>{links}</ul></body></html>",
+                document,
                 headers={
                     "Cache-Control": "no-store",
-                    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; "
-                    "base-uri 'none'; form-action 'none'",
+                    "Content-Security-Policy": policy,
                     "X-Content-Type-Options": "nosniff",
                     "Referrer-Policy": "no-referrer",
                 },
