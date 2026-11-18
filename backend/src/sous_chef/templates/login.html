@@ -101,6 +101,7 @@
         );
         --cp-coral: var(--cp-danger);
         --cp-action-text: var(--cp-orange);
+        --cp-button-sheen: rgba(255, 255, 255, 0.16);
         --cp-bg-elevated: color-mix(in srgb, var(--cp-bg) 97%, var(--cp-text));
         --cp-surface: color-mix(in srgb, var(--cp-bg) 95%, var(--cp-text));
         --cp-surface-soft: color-mix(in srgb, var(--cp-bg) 92%, var(--cp-text));
@@ -132,6 +133,7 @@
           var(--cp-text)
         );
         --cp-pixel-shadow: #e7bcb8;
+        --cp-button-sheen: rgba(0, 0, 0, 0.08);
       }
       :root {
         --cp-clear: color-mix(in srgb, var(--cp-bg) 0%, transparent);
@@ -148,6 +150,11 @@
         --cp-google-green: #34a853;
         --cp-google-yellow: #fbbc05;
         --cp-google-red: #ea4335;
+        --cp-button-edge: #262626;
+        --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+        --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+        --motion-press: 120ms;
+        --motion-highlight: 250ms;
       }
       @font-face {
         font-family: "Jersey 10";
@@ -246,13 +253,11 @@
       .theme-toggle {
         display: grid;
         place-items: center;
-        min-width: 44px;
-        min-height: 44px;
+        min-width: 48px;
+        min-height: 48px;
         padding: 10px;
         background: var(--cp-bg-elevated);
         color: var(--cp-text);
-        border: 1px solid var(--cp-border);
-        border-radius: 10px;
       }
       .theme-toggle[hidden] {
         display: none;
@@ -346,30 +351,76 @@
         grid-template-columns: 24px 1fr 24px;
         align-items: center;
         gap: 12px;
-        min-height: 52px;
+        min-height: 48px;
         padding: 12px 16px;
-        border: 1px solid var(--cp-border-strong);
-        border-radius: 10px;
         background: var(--cp-bg-elevated);
         color: var(--cp-text);
         text-decoration: none;
         font-size: 14px;
-        font-weight: 600;
+        font-weight: 700;
         text-align: center;
-        transition:
-          background-color 160ms,
-          border-color 160ms;
+      }
+      .provider-link,
+      .theme-toggle {
+        position: relative;
+        isolation: isolate;
+        border: 2px solid var(--cp-button-edge);
+        border-radius: 9999px;
+        box-shadow: 0 3px 0 var(--cp-button-edge);
+        overflow: hidden;
+      }
+      .provider-link > svg,
+      .provider-link > span,
+      .theme-toggle > svg {
+        position: relative;
+        z-index: 1;
+      }
+      .provider-link::after,
+      .theme-toggle::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background: linear-gradient(
+          110deg,
+          transparent 30%,
+          var(--cp-button-sheen) 45%,
+          transparent 60%
+        );
+        transform: translateX(-150%);
       }
       .provider-logo {
         width: 20px;
         height: 20px;
       }
       .provider-link:hover {
-        border-color: var(--cp-action-text);
         background: var(--cp-surface-soft);
       }
-      .provider-link:active {
-        transform: translateY(1px);
+      @media (prefers-reduced-motion: no-preference) {
+        html[data-input="pointer"] .provider-link,
+        html[data-input="pointer"] .theme-toggle {
+          transition: transform var(--motion-press) var(--ease-out);
+        }
+        html[data-input="pointer"] .provider-link:active,
+        html[data-input="pointer"] .theme-toggle:active {
+          transform: scale(0.97);
+          box-shadow: none;
+        }
+      }
+      @media (prefers-reduced-motion: no-preference) and (hover: hover) and (pointer: fine) {
+        html[data-input="pointer"] .provider-link:hover:not(:active),
+        html[data-input="pointer"] .theme-toggle:hover:not(:active) {
+          transform: translateY(-2px);
+          box-shadow: 0 4px 0 var(--cp-button-edge);
+        }
+        html[data-input="pointer"] .provider-link::after,
+        html[data-input="pointer"] .theme-toggle::after {
+          transition: transform var(--motion-highlight) var(--ease-in-out);
+        }
+        html[data-input="pointer"] .provider-link:hover::after,
+        html[data-input="pointer"] .theme-toggle:hover::after {
+          transform: translateX(150%);
+        }
       }
       .account-note {
         margin-top: 24px;
@@ -717,6 +768,20 @@
     </footer>
     <script>
       (() => {
+        const root = document.documentElement;
+        const pointer = () => {
+          if (root.dataset.input !== "pointer") root.dataset.input = "pointer";
+        };
+        window.addEventListener("pointerdown", pointer, true);
+        window.addEventListener("pointermove", pointer, true);
+        window.addEventListener(
+          "keydown",
+          () => {
+            if (root.dataset.input !== "keyboard")
+              root.dataset.input = "keyboard";
+          },
+          true,
+        );
         const button = document.getElementById("theme-toggle");
         const label = () =>
           button.setAttribute(

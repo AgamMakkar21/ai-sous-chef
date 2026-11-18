@@ -3,12 +3,12 @@ import * as Tabs from "@radix-ui/react-tabs";
 import { ApiError, getProfile, getSession } from "./api";
 import ProfileForm from "./ProfileForm";
 import Groceries from "./Groceries";
-import IngredientLookup from "./IngredientLookup";
 import ConversationPanel from "./ConversationPanel";
 import RecipeHistory from "./RecipeHistory";
 import { KitchenHero, KitchenIcon, PixelArt } from "./KitchenArt";
 import fontLicense from "./assets/Jersey-10-OFL.txt?raw";
 import type { Session, Snapshot } from "./profile";
+import { CartoonButton, CartoonLink } from "@/components/ui/cartoon-button";
 
 type State =
   | { kind: "loading" }
@@ -31,6 +31,15 @@ const tabs = [
   },
 ] as const;
 
+function TabLabel({ tab }: { tab: (typeof tabs)[number] }) {
+  return (
+    <>
+      <KitchenIcon name={tab.id} />
+      <span>{tab.name}</span>
+    </>
+  );
+}
+
 function initialTab(): string {
   const hash = window.location.hash.slice(1);
   return tabs.some((tab) => tab.id === hash) ? hash : "groceries";
@@ -51,6 +60,25 @@ export default function App() {
   const profileButton = useRef<HTMLButtonElement>(null);
   const main = useRef<HTMLElement>(null);
   const returnFocus = useRef<"profile" | "main" | null>(null);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const pointer = () => {
+      if (root.dataset.input !== "pointer") root.dataset.input = "pointer";
+    };
+    const keyboard = () => {
+      if (root.dataset.input !== "keyboard") root.dataset.input = "keyboard";
+    };
+    window.addEventListener("pointerdown", pointer, true);
+    window.addEventListener("pointermove", pointer, true);
+    window.addEventListener("keydown", keyboard, true);
+    return () => {
+      window.removeEventListener("pointerdown", pointer, true);
+      window.removeEventListener("pointermove", pointer, true);
+      window.removeEventListener("keydown", keyboard, true);
+      delete root.dataset.input;
+    };
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -95,9 +123,10 @@ export default function App() {
       if (!leaving.current) event.preventDefault();
     };
     if (
-      !editing &&
-      (selected === "sous-chef" || selected === "recipe-history") &&
-      (dirty || busy)
+      busy ||
+      (!editing &&
+        (selected === "sous-chef" || selected === "recipe-history") &&
+        dirty)
     )
       window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
@@ -208,19 +237,19 @@ export default function App() {
           {ready && (
             <>
               {completed && (
-                <button
+                <CartoonButton
                   ref={profileButton}
-                  className="button secondary"
+                  className="secondary"
                   disabled={busy}
                   onClick={openProfile}
                   aria-label="Cooking profile"
                 >
                   <KitchenIcon name="profile" />
                   <span className="profile-label">Cooking profile</span>
-                </button>
+                </CartoonButton>
               )}
-              <a
-                className="sign-out"
+              <CartoonLink
+                className="secondary sign-out"
                 href="/auth/logout"
                 aria-disabled={busy}
                 onClick={(event) => {
@@ -229,16 +258,16 @@ export default function App() {
                 }}
               >
                 Sign out
-              </a>
+              </CartoonLink>
             </>
           )}
-          <button
-            className="button secondary theme-toggle"
+          <CartoonButton
+            className="secondary theme-toggle"
             aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
             onClick={toggleTheme}
           >
             <KitchenIcon name={theme === "dark" ? "sun" : "moon"} />
-          </button>
+          </CartoonButton>
         </div>
       </header>
       <Tabs.Root
@@ -246,16 +275,34 @@ export default function App() {
         onValueChange={selectTab}
         activationMode="automatic"
       >
-        <Tabs.List className="tab-list" aria-label="Your kitchen">
+        <Tabs.List
+          className="tab-list"
+          aria-label="Your kitchen"
+          data-active={selected}
+          data-inactive={!ready || !completed || editing}
+        >
+          <span className="tab-indicator" aria-hidden="true">
+            <span className="tab-active-labels">
+              {tabs.map((tab) => (
+                <span
+                  className="cartoon-label tab-indicator-label"
+                  key={tab.id}
+                >
+                  <TabLabel tab={tab} />
+                </span>
+              ))}
+            </span>
+          </span>
           {tabs.map((tab) => (
             <Tabs.Trigger
-              className="tab"
+              asChild
               value={tab.id}
               key={tab.id}
               disabled={!completed || busy}
             >
-              <KitchenIcon name={tab.id} />
-              {tab.name}
+              <CartoonButton className="tab" hasHighlight={false}>
+                <TabLabel tab={tab} />
+              </CartoonButton>
             </Tabs.Trigger>
           ))}
         </Tabs.List>
@@ -274,15 +321,15 @@ export default function App() {
                 We could not confirm your session or saved profile. Nothing has
                 been replaced with defaults.
               </p>
-              <button
-                className="button primary"
+              <CartoonButton
+                className="primary"
                 onClick={() => {
                   setState({ kind: "loading" });
                   setAttempt((value) => value + 1);
                 }}
               >
                 Try again
-              </button>
+              </CartoonButton>
             </section>
           )}
           {state.kind === "signed-out" && (
@@ -294,9 +341,9 @@ export default function App() {
                 profile details and unsaved changes have been cleared. No save
                 will be replayed automatically.
               </p>
-              <a className="button primary" href="/auth/login">
+              <CartoonLink className="primary" href="/auth/login">
                 Sign in
-              </a>
+              </CartoonLink>
             </section>
           )}
           {ready && showProfile && (
@@ -362,56 +409,19 @@ export default function App() {
                   ) : (
                     <>
                       <KitchenHero />
-                      <div className="kitchen-workspace">
-                        <Groceries
-                          session={ready.session}
-                          onExpired={expire}
-                          onBusy={setBusy}
-                          onSession={(session) =>
-                            setState((current) =>
-                              current.kind === "ready" &&
-                              current.session.userId === session.userId
-                                ? { ...current, session }
-                                : current,
-                            )
-                          }
-                        />
-                        <aside
-                          className="kitchen-aside"
-                          aria-label="Cooking inspiration and nutrition"
-                        >
-                          <IngredientLookup
-                            key={ready.session.userId}
-                            session={ready.session}
-                            onExpired={expire}
-                            onSession={(session) =>
-                              setState((current) =>
-                                current.kind === "ready" &&
-                                current.session.userId === session.userId
-                                  ? { ...current, session }
-                                  : current,
-                              )
-                            }
-                          />
-                          <section className="card inspiration">
-                            <PixelArt kind="lemon" />
-                            <p className="eyebrow">BIG FLAVOR. SMALL EFFORT.</p>
-                            <h2>A fridge full of possibilities.</h2>
-                            <p>
-                              Let your ingredients lead the way. Bring them to
-                              your sous chef for a little inspiration.
-                            </p>
-                            <button
-                              className="text-button"
-                              disabled={busy}
-                              onClick={() => selectTab("sous-chef")}
-                            >
-                              Let&apos;s cook something
-                              <KitchenIcon name="arrow" />
-                            </button>
-                          </section>
-                        </aside>
-                      </div>
+                      <Groceries
+                        session={ready.session}
+                        onExpired={expire}
+                        onBusy={setBusy}
+                        onSession={(session) =>
+                          setState((current) =>
+                            current.kind === "ready" &&
+                            current.session.userId === session.userId
+                              ? { ...current, session }
+                              : current,
+                          )
+                        }
+                      />
                     </>
                   )}
                 </Tabs.Content>
@@ -420,14 +430,7 @@ export default function App() {
           )}
         </main>
       </Tabs.Root>
-      <footer className="app-footer">
-        <span>Thoughtful cooking. Your preferences, respected.</span>
-        <span>Profile updates never make AI calls.</span>
-        <details className="font-license">
-          <summary>Jersey 10 font license</summary>
-          <pre>{fontLicense}</pre>
-        </details>
-      </footer>
+      <template data-font-license="Jersey 10">{fontLicense}</template>
     </div>
   );
 }

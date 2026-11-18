@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError, getProfile, getSession, saveProfile } from "./api";
+import { CartoonButton } from "@/components/ui/cartoon-button";
 import {
   changedFields,
   fields,
@@ -403,13 +404,13 @@ export default function ProfileForm({
                 A failed response does not always mean a write failed. We will
                 not repeat the save automatically.
               </p>
-              <button
+              <CartoonButton
                 type="button"
-                className="button secondary"
+                className="secondary"
                 onClick={() => void loadLatest()}
               >
                 Load latest saved profile
-              </button>
+              </CartoonButton>
               {latest && (
                 <>
                   <details open>
@@ -456,29 +457,29 @@ export default function ProfileForm({
             </p>
             <div className="action-buttons">
               {!onboarding && (
-                <button
-                  className="button secondary"
+                <CartoonButton
+                  className="secondary"
                   type="button"
                   onClick={onCancel}
                 >
                   Cancel
-                </button>
+                </CartoonButton>
               )}
-              <button
-                className="button primary"
+              <CartoonButton
+                label={
+                  busy
+                    ? "Working..."
+                    : onboarding
+                      ? "Save and open my kitchen"
+                      : "Save profile"
+                }
                 type="submit"
                 disabled={
                   busy ||
                   (blocked && (!latest || !reviewed)) ||
                   (!onboarding && !changed.length)
                 }
-              >
-                {busy
-                  ? "Working..."
-                  : onboarding
-                    ? "Save and open my kitchen"
-                    : "Save profile"}
-              </button>
+              />
             </div>
           </div>
         </fieldset>

@@ -254,6 +254,12 @@ test("save, cook, rate and edit round-trip through history without application r
   await expect(
     page.getByRole("radio", { name: "Liked", exact: true }),
   ).toBeVisible();
+  const confirmation = page.locator(".success-notice");
+  for (const reducedMotion of ["no-preference", "reduce"] as const) {
+    await page.emulateMedia({ reducedMotion });
+    await expect(confirmation).toHaveCSS("opacity", "1");
+    await expect(confirmation).toHaveCSS("transition-duration", "0s");
+  }
   await page.getByRole("radio", { name: "Liked", exact: true }).focus();
   await page.keyboard.press("Space");
   await page

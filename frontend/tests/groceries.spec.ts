@@ -121,6 +121,115 @@ function row(page: Page, name = "Milk") {
     .filter({ has: page.getByRole("heading", { name, exact: true }) });
 }
 
+async function pauseTypingClock(page: Page) {
+  await page.clock.install({ time: new Date("2026-11-18T20:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-11-18T20:00:01Z"));
+}
+
+test("quantity autosave coalesces typing, retains focus and persists after reload", async ({
+  page,
+}) => {
+  const state = await backend(page, [milk]);
+  await pauseTypingClock(page);
+  await page.goto("/");
+  const input = page.getByLabel("Quantity for Milk", { exact: true });
+  await input.fill("3");
+  await page.clock.runFor(300);
+  await input.fill("3.125");
+  await expect(page.getByRole("button", { name: "Save quantity" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("tab", { name: "Sous Chef" })).toBeDisabled();
+  await page.clock.runFor(599);
+  expect(state.writes).toEqual([]);
+  await page.clock.runFor(1);
+  await expect(row(page).locator(".grocery-amount")).toHaveText("3.125 l");
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("3.125");
+  await expect(input).not.toHaveAttribute("readonly");
+  expect(state.writes).toHaveLength(1);
+  expect(state.writes[0]?.body).toEqual({ quantity: 3.125 });
+  await page.clock.runFor(1000);
+  expect(state.writes).toHaveLength(1);
+  await page.reload();
+  await expect(input).toHaveValue("3.125");
+});
+
+for (const fails of [false, true]) {
+  test(`queued quantity autosaves ${fails ? "stop after a failure without replay" : "use fresh revisions sequentially"}`, async ({
+    page,
+  }) => {
+    const state = await backend(page, [
+      milk,
+      {
+        groceryId: "22222222-2222-4222-8222-222222222222",
+        name: "Rice",
+        quantity: 1,
+        unit: "kg",
+      },
+    ]);
+    await pauseTypingClock(page);
+    await page.goto("/");
+    if (fails) state.failure = { status: 503 };
+    await page.getByLabel("Quantity for Milk", { exact: true }).fill("8");
+    await page.getByLabel("Quantity for Rice", { exact: true }).fill("4");
+    await page.clock.runFor(600);
+    if (fails) {
+      await expect(page.getByRole("alert")).toContainText(
+        "Unable to update your groceries",
+      );
+      await expect(
+        page.getByLabel("Quantity for Milk", { exact: true }),
+      ).toHaveValue("2");
+      await expect(
+        page.getByLabel("Quantity for Rice", { exact: true }),
+      ).toHaveValue("1");
+      await page.clock.runFor(5000);
+      await page.getByRole("button", { name: "Retry", exact: true }).click();
+      await expect(
+        page.getByText("Latest saved groceries loaded.", { exact: false }),
+      ).toBeVisible();
+      await page.clock.runFor(5000);
+      expect(state.writes).toHaveLength(1);
+    } else {
+      await expect(row(page).locator(".grocery-amount")).toHaveText("8 l");
+      await expect(row(page, "Rice").locator(".grocery-amount")).toHaveText(
+        "4 kg",
+      );
+      expect(state.writes.map((write) => write.headers["if-match"])).toEqual([
+        '"groceries-1"',
+        '"groceries-2"',
+      ]);
+    }
+  });
+}
+
+test("invalid and unchanged quantities never autosave, while clearing means unknown", async ({
+  page,
+}) => {
+  const state = await backend(page, [milk]);
+  await pauseTypingClock(page);
+  await page.goto("/");
+  const input = page.getByLabel("Quantity for Milk", { exact: true });
+  await input.fill("1.2345");
+  await page.clock.runFor(1000);
+  await expect(input).toHaveAttribute("aria-invalid", "true");
+  await expect(input).toHaveAccessibleDescription(/up to 3 decimal places/);
+  expect(state.writes).toEqual([]);
+  await input.fill("8");
+  await page.clock.runFor(300);
+  await input.fill("2");
+  await page.clock.runFor(1000);
+  expect(state.writes).toEqual([]);
+  await input.fill("");
+  await page.clock.runFor(600);
+  await expect(row(page).locator(".grocery-amount")).toHaveText(
+    "Quantity unknown l",
+  );
+  expect(state.writes).toHaveLength(1);
+  expect(state.writes[0]?.body).toEqual({ quantity: null });
+});
+
 test("keyboard add, change and delete persist after reload", async ({
   page,
 }) => {
@@ -175,6 +284,7 @@ for (const form of ["add", "edit"] as const) {
   test(`${form} quantity arrows use whole units and keep typed fractions`, async ({
     page,
   }) => {
+    await pauseTypingClock(page);
     const state = await backend(page, form === "edit" ? [milk] : []);
     await page.goto("/");
     if (form === "add") {

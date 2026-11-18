@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "./api";
+import { CartoonButton } from "@/components/ui/cartoon-button";
 import ChatComposer from "./ChatComposer";
 import {
   createConversation,
@@ -35,21 +36,21 @@ function Pager({
 }) {
   return (
     <nav className="conversation-pager" aria-label={`${noun} pages`}>
-      <button
-        className="button secondary"
+      <CartoonButton
+        className="secondary"
         disabled={!ready || index === 0}
         onClick={() => move(false)}
       >
         Earlier {noun}
-      </button>
+      </CartoonButton>
       <span>Page {index + 1}</span>
-      <button
-        className="button secondary"
+      <CartoonButton
+        className="secondary"
         disabled={!ready || !next}
         onClick={() => move(true)}
       >
         {noun === "chats" ? "More chats" : "Later messages"}
-      </button>
+      </CartoonButton>
     </nav>
   );
 }
@@ -148,13 +149,13 @@ function Transcript({
         <h2 id="transcript-title" ref={heading} tabIndex={-1}>
           {title}
         </h2>
-        <button
-          className="text-button"
+        <CartoonButton
+          className="secondary"
           disabled={blocked || recipeBusy || chatBusy}
           onClick={refresh}
         >
           Refresh history
-        </button>
+        </CartoonButton>
       </div>
       {history.state.kind === "loading" && (
         <p role="status">Loading messages...</p>
@@ -168,8 +169,8 @@ function Transcript({
                 ? "This history page has expired or changed. Restart from the first page."
                 : "Messages could not be loaded. No history has been replaced with an empty chat."}
           </p>
-          <button
-            className="button secondary"
+          <CartoonButton
+            className="secondary"
             onClick={() =>
               history.refresh(
                 history.state.kind === "failed" && history.state.status === 400,
@@ -177,7 +178,7 @@ function Transcript({
             }
           >
             Try history again
-          </button>
+          </CartoonButton>
         </div>
       )}
       {history.state.kind === "ready" &&
@@ -527,21 +528,19 @@ export default function ConversationPanel({
           <h1 className="kitchen-title">Your conversations</h1>
           <p>Separate chats. Your kitchen context, kept in its place.</p>
         </div>
-        <button
-          className="button primary"
+        <CartoonButton
+          label="New Chat"
           disabled={!navigation || deleting || sending}
           onClick={create}
-        >
-          New Chat
-        </button>
+        />
         {selected && !draftId && (
-          <button
-            className="button secondary"
+          <CartoonButton
+            className="secondary"
             disabled={deleting || sending}
             onClick={() => void remove()}
           >
             {deleting ? "Deleting chat..." : "Delete chat"}
-          </button>
+          </CartoonButton>
         )}
       </div>
       {storageNotice && (
@@ -557,36 +556,36 @@ export default function ConversationPanel({
       {initializationFailed && (
         <div className="notice" role="alert">
           <p>Chat navigation could not be initialized.</p>
-          <button
-            className="button secondary"
+          <CartoonButton
+            className="secondary"
             onClick={() => {
               setInitializationFailed(false);
               setInitialization((value) => value + 1);
             }}
           >
             Retry navigation
-          </button>
+          </CartoonButton>
         </div>
       )}
-      <button
-        className="button secondary sidebar-toggle"
+      <CartoonButton
+        className="secondary sidebar-toggle"
         aria-expanded={sidebarOpen}
         aria-controls="conversation-sidebar"
         onClick={() => setSidebarOpen((value) => !value)}
       >
         Conversations
-      </button>
+      </CartoonButton>
       <div className="conversation-layout card" data-sidebar-open={sidebarOpen}>
         <aside id="conversation-sidebar" hidden={!sidebarOpen}>
           <div className="conversation-heading">
             <h2>Chats</h2>
-            <button
-              className="text-button"
+            <CartoonButton
+              className="secondary"
               disabled={deleting || sending}
               onClick={() => chats.refresh(true)}
             >
               Refresh chats
-            </button>
+            </CartoonButton>
           </div>
           {chats.state.kind === "loading" && (
             <p role="status">Loading chats...</p>
@@ -597,8 +596,8 @@ export default function ConversationPanel({
                 Chats could not be loaded. Your saved conversations have not
                 been removed.
               </p>
-              <button
-                className="button secondary"
+              <CartoonButton
+                className="secondary"
                 onClick={() =>
                   chats.refresh(
                     chats.state.kind === "failed" && chats.state.status === 400,
@@ -606,11 +605,12 @@ export default function ConversationPanel({
                 }
               >
                 Try chats again
-              </button>
+              </CartoonButton>
             </div>
           )}
           {selected && !summary && (
             <button
+              type="button"
               className="conversation-choice"
               aria-current="true"
               disabled={deleting || sending}
@@ -628,6 +628,7 @@ export default function ConversationPanel({
               {items.map((item) => (
                 <li key={item.conversationId}>
                   <button
+                    type="button"
                     className="conversation-choice"
                     aria-current={
                       item.conversationId === selected ? "true" : undefined
