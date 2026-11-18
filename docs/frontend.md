@@ -116,11 +116,12 @@ For a fresh project's stock setup, use `npx shadcn@latest init`, then
 overwriting this app's theme.
 
 Pointer feedback uses 120ms transform transitions, a 250ms highlight sweep and
-200ms theme-icon/success feedback. Hover movement requires a fine hover pointer.
+200ms theme-icon feedback. Hover movement requires a fine hover pointer.
 Keyboard-triggered actions are instant; input modality is tracked only in a DOM
-attribute, never stored or sent to the server. Reduced motion removes movement
-and retains only a shorter success fade. Grocery rows, chat text and functional
-data never animate on entry or while updating.
+attribute, never stored or sent to the server. Reduced motion removes movement.
+Success and error messages appear immediately at full contrast, without entry
+fades. Grocery rows, chat text and functional data never animate on entry or
+while updating.
 
 Focused textboxes, number fields, selects and textareas use their own yellow
 border without an outer outline or layout shift. Light mode uses a darker gold

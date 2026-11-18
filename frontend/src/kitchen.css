@@ -855,14 +855,6 @@ html[data-theme="light"] .grocery-entry > .button {
   }
 }
 
-html[data-input="pointer"] .success-notice {
-  transition: opacity var(--motion-enter) var(--ease-out);
-
-  @starting-style {
-    opacity: 0;
-  }
-}
-
 @media (prefers-reduced-motion: no-preference) {
   html[data-input="pointer"] .button {
     transition: transform var(--motion-press) var(--ease-out);
@@ -930,9 +922,5 @@ html[data-input="pointer"] .success-notice {
   }
   button:active:not(:disabled) {
     transform: none;
-  }
-
-  html[data-input="pointer"] .success-notice {
-    transition: opacity var(--motion-press) var(--ease-out) !important;
   }
 }
