@@ -58,7 +58,7 @@ test("first-run onboarding saves all nine fields and persists after reload", asy
   await page.reload();
   await expect(
     page.getByRole("heading", {
-      name: "Good cooking starts with what you have.",
+      name: "YOUR KITCHEN",
     }),
   ).toBeVisible();
   await openProfile(page);
@@ -379,7 +379,7 @@ test("an invalid successful profile response fails visibly and can be retried", 
   await page.getByRole("button", { name: "Try again", exact: true }).click();
   await expect(
     page.getByRole("heading", {
-      name: "Good cooking starts with what you have.",
+      name: "YOUR KITCHEN",
     }),
   ).toBeVisible();
 });
@@ -440,7 +440,7 @@ test("canceling navigation preserves a dirty draft", async ({ page }) => {
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(
     page.getByRole("heading", {
-      name: "Good cooking starts with what you have.",
+      name: "YOUR KITCHEN",
     }),
   ).toBeVisible();
 });

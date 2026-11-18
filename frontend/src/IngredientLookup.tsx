@@ -8,6 +8,7 @@ import {
   type IngredientNutrition,
 } from "./nutrition";
 import type { Session } from "./profile";
+import { KitchenIcon } from "./KitchenArt";
 
 type Props = {
   session: Session;
@@ -122,7 +123,15 @@ export default function IngredientLookup({
       className="card ingredient-lookup"
       aria-labelledby="nutrition-heading"
     >
-      <h2 id="nutrition-heading">Ingredient calories</h2>
+      <div className="card-heading">
+        <div>
+          <p className="eyebrow">A LITTLE FOOD FOR THOUGHT</p>
+          <h2 id="nutrition-heading">Ingredient calories</h2>
+        </div>
+        <span className="heading-icon">
+          <KitchenIcon name="flame" />
+        </span>
+      </div>
       <p id="nutrition-help">
         Look up USDA calories per 100 g. Search an ingredient, such as chicken,
         then choose its cut and food form from USDA matches. This reads
@@ -159,7 +168,7 @@ export default function IngredientLookup({
               disabled={busy}
             />
           </div>
-          <button className="button primary" type="submit" disabled={busy}>
+          <button className="button secondary" type="submit" disabled={busy}>
             {busy ? "Looking up..." : "Look up calories"}
           </button>
         </div>
