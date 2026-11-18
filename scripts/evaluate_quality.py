@@ -8,19 +8,23 @@ import os
 import subprocess
 from contextlib import ExitStack
 from datetime import UTC, datetime
+from functools import partial
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
 from azure.ai.projects import AIProjectClient
+from azure.identity import AzureCliCredential
 from sous_chef.adapters.credentials import build_credential
 from sous_chef.domain.orchestrator import POLICY
 from sous_chef.recipe_definition import RECIPE_POLICY_VERSION
 from sous_chef.settings import ConfigurationError, Settings, load_settings
+from sous_chef.telemetry import configure_safe_telemetry
 
+from scripts.deploy_dev import DeliveryError
 from scripts.quality_capture import ROOT, Observation, capture
 from scripts.quality_evidence import digest, load_suite, report, review_template, rows, suite_digest
-from scripts.quality_foundry import collect, deployment_versions, submit
+from scripts.quality_foundry import EVALUATION_HEADERS, collect, deployment_versions, submit
 
 APPROVAL_VARIABLE = "ASC_APPROVE_FOUNDRY_EVALUATION"
 
@@ -82,10 +86,15 @@ def source_versions() -> dict[str, Any]:
     }
 
 
-def live_settings() -> Settings:
+def live_settings(*, release_workload: bool = False) -> Settings:
     if os.environ.get(APPROVAL_VARIABLE) != "1":
         raise ConfigurationError("Live evaluation requires explicit process-only approval.")
-    settings = load_settings()
+    if release_workload:
+        from scripts.quality_release import release_settings
+
+        settings = release_settings()
+    else:
+        settings = load_settings()
     if (
         settings.environment != "dev"
         or settings.adapter_mode != "live"
@@ -141,13 +150,28 @@ def costs(mode: str, observations: list[Observation], state: dict[str, Any]) -> 
     }
 
 
-async def execute(args: argparse.Namespace) -> int:
+async def execute(args: argparse.Namespace, *, release_workload: bool = False) -> int:
     suite = load_suite()
     output: Path = args.output
     if args.report_only and args.live:
         raise ValueError("Report-only does not invoke cloud services.")
     args.resume = args.resume or args.report_only
-    settings = live_settings() if args.live else None
+    if release_workload and not args.live:
+        raise ValueError("Release-workload credentials are restricted to explicit live evaluation.")
+    settings = (
+        live_settings(release_workload=True)
+        if release_workload
+        else live_settings()
+        if args.live
+        else None
+    )
+    capture_case = capture
+    execution_identity = "app_managed_identity" if args.live else "offline"
+    if release_workload:
+        from scripts.deploy_dev import _release_project_client
+
+        capture_case = partial(capture, client_factory=_release_project_client)
+        execution_identity = "azure_cli_release"
     if args.live and not args.judge_deployment and not args.resume:
         raise ValueError("Live submission requires an approved existing judge deployment.")
     state: dict[str, Any]
@@ -172,6 +196,7 @@ async def execute(args: argparse.Namespace) -> int:
         if settings is not None and (
             state.get("project_sha256") != digest(str(settings.foundry_project_endpoint))
             or state["versions"].get("agents") != configured_agents(settings)
+            or state.get("execution_identity", "app_managed_identity") != execution_identity
         ):
             raise ValueError("Resume must use the original project and pinned agents.")
         if (output / "outputs.json").exists():
@@ -185,6 +210,7 @@ async def execute(args: argparse.Namespace) -> int:
             "versions": source_versions(),
             "status": "capturing" if args.live else "not_run",
             "approval": "explicit_process_only" if args.live else "offline_only",
+            "execution_identity": execution_identity,
         }
         state["versions"]["recipe_mode"] = (
             settings.foundry_recipe_nutrition_mode if settings is not None else "combined"
@@ -200,7 +226,10 @@ async def execute(args: argparse.Namespace) -> int:
             client = None
             if args.live:
                 assert settings is not None
-                credential = build_credential(settings)
+                configure_safe_telemetry()
+                credential = (
+                    AzureCliCredential() if release_workload else build_credential(settings)
+                )
                 close = getattr(credential, "close", None)
                 if callable(close):
                     resources.callback(close)
@@ -209,13 +238,16 @@ async def execute(args: argparse.Namespace) -> int:
                         endpoint=str(settings.foundry_project_endpoint),
                         credential=credential,
                         api_version="v1",
+                        headers=EVALUATION_HEADERS,
                         retry_total=0,
                         connection_timeout=10,
                         read_timeout=60,
                     )
                 )
                 client = resources.enter_context(
-                    project.get_openai_client(max_retries=0, timeout=60)
+                    project.get_openai_client(
+                        max_retries=0, timeout=60, default_headers=EVALUATION_HEADERS
+                    )
                 )
                 if not args.resume:
                     state["versions"]["models"] = deployment_versions(
@@ -225,7 +257,7 @@ async def execute(args: argparse.Namespace) -> int:
                     write(output / "state.json", state)
             if not args.resume:
                 for case in suite.cases:
-                    observations.append(await capture(case, suite.defaults, settings))
+                    observations.append(await capture_case(case, suite.defaults, settings))
                     write(
                         output / "observations.json",
                         [item.model_dump(mode="json") for item in observations],
@@ -261,10 +293,15 @@ async def execute(args: argparse.Namespace) -> int:
                     wait_seconds=args.wait_seconds,
                 )
                 write(output / "outputs.json", outputs)
-                state.pop("runner_error", None)
+                for key in ("runner_error", "runner_error_type", "runner_error_status"):
+                    state.pop(key, None)
                 write(output / "state.json", state)
-    except Exception:
+    except Exception as exc:
         state["runner_error"] = "evaluation_execution_failed"
+        state["runner_error_type"] = type(exc).__name__
+        status = getattr(exc, "status_code", None)
+        if isinstance(status, int) and 100 <= status <= 599:
+            state["runner_error_status"] = status
         write(output / "state.json", state)
     review = None
     review_error = None
@@ -282,15 +319,33 @@ async def execute(args: argparse.Namespace) -> int:
         review=review,
     )
     summary["versions"] = state["versions"]
+    summary["execution_identity"] = state.get("execution_identity")
     summary["foundry"] = {
-        key: state.get(key) for key in ("eval_id", "run_id", "report_url", "evaluators")
+        key: state.get(key)
+        for key in ("eval_id", "run_id", "report_url", "evaluators", "service_error_code")
     }
     summary["cost"] = costs(state["mode"], observations, state)
     summary["runner_error"] = state.get("runner_error")
+    summary["runner_error_type"] = state.get("runner_error_type")
+    summary["runner_error_status"] = state.get("runner_error_status")
     summary["review_error"] = review_error
     if state.get("runner_error") or review_error:
         summary["quality_passed"] = False
     write(output / "report.json", summary)
+    if summary_file := os.environ.get("GITHUB_STEP_SUMMARY"):
+        with Path(summary_file).open("a", encoding="utf-8") as destination:
+            destination.write(
+                "## Synthetic recipe evaluations\n\n"
+                f"Source: `{state['versions']['git_commit']}`; "
+                f"Foundry status: `{state['status']}`.\n\n"
+                f"Deterministic cases: {summary['deterministic_passed']}/"
+                f"{summary['required_cases']}; "
+                f"calibrated quality passed: `{summary['quality_passed']}`.\n\n"
+                f"Evaluation ID: `{state.get('eval_id')}`; run ID: `{state.get('run_id')}`.\n\n"
+                "Download the synthetic-recipe-evaluation artifact for per-case reasons, "
+                "tool evidence and the human-review template. Exit 2 means incomplete, "
+                "failed or not yet human-calibrated, never a quality pass.\n"
+            )
     print(f"Quality evidence: {output / 'report.json'}")
     print(
         f"Deterministic checks: {summary['deterministic_passed']}/"
@@ -315,6 +370,11 @@ def main() -> int:
         "--live", action="store_true", help="Paid dev-only capture and Foundry judging."
     )
     parser.add_argument(
+        "--release-workload",
+        action="store_true",
+        help="Explicit Azure CLI release identity; verify the deployed dev source and pins first.",
+    )
+    parser.add_argument(
         "--resume", action="store_true", help="Collect a saved run; never resubmit."
     )
     parser.add_argument("--judge-deployment", default="")
@@ -329,11 +389,11 @@ def main() -> int:
     )
     args = parser.parse_args()
     try:
-        return asyncio.run(execute(args))
-    except (OSError, ValueError, ConfigurationError):
+        return asyncio.run(execute(args, release_workload=args.release_workload))
+    except (OSError, ValueError, ConfigurationError, DeliveryError):
         print(
-            "Evaluation not started: check output path, matching evidence "
-            "and explicit dev approval."
+            "Evaluation not started: check output path, matching source/deployment evidence, "
+            "dev configuration and explicit approval."
         )
         return 1
 

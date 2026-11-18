@@ -8,7 +8,7 @@ from time import monotonic
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
-from sous_chef.adapters.foundry_gateway import FoundryGateway
+from sous_chef.adapters.foundry_gateway import ClientFactory, FoundryGateway
 from sous_chef.adapters.usda_mcp import UsdaMcpConfig
 from sous_chef.domain.context import RequestContext
 from sous_chef.domain.foundry import FoundryFailure
@@ -440,9 +440,13 @@ class ReplayGateway:
         return draft, grounding, web, usage
 
 
-def dependencies(case: Case, settings: Settings | None) -> tuple[Gateway, NutritionTool]:
+def dependencies(
+    case: Case, settings: Settings | None, *, client_factory: ClientFactory | None = None
+) -> tuple[Gateway, NutritionTool]:
     if settings is not None:
-        return FoundryGateway(settings), UsdaNutritionTool.from_settings(settings)
+        return FoundryGateway(
+            settings, client_factory=client_factory
+        ), UsdaNutritionTool.from_settings(settings)
     return ReplayGateway(case), UsdaNutritionTool(
         UsdaMcpConfig(
             Path(sys.executable),
@@ -453,9 +457,19 @@ def dependencies(case: Case, settings: Settings | None) -> tuple[Gateway, Nutrit
     )
 
 
-async def capture(case: Case, defaults: RequestContext, settings: Settings | None) -> Observation:
+async def capture(
+    case: Case,
+    defaults: RequestContext,
+    settings: Settings | None,
+    *,
+    client_factory: ClientFactory | None = None,
+) -> Observation:
     trace = Trace()
-    gateway, nutrition = dependencies(case, settings)
+    gateway, nutrition = (
+        dependencies(case, settings)
+        if client_factory is None
+        else dependencies(case, settings, client_factory=client_factory)
+    )
     observed = ObservedGateway(gateway, trace)
     service = OrchestratorService(
         observed,
@@ -464,6 +478,10 @@ async def capture(case: Case, defaults: RequestContext, settings: Settings | Non
             None,
             ObservedNutrition(nutrition, trace, case.fault),
             combined=settings is None or settings.foundry_recipe_nutrition_mode == "combined",
+            allow_ai_recipes=(
+                settings is not None
+                and settings.foundry_recipe_nutrition_ai_recipe_agent_version is not None
+            ),
         ),
     )
     started = monotonic()

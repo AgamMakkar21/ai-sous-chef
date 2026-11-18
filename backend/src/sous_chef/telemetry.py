@@ -303,7 +303,7 @@ def operational_event(
         for key, value in (
             ("gen_ai.agent.name", agent_name),
             ("asc.agent.version", agent_version),
-            ("gen_ai.agent.id", agent_principal_id),
+            ("asc.agent.principal_id", agent_principal_id),
         ):
             if value is not None:
                 span.set_attribute(key, value)

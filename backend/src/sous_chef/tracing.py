@@ -239,6 +239,16 @@ def operation(
         set_status_on_exception=False,
     ) as span:
         span.set_attribute("asc.operation", name.value)
+        tool = {
+            Operation.SPECIALIST: ("recipe_specialist", "function"),
+            Operation.RETRIEVAL: ("knowledge_base_retrieve", "retrieval"),
+            Operation.USDA_SEARCH: ("search_foods", "function"),
+            Operation.USDA_PROFILE: ("get_nutrition_profile", "function"),
+        }.get(name)
+        if tool is not None:
+            span.set_attribute("gen_ai.operation.name", "execute_tool")
+            span.set_attribute("gen_ai.tool.name", tool[0])
+            span.set_attribute("gen_ai.tool.type", tool[1])
         if trace_id.get() is not None:
             span.set_attribute("asc.correlation_id", trace_id.get() or "")
         try:

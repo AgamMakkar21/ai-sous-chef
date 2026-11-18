@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
@@ -340,6 +341,8 @@ class FoundryGateway:
         span.set_attribute("gen_ai.provider.name", "azure.ai.foundry")
         span.set_attribute("gen_ai.operation.name", "invoke_agent")
         span.set_attribute("gen_ai.agent.name", target.name)
+        span.set_attribute("gen_ai.agent.id", f"{target.name}:{target.version}")
+        span.set_attribute("gen_ai.agent.version", target.version)
         span.set_attribute("asc.agent.version", target.version)
         model = (
             self._settings.foundry_orchestrator_deployment
@@ -1064,6 +1067,36 @@ class FoundryGateway:
 
     @staticmethod
     def _completed(request: FoundryRequest, response: Response) -> None:
+        from sous_chef.recipe_definition import RECIPE_KNOWLEDGE_LABEL, RECIPE_KNOWLEDGE_TOOL
+
+        span = trace.get_current_span()
+        if re.fullmatch(r"resp_[A-Za-z0-9_-]{1,256}", response.id):
+            span.set_attribute("gen_ai.response.id", response.id)
+        for index, item in enumerate(response.output):
+            tool_name = (
+                RECIPE_KNOWLEDGE_TOOL
+                if item.type == "mcp_call"
+                and item.server_label == RECIPE_KNOWLEDGE_LABEL
+                and item.name == RECIPE_KNOWLEDGE_TOOL
+                else "web_search"
+                if item.type == "web_search_call"
+                else "recipe_specialist"
+                if item.type == "function_call" and item.name == "recipe_specialist"
+                else None
+            )
+            if tool_name is not None:
+                # Output order is known here; native server spans own execution timestamps.
+                span.add_event(
+                    "gen_ai.tool.observed",
+                    {
+                        "gen_ai.tool.name": tool_name,
+                        "asc.tool.output_index": index,
+                        "asc.tool.timing": "response_observed",
+                        "asc.tool.execution": (
+                            "requested" if item.type == "function_call" else "provider_reported"
+                        ),
+                    },
+                )
         if (
             response.status != "completed"
             or response.error is not None
