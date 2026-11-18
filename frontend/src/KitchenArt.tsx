@@ -119,7 +119,9 @@ export function KitchenHero() {
         <p className="eyebrow">
           <KitchenIcon name="flame" /> DINNER STARTS HERE
         </p>
-        <h1 id="kitchen-title">YOUR PANTRY</h1>
+        <h1 id="kitchen-title" className="kitchen-title">
+          YOUR PANTRY
+        </h1>
       </div>
       <div className="produce-scene" aria-hidden="true">
         {(

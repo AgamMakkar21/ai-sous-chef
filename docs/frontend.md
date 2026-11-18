@@ -57,6 +57,12 @@ over the existing component styles, including chat, history, and the full profil
 Light-mode functional accents are darkened for readable text contrast; decorative
 produce and headline colors retain the reference palette.
 
+All three tab-page headings share the `kitchen-title` display role: Jersey 10
+at weight 400, uppercase presentation, the same responsive scale, warm gradient,
+and hard downward pixel shadow. The Sous Chef and Recipe History pages keep
+their existing wording and controls. Body text, navigation, recipe content, and
+forms remain readable sans-serif rather than pixel lettering.
+
 This is a visual adaptation, not the guide's standalone demo. Authentication,
 one server-saved inventory, profile safety fields, recipe workflows, and recipe
 nutrition are unchanged. There are no sample kitchens, reset controls, canned
@@ -69,8 +75,11 @@ storage and still works for the current page when storage is unavailable.
 `?scoutTheme=light` and `?scoutTheme=dark` override that preference for previews.
 The supplied Jersey 10 headline subset and its SIL Open Font License are bundled
 inside the existing single-file build; no font CDN is contacted. The license
-remains in an inert template rather than a visible footer. Rebuild the subset
-before changing the headline.
+remains in an inert template rather than a visible footer. The frontend subset
+covers all three fixed page headings; rebuild it before introducing other display
+text. It was generated from the official `google/fonts` Jersey 10 source at commit
+`3c5464b4dc90bd091348526b68428650ece8e13e`. The independently packaged login
+subset still covers its unchanged **YOUR KITCHEN** headline.
 
 ### Buttons, motion and focus
 
@@ -121,7 +130,9 @@ visible focus outlines.
 `design.spec.ts` checks the font, theme behavior, reduced motion, and both themes
 at 320, 390, 680, 768, 1024, and 1440 pixels. Existing grocery, profile, recipe,
 conversation, and accessibility tests continue to exercise the real UI with
-synthetic API responses.
+synthetic API responses. The shared-heading regression compares all three tabs'
+rendered type, checks those widths in both themes, and confirms that visiting
+the pages does not write account data.
 
 ### Public sign-in page
 

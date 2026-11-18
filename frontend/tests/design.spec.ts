@@ -403,3 +403,86 @@ test("pixel kitchen loads its real font locally and fits every design breakpoint
   }
   expect(external).toEqual([]);
 });
+
+test("all kitchen tabs share display typography without clipping or changing controls", async ({
+  page,
+}, info) => {
+  await backend(page);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const mutations: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/") && request.method() !== "GET")
+      mutations.push(request.url());
+  });
+  for (const theme of ["dark", "light"]) {
+    await page.goto(`/?scoutTheme=${theme}`);
+    const references = new Map<number, Record<string, string>>();
+    for (const [tab, title] of [
+      ["Groceries", "YOUR PANTRY"],
+      ["Sous Chef", "Your conversations"],
+      ["Recipe History", "Recipe History"],
+    ]) {
+      await page.getByRole("tab", { name: tab, exact: true }).click();
+      const heading = page.getByRole("heading", {
+        name: title,
+        exact: true,
+        level: 1,
+      });
+      await expect(heading).toBeVisible();
+      for (const width of [1440, 1024, 768, 680, 390, 320]) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.evaluate(async (text) => {
+          await document.fonts.load('112px "Jersey 10"', text);
+        }, title);
+        const typography = await heading.evaluate((element) => {
+          const style = getComputedStyle(element);
+          return {
+            fontFamily: style.fontFamily,
+            fontWeight: style.fontWeight,
+            fontSize: style.fontSize,
+            lineHeight: style.lineHeight,
+            letterSpacing: style.letterSpacing,
+            backgroundImage: style.backgroundImage,
+            textFillColor: style.webkitTextFillColor,
+            filter: style.filter,
+          };
+        });
+        if (tab === "Groceries") references.set(width, typography);
+        else
+          expect
+            .soft(typography, `${tab}, ${theme}, ${width}px`)
+            .toEqual(references.get(width));
+        expect
+          .soft(
+            await page.evaluate(
+              () => document.documentElement.scrollWidth <= innerWidth,
+            ),
+            `${tab}, ${theme}, ${width}px`,
+          )
+          .toBe(true);
+        const box = (await heading.boundingBox())!;
+        expect.soft(box.x).toBeGreaterThanOrEqual(0);
+        expect.soft(box.x + box.width).toBeLessThanOrEqual(width);
+        if (width === 320 || width === 1440) {
+          const path = info.outputPath(`${tab}-${theme}-${width}.png`);
+          await page.screenshot({ path, fullPage: true });
+          await info.attach(`${tab}-${theme}-${width}`, {
+            path,
+            contentType: "image/png",
+          });
+        }
+      }
+      await expect(
+        page.getByRole("button", { name: "Cooking profile", exact: true }),
+      ).toBeVisible();
+      if (tab === "Sous Chef")
+        await expect(
+          page.getByRole("button", { name: "New Chat", exact: true }),
+        ).toBeVisible();
+    }
+  }
+  await expect(
+    page.getByRole("tab", { name: "Groceries", exact: true }),
+  ).not.toHaveCSS("font-family", /Jersey/);
+  expect(mutations).toEqual([]);
+});
