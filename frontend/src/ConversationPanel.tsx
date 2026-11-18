@@ -73,6 +73,7 @@ function Transcript({
   focusRequest,
   prepare,
   onStarted,
+  onCompleted,
   blocked,
 }: {
   id: string;
@@ -86,6 +87,7 @@ function Transcript({
   focusRequest: number;
   prepare?: (signal: AbortSignal) => Promise<string>;
   onStarted?: (turn: Turn) => void;
+  onCompleted: () => void;
   blocked: boolean;
 }) {
   const load = useCallback(
@@ -111,10 +113,14 @@ function Transcript({
           -20,
         ),
       );
-      if (turn.turnIndex === 0 && turn.messages[0])
-        onTitle(turn.conversationId, safeTitle(turn.messages[0].content));
+      if (turn.recipe || (turn.turnIndex === 0 && turn.messages[0]))
+        onTitle(
+          turn.conversationId,
+          safeTitle(turn.recipe?.title ?? turn.messages[0]!.content),
+        );
+      if (turn.status === "completed") onCompleted();
     },
-    [onTitle, onStarted],
+    [onTitle, onStarted, onCompleted],
   );
   const loaded = history.state.kind === "ready" ? history.state.page.items : [];
   const byId = new Map(updates.map((turn) => [turn.turnId, turn]));
@@ -134,8 +140,11 @@ function Transcript({
   }, [focusRequest]);
   useEffect(() => {
     if (history.index === 0 && history.state.kind === "ready") {
-      const first = history.state.page.items[0]?.messages[0];
-      if (first) onTitle(id, safeTitle(first.content));
+      const turns = history.state.page.items;
+      const recipe = turns.find((turn) => turn.recipe)?.recipe;
+      const first = turns[0]?.messages[0];
+      if (recipe || first)
+        onTitle(id, safeTitle(recipe?.title ?? first!.content));
     }
   }, [history.state, history.index, id, onTitle]);
 
@@ -448,6 +457,7 @@ export default function ConversationPanel({
   );
 
   const refreshChats = chats.refresh;
+  const completed = useCallback(() => refreshChats(), [refreshChats]);
   const started = useCallback(
     (turn: Turn) => {
       if (!current.current) return;
@@ -669,6 +679,7 @@ export default function ConversationPanel({
             focusRequest={focusRequest}
             prepare={draftId ? prepare : undefined}
             onStarted={draftId ? started : undefined}
+            onCompleted={completed}
             blocked={deleting}
           />
         ) : (

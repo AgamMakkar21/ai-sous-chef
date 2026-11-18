@@ -234,6 +234,74 @@ def test_payload_conflict_and_key_scope(chat_api: TestClient, executor: FakeExec
     assert len(executor.calls) == 2
 
 
+@pytest.mark.parametrize("mode", ["success", "lost_completion", "transient_completion"])
+def test_ai_recipe_title_is_atomic_stable_and_survives_restart(
+    mode: str,
+    chat_api: TestClient,
+    executor: FakeExecutor,
+    harness: tuple[Transport, SyntheticCredential],
+    conversation_settings: Settings,
+    auth_headers: dict[str, str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    executor.mode = mode
+    executor.recipe = full_recipe().model_copy(update={"title": "Quick lemon rice dinner"})
+    conversation = create(chat_api, "New conversation")
+    response = send(chat_api, conversation)
+    assert response.status_code == 200, response.text
+    harness[0].write_then_disconnect = False
+    metadata = documents(harness[0], "conversation")[0]
+    assert metadata["title"] == "Quick lemon rice dinner"
+    assert metadata["titleSource"] == "recipe"
+    with TestClient(create_app(conversation_settings), headers=auth_headers) as restarted:
+        assert restarted.get(BASE).json()["items"][0]["title"] == metadata["title"]
+        assert send(restarted, conversation).json() == response.json()
+    executor.mode = "success"
+    executor.recipe = full_recipe().model_copy(update={"title": "Another rice recipe"})
+    assert send(chat_api, conversation, key="follow-up").status_code == 200
+    assert chat_api.get(BASE).json()["items"][0]["title"] == "Quick lemon rice dinner"
+    assert len(executor.calls) == 2
+    assert "Quick lemon rice dinner" not in caplog.text
+
+
+def test_recipe_title_replaces_request_fallback_but_not_an_explicit_title(
+    chat_api: TestClient, executor: FakeExecutor
+) -> None:
+    automatic = create(chat_api, "New conversation")
+    custom = create(chat_api, "My weekly meal plan")
+    assert send(chat_api, automatic, content="Help me plan dinner").status_code == 200
+    assert chat_api.get(BASE).json()["items"][0]["title"] == "Help me plan dinner"
+    executor.recipe = full_recipe().model_copy(update={"title": "Lemon rice dinner"})
+    assert send(chat_api, automatic, key="recipe").status_code == 200
+    assert send(chat_api, custom).status_code == 200
+    titles = {row["conversationId"]: row["title"] for row in chat_api.get(BASE).json()["items"]}
+    assert titles == {automatic: "Lemon rice dinner", custom: "My weekly meal plan"}
+
+
+@pytest.mark.parametrize("completed", [True, False])
+def test_existing_default_chats_get_bounded_labels_without_reinvoking_ai(
+    completed: bool,
+    chat_api: TestClient,
+    executor: FakeExecutor,
+    harness: tuple[Transport, SyntheticCredential],
+) -> None:
+    executor.recipe = full_recipe().model_copy(update={"title": "Lemony rice " * 12})
+    executor.mode = "success" if completed else "fail"
+    conversation = create(chat_api, "New conversation")
+    assert send(chat_api, conversation).status_code == (200 if completed else 502)
+    metadata = documents(harness[0], "conversation")[0]
+    metadata["title"] = "New conversation"
+    metadata.pop("titleSource", None)
+    for _ in range(2):
+        response = chat_api.get(BASE)
+        assert response.status_code == 200, response.text
+        title = response.json()["items"][0]["title"]
+        assert title.startswith("Lemony rice") if completed else title == "Private dinner request"
+        assert len(title) <= 80 and title == title.strip()
+    assert metadata["title"] == "New conversation"
+    assert len(executor.calls) == 1
+
+
 @pytest.mark.parametrize("rejected", [False, True])
 def test_full_recipe_gate_controls_public_text_and_atomic_snapshot(
     rejected: bool,
@@ -248,7 +316,7 @@ def test_full_recipe_gate_controls_public_text_and_atomic_snapshot(
         if rejected
         else ("Cook the rice.",),
     )
-    conversation = create(chat_api)
+    conversation = create(chat_api, "New conversation")
     response = send(chat_api, conversation)
     assert response.status_code == (502 if rejected else 200), response.text
     turn = documents(harness[0], "turn")[0]
@@ -257,10 +325,12 @@ def test_full_recipe_gate_controls_public_text_and_atomic_snapshot(
     assert "garnish with peanut" not in json.dumps(turn)
     assert "garnish with peanut" not in response.text + caplog.text
     if rejected:
+        assert documents(harness[0], "conversation")[0]["title"] == "New conversation"
         assert len(turn["messages"]) == 1
         assert turn["generatedRecipeId"] is None
         assert "recipe" not in turn
     else:
+        assert documents(harness[0], "conversation")[0]["title"] == executor.recipe.title
         assert "Cook the rice." in turn["messages"][1]["content"]
         assert turn["recipe"]["ingredients"][0]["name"] == "rice"
         assert turn["generatedRecipeId"] == str(executor.recipe_id)

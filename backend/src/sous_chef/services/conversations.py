@@ -1,9 +1,11 @@
 """Owned conversation creation and bounded history; no agent execution."""
 
+import asyncio
 import hashlib
 import json
 import secrets
 from typing import Literal
+from unicodedata import category
 from uuid import uuid4
 
 from pydantic import UUID4, AwareDatetime, ConfigDict, Field, ValidationError
@@ -35,6 +37,12 @@ from sous_chef.domain.cosmos import (
 from sous_chef.services.pagination import HistoryPagination
 
 CHAT = ProductContainer.CHAT_HISTORY
+DEFAULT_TITLES = frozenset({"New conversation", "New chat"})
+
+
+def automatic_title(value: str) -> str:
+    text = "".join(" " if category(character) in {"Cc", "Cf"} else character for character in value)
+    return " ".join(text.split())[:80].rstrip() or "Cooking ideas"
 
 
 class StoredConversation(ConversationModel):
@@ -183,9 +191,40 @@ class ConversationService(HistoryPagination):
                 PageRequest(limit=state.limit, continuation_token=state.continuation_token),
             )
             return HistoryPage(
-                items=tuple(self._conversation(record) for record in page.items),
+                items=tuple(
+                    await asyncio.gather(
+                        *(self._summary(repository, user, record) for record in page.items)
+                    )
+                ),
                 next_cursor=self._cursor(state, page.continuation_token, issued_at),
             )
+
+    async def _summary(
+        self, repository: CosmosRepository, user: AuthenticatedUser, record: StoredRecord
+    ) -> ConversationSummary:
+        summary = self._conversation(record)
+        if summary.title not in DEFAULT_TITLES or record.body.get("titleSource") == "recipe":
+            return summary
+        for completed_only in (True, False):
+            page = await repository.query(
+                user,
+                HistoryQuery(
+                    kind="turn",
+                    conversation_id=summary.conversation_id,
+                    completed_only=completed_only,
+                ),
+                PageRequest(limit=1),
+            )
+            if page.items:
+                turn = self._turn(page.items[0], summary.conversation_id)
+                return summary.model_copy(
+                    update={
+                        "title": automatic_title(
+                            turn.recipe.title if turn.recipe else turn.messages[0].content
+                        )
+                    }
+                )
+        return summary
 
     async def turns(
         self, user: AuthenticatedUser, conversation_id: UUID4, parameters: HistoryParameters

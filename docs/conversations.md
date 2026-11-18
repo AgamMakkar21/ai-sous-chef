@@ -4,7 +4,7 @@ ASC-21 / #18 adds empty conversation creation, metadata listing and bounded turn
 retrieval. ASC-22 / #25 adds idempotent sends, durable operation state and explicit
 failed-turn retries. Cosmos `ChatHistory` remains the durable history authority.
 ASC-38 / #39 composes the managed-agent recipe pipeline behind those sends.
-There is no transcript copy, automatic title generation or deployment in these changes.
+There is no transcript copy or separate title-generation model call.
 
 The chat executor shares the application's startup-checked USDA nutrition tool and
 its lifespan-managed MCP client with the nutrition API. It does not cold-start a
@@ -152,6 +152,16 @@ key, never by automatically creating another chat. Conversation lists exclude
 metadata with no accepted turns, including older empty chats and creation
 attempts whose first send was rejected. Failed or pending accepted requests
 still count as history.
+
+After a successful recipe reply, a default chat title becomes a short version of
+the AI-generated recipe title. The backend saves it in the same atomic batch as
+the reply, so it survives reloads and uncertain-response reconciliation. A
+clarification uses the request as a temporary title until a recipe succeeds.
+Explicit non-default titles and established recipe titles are preserved.
+The sidebar refreshes saved titles after completion. For older default-named
+chats, listing derives a label from one latest completed exchange, or one first
+accepted turn when none completed; it never loads a lifetime transcript or calls
+an AI model. These legacy labels do not modify stored history.
 
 Select a saved chat and choose Delete chat to remove it after confirmation.
 Deletion clears its selected navigation and operation reference, while leaving

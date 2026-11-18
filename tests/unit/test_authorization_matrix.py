@@ -353,6 +353,43 @@ def test_structured_recipe_and_reference_stay_in_the_authenticated_partition(
     assert len(api.executor.calls) == calls
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+def test_generated_sidebar_titles_stay_in_the_authenticated_partition(
+    legacy: bool, two_user_api: TwoUserApi
+) -> None:
+    api = two_user_api
+    for actor in api.users:
+        api.executor.recipe = full_recipe().model_copy(
+            update={"title": actor.marker + " lemon rice"}
+        )
+        created = api.client.post(
+            BASE, json={}, headers={**actor.headers, "Idempotency-Key": "title-chat"}
+        )
+        assert created.status_code == 201
+        conversation = created.json()["data"]["conversationId"]
+        response = api.client.post(
+            f"{BASE}/{conversation}/turns",
+            json={"content": actor.marker + " dinner request"},
+            headers={**actor.headers, "Idempotency-Key": "title-send"},
+        )
+        assert response.status_code == 200, response.text
+        if legacy:
+            metadata = api.transport.documents[("ChatHistory", actor.user.user_id, conversation)]
+            metadata["title"] = "New conversation"
+            metadata.pop("titleSource")
+    calls = len(api.executor.calls)
+    for actor, foreign in (api.users, api.users[::-1]):
+        before = len(api.transport.item_calls())
+        response = api.client.get(BASE, headers={**actor.headers, **foreign.hints()})
+        assert response.status_code == 200, response.text
+        api.assert_partition(actor, before)
+        titles = [item["title"] for item in response.json()["items"]]
+        assert actor.marker + " lemon rice" in titles
+        assert foreign.marker not in response.text
+        foreign.assert_private(response)
+    assert len(api.executor.calls) == calls
+
+
 def test_chat_deletion_keeps_saved_recipes_and_other_chats(two_user_api: TwoUserApi) -> None:
     actor = two_user_api.users[0]
     client = two_user_api.client
