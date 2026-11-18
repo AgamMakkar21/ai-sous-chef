@@ -139,7 +139,9 @@ export function KitchenHero() {
         <p className="eyebrow">
           <KitchenIcon name="flame" /> DINNER STARTS HERE
         </p>
-        <h1 id="kitchen-title">YOUR KITCHEN</h1>
+        <h1 id="kitchen-title" className="kitchen-title">
+          YOUR KITCHEN
+        </h1>
         <p className="welcome-copy">
           What you&apos;ve got is a pretty good place to start.
           <br />

@@ -519,7 +519,7 @@ export default function RecipeHistory(props: Props) {
   ) : (
     <div className="recipe-history">
       <header className="history-heading">
-        <h1 ref={heading} tabIndex={-1}>
+        <h1 className="kitchen-title" ref={heading} tabIndex={-1}>
           Recipe History
         </h1>
         <p>Saved for later. Cooked your way.</p>
