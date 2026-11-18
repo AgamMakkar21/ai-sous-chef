@@ -213,17 +213,13 @@ test("AI recipe attribution survives history reload without claiming curated evi
   await expect(card(page)).toContainText("not externally verified");
   await page.reload();
   await expect(card(page)).toContainText("AI-knowledge recipe");
-  await expect(
-    card(page)
-      .getByRole("group", { name: "Nutrition sources" })
-      .getByText("USDA", {
-        exact: true,
-      }),
-  ).toBeVisible();
   await card(page).getByText("Nutrition details", { exact: true }).click();
   await expect(
-    card(page).getByRole("link", { name: /USDA/i }).first(),
-  ).toBeVisible();
+    card(page).getByRole("link", {
+      name: "rice (opens in a new tab)",
+      exact: true,
+    }),
+  ).toHaveAttribute("href", recipe.nutrition.sources[0].reference);
 });
 
 for (const backup of ["web_iq", "ai_knowledge"] as const) {
@@ -246,7 +242,8 @@ for (const backup of ["web_iq", "ai_knowledge"] as const) {
           : backup === "web_iq"
             ? "https://nutrition.example.invalid/portion"
             : null,
-      basis: "Synthetic cited calorie amount for the entire portion.",
+      basis:
+        "Calculation evidence: 50 kcal per 100 g multiplied by 2 = 100 kcal.",
     }));
     n.coverage = n.nutrients.map((item) => ({
       name: item.name,
@@ -265,7 +262,8 @@ for (const backup of ["web_iq", "ai_knowledge"] as const) {
         backup === "web_iq"
           ? "https://nutrition.example.invalid/portion"
           : null,
-      basis: "Synthetic source-backed nutrients scaled to the whole portion.",
+      basis:
+        "Calculation evidence: multiply nutrient density by portion weight.",
     }));
     n.mappings[0].nutrients = n.nutrients.map((item) => ({
       ...item,
@@ -282,6 +280,11 @@ for (const backup of ["web_iq", "ai_knowledge"] as const) {
         source: "web_iq",
         reference: "https://nutrition.example.invalid/protein",
       });
+      n.mappings[0].nutrients = n.mappings[0].nutrients.filter(
+        (item) => item.name !== "energy",
+      );
+      n.ingredientCalories[0].source = "ai_knowledge";
+      n.ingredientCalories[0].reference = null;
     }
     n.unknownComponents = [];
     expect(isStructuredRecipe(recipe)).toBe(true);
@@ -302,19 +305,7 @@ for (const backup of ["web_iq", "ai_knowledge"] as const) {
     expect(isStructuredRecipe(inventedCitation)).toBe(false);
     await recipeBackend(page, [turn]);
     await open(page);
-    const sources = card(page).getByRole("group", {
-      name: "Nutrition sources",
-    });
-    await expect(sources.getByText("USDA", { exact: true })).toBeVisible();
-    await expect(
-      sources.getByText(
-        backup === "ai_knowledge" ? "AI estimate" : "Web estimate",
-        {
-          exact: true,
-        },
-      ),
-    ).toBeVisible();
-    const breakdown = card(page).getByRole("heading", {
+    const breakdown = card(page).getByRole("table", {
       name: "Nutrition by ingredient (whole recipe)",
       includeHidden: true,
     });
@@ -323,9 +314,50 @@ for (const backup of ["web_iq", "ai_knowledge"] as const) {
     await expect(card(page).getByText(/Partial:/)).toHaveCount(0);
     await card(page).getByText("Nutrition details", { exact: true }).click();
     await expect(breakdown).toBeVisible();
+    await expect(breakdown.getByRole("columnheader")).toHaveText([
+      "Ingredient",
+      ...Object.values(nutrientLabels),
+    ]);
+    await expect(breakdown.getByRole("row")).toHaveCount(ids.length + 1);
+    const rice = breakdown.getByRole("row").filter({
+      has: page.getByRole("rowheader", { name: /^rice/ }),
+    });
+    await expect(rice.getByRole("cell").nth(1)).toHaveText("6.67 g");
+    await expect(rice.getByRole("cell").nth(5)).toHaveText("0 mg");
+    if (backup === "ai_knowledge")
+      await expect(rice.getByRole("cell").nth(0)).toHaveText(
+        "100 kcalAI estimate",
+      );
+    await expect(
+      rice.getByRole("link", {
+        name: "rice (opens in a new tab)",
+        exact: true,
+      }),
+    ).toHaveAttribute("href", n.sources[0].reference);
+    const carrot = breakdown.getByRole("row").filter({
+      has: page.getByRole("rowheader", { name: /^carrot/ }),
+    });
+    await expect(carrot.getByRole("cell").nth(0)).toContainText("100 kcal");
+    await expect(carrot.getByRole("cell").nth(0)).toContainText(
+      backup === "ai_knowledge" ? "AI estimate" : "Web estimate",
+    );
+    if (backup === "ai_knowledge") {
+      await expect(carrot.getByRole("cell").nth(1)).toContainText(
+        "Web estimate",
+      );
+      await expect(carrot.getByRole("cell").nth(2)).toContainText(
+        "AI estimate",
+      );
+    }
+    await expect(card(page)).not.toContainText("Calculation evidence");
+    await expect(
+      card(page).getByRole("heading", { name: "Nutrition sources" }),
+    ).toHaveCount(0);
     await page.reload();
-    await expect(sources.getByText("USDA", { exact: true })).toBeVisible();
     await expect(breakdown).toBeHidden();
+    await card(page).getByText("Nutrition details", { exact: true }).click();
+    await expect(carrot.getByRole("cell").nth(0)).toContainText("100 kcal");
+    await expect(card(page)).not.toContainText("Calculation evidence");
   });
 }
 
@@ -469,25 +501,39 @@ test("mixed calorie sources are labeled per ingredient and survive history reloa
   await recipeBackend(page, [turn]);
   await open(page);
   await expect(card(page).getByText("90 kcal", { exact: true })).toBeVisible();
-  const sources = card(page).getByRole("group", { name: "Nutrition sources" });
-  for (const source of ["USDA", "Web estimate", "AI estimate"])
-    await expect(sources.getByText(source, { exact: true })).toBeVisible();
   await expect(card(page).getByText(/not USDA-verified/)).toHaveCount(0);
   await card(page).getByText("Nutrition details", { exact: true }).click();
+  const table = card(page).getByRole("table");
+  for (const source of ["USDA", "AI estimate"])
+    await expect(
+      table.getByText(source, { exact: true }).first(),
+    ).toBeVisible();
   await expect(
-    card(page).getByRole("link", {
-      name: "USDA (opens in a new tab)",
+    table.getByRole("link", {
+      name: "Web estimate (opens in a new tab)",
       exact: true,
     }),
   ).toBeVisible();
   await expect(
-    card(page).getByRole("link", {
-      name: "Web estimate (opens in a new tab)",
+    table.getByRole("link", {
+      name: "rice (opens in a new tab)",
+      exact: true,
+    }),
+  ).toHaveAttribute("href", n.sources[0].reference);
+  await expect(
+    table.getByRole("link", {
+      name: "carrot (opens in a new tab)",
       exact: true,
     }),
   ).toHaveAttribute("href", "https://nutrition.example.invalid/carrot");
+  const oil = table.getByRole("row").filter({
+    has: page.getByRole("rowheader", { name: "olive oil", exact: true }),
+  });
+  await expect(oil.getByRole("cell").nth(0)).toHaveText("30 kcalAI estimate");
+  await expect(oil.getByRole("cell").nth(1)).toHaveText("Unavailable");
   await page.reload();
-  await expect(sources.getByText("AI estimate", { exact: true })).toBeVisible();
+  await card(page).getByText("Nutrition details", { exact: true }).click();
+  await expect(oil.getByRole("cell").nth(0)).toHaveText("30 kcalAI estimate");
 });
 
 test("assumed quantity is disclosed with its source without changing the original ingredient", async ({
@@ -530,14 +576,15 @@ test("assumed quantity is disclosed with its source without changing the origina
   const details = card(page).getByText("Nutrition details", { exact: true });
   await details.focus();
   await details.press("Enter");
-  await expect(card(page)).toContainText("Assumed 250 g for this recipe");
+  await expect(card(page)).toContainText("Estimated quantity");
+  await expect(card(page)).not.toContainText("Assumed 250 g for this recipe");
   await expect(
-    card(page).getByRole("region", { name: "Already have" }),
+    card(page).getByRole("region", { name: "Ingredients", exact: true }),
   ).toContainText("Quantity unavailable");
   await expect(
     card(page).getByRole("link", { name: "Quantity estimate source" }),
   ).toHaveAttribute("href", recipe.sources[0].reference);
-  await expect(card(page)).toContainText("500 g for 4 source servings");
+  await expect(card(page)).not.toContainText("500 g for 4 source servings");
   await page.reload();
   await expect(
     card(page).getByText("Estimated quantities", { exact: true }),
@@ -550,7 +597,7 @@ test("assumed quantity is disclosed with its source without changing the origina
   ).toBeHidden();
 });
 
-test("recipes with more than nine USDA sources retain their estimates and conversion evidence", async ({
+test("recipes with more than nine USDA sources retain match labels and links without conversion math", async ({
   page,
 }) => {
   const turn = recipeTurn();
@@ -582,7 +629,10 @@ test("recipes with more than nine USDA sources retain their estimates and conver
   await expect(card(page)).toContainText(
     "Estimated match: Rice, white, long-grain, raw",
   );
-  await expect(card(page)).toContainText("USDA portion: 1 cup = 185 g");
+  await expect(card(page)).not.toContainText("USDA portion: 1 cup = 185 g");
+  await expect(card(page).getByRole("table").getByRole("row")).toHaveCount(
+    recipe.ingredients.length + 1,
+  );
 });
 
 test("contract recipe fields, shopping shortfall, citations and lifecycle actions render in saved history", async ({
@@ -598,16 +648,16 @@ test("contract recipe fields, shopping shortfall, citations and lifecycle action
   await expect(
     recipe.getByRole("heading", { name: "Why this fits" }),
   ).toBeVisible();
-  await expect(
-    recipe.getByRole("region", { name: "Already have" }),
-  ).toContainText("rice");
-  const shopping = recipe.getByRole("region", { name: "Need to buy" });
-  await expect(shopping).toContainText("carrot");
-  await expect(shopping).toContainText("100 g");
-  await expect(shopping).toContainText("Recipe needs 150 g in total");
-  await expect(
-    recipe.getByRole("region", { name: "Check your pantry" }),
-  ).toContainText("olive oil");
+  const ingredients = recipe.getByRole("region", {
+    name: "Ingredients",
+    exact: true,
+  });
+  await expect(ingredients.getByRole("listitem")).toHaveText([
+    "100 g - rice - Already have",
+    "150 g - carrot - Need to buyBuy 100 g.",
+    "10 g - olive oil - Check your pantry",
+  ]);
+  await expect(ingredients.getByRole("heading", { level: 5 })).toHaveCount(0);
   const steps = recipe
     .getByRole("region", { name: "Cooking steps" })
     .getByRole("listitem");
@@ -630,13 +680,36 @@ test("contract recipe fields, shopping shortfall, citations and lifecycle action
     },
   );
   await expect(notice).toBeHidden();
-  await expect(
-    recipe.getByRole("group", { name: "Nutrition sources" }).getByText("USDA", {
-      exact: true,
-    }),
-  ).toBeVisible();
   await recipe.getByText("Nutrition details", { exact: true }).click();
   await expect(notice).toBeVisible();
+  const nutritionScroll = recipe.getByRole("region", {
+    name: "Ingredient nutrition",
+    exact: true,
+  });
+  await nutritionScroll.focus();
+  await expect(nutritionScroll).toBeFocused();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  if (testInfo.project.name === "phone") {
+    expect(
+      await nutritionScroll.evaluate(
+        (element) => element.scrollWidth > element.clientWidth,
+      ),
+    ).toBe(true);
+    await nutritionScroll.press("ArrowRight");
+    await expect
+      .poll(() => nutritionScroll.evaluate((element) => element.scrollLeft))
+      .toBeGreaterThan(0);
+  }
+  await expect(recipe.getByRole("table").getByRole("row")).toHaveCount(4);
+  await expect(
+    recipe
+      .getByRole("table")
+      .getByRole("cell", { name: "Unavailable", exact: true }),
+  ).toHaveCount(18);
   await expect(
     recipe.getByRole("region", { name: "Grounded recipe sources" }),
   ).toContainText("Beginner preparation, 25 minutes.");
@@ -647,7 +720,10 @@ test("contract recipe fields, shopping shortfall, citations and lifecycle action
     recipe.getByRole("link", { name: "fixture-rice", exact: false }),
   ).toHaveAttribute("href", "https://recipes.example.invalid/synthetic-rice");
   await expect(
-    recipe.getByRole("link", { name: "USDA", exact: false }),
+    recipe.getByRole("link", {
+      name: "rice (opens in a new tab)",
+      exact: true,
+    }),
   ).toHaveAttribute("rel", "noopener noreferrer");
   for (const label of ["Cook This", "Save to Cook"]) {
     const action = recipe.getByRole("button", { name: label, exact: true });
@@ -656,6 +732,10 @@ test("contract recipe fields, shopping shortfall, citations and lifecycle action
   await expect(
     page.getByText("private-model-summary-not-for-rendering"),
   ).toHaveCount(0);
+  await page.screenshot({
+    path: testInfo.outputPath("nutrition-table.png"),
+    fullPage: true,
+  });
   await page.reload();
   await expect(card(page)).toBeVisible();
   await expect(notice).toBeHidden();
@@ -785,7 +865,9 @@ test("partial nutrients identify unknown ingredients; unavailable values never b
     card(page).getByText("Partial: 125 kcal", { exact: true }),
   ).toBeVisible();
   await expect(
-    card(page).getByText("Unavailable", { exact: true }),
+    card(page)
+      .getByRole("definition")
+      .filter({ hasText: /^Unavailable$/ }),
   ).toHaveCount(5);
   await expect(
     card(page).getByText("Partial estimate", { exact: true }),
@@ -814,7 +896,9 @@ test("partial nutrients identify unknown ingredients; unavailable values never b
   state.turns = [{ ...turn, recipe }];
   await page.reload();
   await expect(
-    card(page).getByText("Unavailable", { exact: true }),
+    card(page)
+      .getByRole("definition")
+      .filter({ hasText: /^Unavailable$/ }),
   ).toHaveCount(6);
   await expect(
     card(page).getByText("Nutrition unavailable", { exact: true }),
@@ -845,11 +929,17 @@ test("unknown quantities, empty shopping lists and whole-recipe basis stay expli
   recipe.sources = recipe.sources.filter((source) => source.kind !== "usda");
   await recipeBackend(page, [{ ...recipeTurn(), recipe }]);
   await open(page);
-  await expect(card(page)).toContainText("None confirmed in your groceries.");
-  await expect(card(page)).toContainText("Nothing to buy.");
-  await expect(
-    card(page).getByText("Quantity unavailable", { exact: true }),
-  ).toHaveCount(3);
+  const ingredients = card(page).getByRole("region", {
+    name: "Ingredients",
+    exact: true,
+  });
+  await expect(ingredients.getByRole("listitem")).toHaveText([
+    "Quantity unavailable - rice - Check your pantry",
+    "Quantity unavailable - carrot - Check your pantry",
+    "Quantity unavailable - olive oil - Check your pantry",
+  ]);
+  await expect(ingredients).not.toContainText("Already have");
+  await expect(ingredients).not.toContainText("Need to buy");
   await expect(card(page)).toContainText("Whole recipe / 2 servings");
 });
 
