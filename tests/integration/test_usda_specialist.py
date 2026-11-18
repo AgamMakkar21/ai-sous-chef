@@ -428,5 +428,6 @@ def test_malformed_usda_or_fallback_evidence_is_not_accepted(mode: str) -> None:
     with pytest.raises(FoundryGatewayError) as caught:
         run(service)
     assert caught.value.code == FoundryFailure.NO_RESULTS
-    assert len(model.requests) == 2
-    assert json.loads(json.loads(model.requests[-1].content)["input"])["useWeb"] is False
+    assert len(model.requests) == 3
+    for request in model.requests[1:]:
+        assert json.loads(json.loads(request.content)["input"])["useWeb"] is False

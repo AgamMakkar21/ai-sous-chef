@@ -71,9 +71,10 @@ The frozen policy in `domain/orchestrator.py` is version 15:
 | Application input/output token ceilings | None; provider model limits apply |
 
 The nutrition fallback goes directly from USDA gaps to one tool-free AI
-knowledge call. If a valid AI response fills only some gaps,
-one further tool-free call requests only the remaining pairs. Empty or invalid
-AI responses do not trigger another attempt. This does not permit additional
+knowledge call. At most one further tool-free call requests the remaining pairs,
+including after an empty response or rejected JSON/nutrient data. Invalid data
+is discarded, never merged. Refusals, unexpected tool calls/native citations and
+authentication/transport failures do not trigger repair. This does not permit additional
 revisions or another search. All recovery calls share up to 60 seconds
 of the remaining operation time, while preserving two seconds for completion.
 The recovery workflow is reserved independently of web tools and cannot authorize a search.

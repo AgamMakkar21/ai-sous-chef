@@ -43,7 +43,7 @@ from sous_chef.services.profiles import _view as profile_view
 from sous_chef.telemetry import ErrorCategory, Event, operational_event
 from sous_chef.tracing import Operation, observed
 
-MAX_LEARNED_CONTEXT_SECONDS = 2.0
+MAX_LEARNED_CONTEXT_SECONDS = 10.0
 
 
 class _LearnedState(ProfileModel):

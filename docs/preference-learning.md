@@ -97,7 +97,7 @@ orchestration itself remains ASC-50.
 
 Extraction is never invoked by chat or feedback admission: its separate worker
 and model deployment can fail without blocking those paths. Optional learned
-evidence lookup has its own two-second ceiling, never extending the chat deadline.
+evidence lookup has its own ten-second ceiling, never extending the chat deadline.
 A timeout, throttle or temporary unavailability omits learned context for that
 request and emits a safe `learned_context_unavailable` warning. Saved explicit
 preferences and all recipe/allergy checks still apply; no profile is rewritten.

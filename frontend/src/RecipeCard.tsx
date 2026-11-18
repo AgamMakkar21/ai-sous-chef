@@ -78,9 +78,20 @@ export default function RecipeCard({
     const estimates = (nutrition.nutrientEstimates ?? []).filter(
       (item) => item.ingredientLineId === ingredient.lineId,
     );
+    const estimateSources = [
+      ...(calories && calories.source !== "usda_mcp" ? [calories] : []),
+      ...estimates,
+    ].filter(
+      (item, index, items) =>
+        items.findIndex(
+          (other) =>
+            other.source === item.source && other.reference === item.reference,
+        ) === index,
+    );
     return {
       ingredient,
       mapping,
+      estimateSources,
       reference:
         source?.reference ??
         calories?.reference ??
@@ -260,7 +271,13 @@ export default function RecipeCard({
               </thead>
               <tbody>
                 {nutritionRows.map(
-                  ({ ingredient, mapping, reference, values }) => (
+                  ({
+                    ingredient,
+                    mapping,
+                    estimateSources,
+                    reference,
+                    values,
+                  }) => (
                     <tr key={ingredient.lineId}>
                       <th scope="row">
                         {reference ? (
@@ -279,6 +296,21 @@ export default function RecipeCard({
                               ` / Estimated match: ${mapping.foodDescription}`}
                           </span>
                         )}
+                        {estimateSources.map((source) => (
+                          <span
+                            className="recipe-nutrition-source"
+                            key={`${source.source}:${source.reference ?? ""}`}
+                          >
+                            {source.reference ? (
+                              <Reference
+                                reference={source.reference}
+                                label={calorieSources[source.source]}
+                              />
+                            ) : (
+                              calorieSources[source.source]
+                            )}
+                          </span>
+                        ))}
                         {mapping?.quantityEstimate && (
                           <span className="recipe-nutrition-source">
                             Estimated quantity
@@ -302,18 +334,6 @@ export default function RecipeCard({
                                 maximumFractionDigits: 2,
                               })}{" "}
                               {value.unit}
-                              {value.source !== "usda_mcp" && (
-                                <span className="recipe-nutrition-source">
-                                  {value.reference ? (
-                                    <Reference
-                                      reference={value.reference}
-                                      label={calorieSources[value.source]}
-                                    />
-                                  ) : (
-                                    calorieSources[value.source]
-                                  )}
-                                </span>
-                              )}
                             </>
                           ) : (
                             "Unavailable"

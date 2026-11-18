@@ -526,7 +526,9 @@ class FoundryGateway:
                 for item in draft.nutrient_estimates
             )
         ):
-            raise FoundryGatewayError(FoundryFailure.INVALID_RESULT, request)
+            raise FoundryGatewayError(
+                FoundryFailure.INVALID_RESULT, request, repairable_result=not request.use_web
+            )
         return draft.nutrient_estimates, usage
 
     def _selection_result(
@@ -655,7 +657,14 @@ class FoundryGateway:
                     nutrient_estimates=output.nutrient_estimates,
                 )
             elif not use_web:
-                draft = RecoveryDraft.model_validate_json(response.output_text)
+                try:
+                    draft = RecoveryDraft.model_validate_json(response.output_text)
+                except ValidationError:
+                    raise FoundryGatewayError(
+                        FoundryFailure.INVALID_RESULT,
+                        request,
+                        repairable_result=isinstance(request, NutrientGroundingRequest),
+                    ) from None
             else:
                 draft = WebDraft.model_validate_json(response.output_text)
             searched = (

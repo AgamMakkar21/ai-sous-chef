@@ -1,6 +1,8 @@
+import asyncio
 import json
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+from time import monotonic
 from uuid import uuid4
 
 import pytest
@@ -23,6 +25,7 @@ from sous_chef.domain.context import (
 from sous_chef.domain.cosmos import HistoryQuery
 from sous_chef.domain.groceries import GroceryRow
 from sous_chef.domain.profiles import ExplicitPreferences
+from sous_chef.services import chat as chats
 from sous_chef.services import context as contexts
 from sous_chef.services.context import _eligible, _encoding, bound_context, context_tokens
 from sous_chef.settings import Settings
@@ -355,6 +358,76 @@ class EvidenceReader:
         assert deadline > 0
         self.calls += 1
         return self.items
+
+
+@pytest.mark.parametrize(
+    "send_timeout",
+    [130.0, 8.5, 5.2],
+    ids=["extended-lookup", "clipped-to-chat-deadline", "expired-chat-deadline"],
+)
+def test_slow_learned_lookup_preserves_preferences_without_extending_chat_deadline(
+    send_timeout: float,
+    chat_api: TestClient,
+    executor: FakeExecutor,
+    harness: tuple[Transport, SyntheticCredential],
+    conversation_settings: Settings,
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cancelled = False
+
+    class SlowReader(EvidenceReader):
+        async def resolve(
+            self,
+            user: AuthenticatedUser,
+            candidates: tuple[LearnedCandidate, ...],
+            *,
+            now: datetime,
+            deadline: float,
+        ) -> tuple[ResolvedPreference, ...]:
+            nonlocal cancelled
+            assert 0 < deadline - monotonic() <= min(10.0, send_timeout - 5)
+            try:
+                await asyncio.sleep(2.1)
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
+            return await super().resolve(user, candidates, now=now, deadline=deadline)
+
+    resolved = ResolvedPreference(
+        candidate=candidate(),
+        field="likes",
+        value="rice",
+        evidence=(evidence(), evidence()),
+    )
+    document(harness[0])["learnedPreferences"] = [
+        resolved.candidate.model_dump(mode="json", by_alias=True)
+    ]
+    before = deepcopy(document(harness[0]))
+    monkeypatch.setattr(chats, "SEND_TIMEOUT_SECONDS", send_timeout)
+    with TestClient(
+        create_app(
+            conversation_settings,
+            chat_executor=executor,
+            learned_preference_reader=SlowReader((resolved,)),
+        ),
+        headers=auth_headers,
+    ) as client:
+        result = send(client, create(client))
+    if send_timeout == 5.2:
+        assert cancelled and result.is_error
+        assert result.json()["code"] == "cosmos_timeout"
+        assert executor.calls == []
+        assert not any(
+            item["recordKind"] in {"turn", "sendOperation"}
+            for item in harness[0].documents.values()
+        )
+    else:
+        assert result.status_code == 200, result.text
+        assert not cancelled
+        learned = executor.calls[-1].context.learned_preferences
+        assert len(learned) == 1 and learned[0].value == "rice"
+    assert document(harness[0]) == before
 
 
 @pytest.mark.parametrize(

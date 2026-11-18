@@ -33,8 +33,11 @@ always uses `useWeb=false`; it does not invoke native web search or Web IQ.
 This recovery source has no tools and `tool_choice=none`; recipe and web sources
 retain `tool_choice=required`. Recovery covers all six requested nutrients and
 requires explicit AI-knowledge attribution, a null citation and portion assumptions.
-One additional residual-only call is permitted after a valid, progressing partial
-AI response, within the same recovery deadline. Empty or invalid responses stop.
+At most two AI nutrition calls share the same recovery deadline. The second call
+fills only remaining gaps after a partial response, or replaces an empty response
+or one rejected for invalid JSON/nutrient data. Invalid data is never merged.
+Authentication failures, refusals, unexpected tool calls/native citations, transport failures
+and cancellation do not trigger this repair.
 The backend selects the phase pin; user input cannot select an agent or version.
 An optional, distinct `ai_recipe` pin enables one tool-free AI-knowledge recipe
 composition after unusable MCP retrieval. It uses `ai_recipe_draft_v1`, empty
