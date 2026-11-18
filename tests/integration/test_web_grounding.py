@@ -1017,9 +1017,29 @@ def test_slow_usda_selection_is_cancelled_with_time_left_for_complete_recovery(
     assert len(result.recipe.nutrition.nutrient_estimates) == 3
 
 
-@pytest.mark.parametrize("fault", ["none", "invalid_json", "web_citation", "partial", "empty"])
+@pytest.mark.parametrize(
+    ("fault", "repair"),
+    [
+        ("none", False),
+        ("invalid_json", False),
+        ("invalid_json", True),
+        ("wrong_unit", False),
+        ("wrong_unit", True),
+        ("invalid_scope", False),
+        ("invalid_scope", True),
+        ("web_citation", False),
+        ("refusal", False),
+        ("partial", False),
+        ("partial", True),
+        ("empty", False),
+        ("empty", True),
+    ],
+)
 def test_full_orchestration_requires_complete_tool_free_ai_nutrition(
-    fault: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    fault: str,
+    repair: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     configure_safe_telemetry()
     harness = CombinedHarness(use_web=False)
@@ -1065,7 +1085,7 @@ def test_full_orchestration_requires_complete_tool_free_ai_nutrition(
         data = json.loads(payload["input"])
         requests.append(data)
         response = original(payload, combined=combined)
-        if fault == "none":
+        if fault == "none" or repair and len(requests) > 1:
             return response
         message = response["output"][-1]["content"][0]
         if fault == "invalid_json":
@@ -1080,16 +1100,30 @@ def test_full_orchestration_requires_complete_tool_free_ai_nutrition(
                     "url": "https://source.example.invalid/nutrition",
                 }
             ]
+        elif fault == "refusal":
+            response["output"][-1]["content"] = [
+                {"type": "refusal", "refusal": "PRIVATE_CANARY refusal fixture"}
+            ]
         else:
             output = json.loads(message["text"])
-            output["nutrientEstimates"] = output["nutrientEstimates"][
-                : 1 if fault == "partial" else 0
-            ]
+            if fault == "wrong_unit":
+                next(
+                    nutrient
+                    for row in output["nutrientEstimates"]
+                    for nutrient in row["nutrients"]
+                    if nutrient["name"] == "energy"
+                )["unit"] = "g"
+            elif fault == "invalid_scope":
+                output["nutrientEstimates"][0]["ingredientLineId"] = "unrequested"
+            else:
+                output["nutrientEstimates"] = output["nutrientEstimates"][
+                    : 1 if fault == "partial" else 0
+                ]
             message["text"] = json.dumps(output)
         return response
 
     monkeypatch.setattr("test_web_grounding.nutrient_response", respond)
-    if fault == "none":
+    if fault == "none" or repair:
         result = asyncio.run(
             OrchestratorService(harness.gateway, harness.service).run(harness.data)
         )
@@ -1100,16 +1134,21 @@ def test_full_orchestration_requires_complete_tool_free_ai_nutrition(
             item["lineId"] for item in ingredients
         }
         assert all(item.source == "ai_knowledge" for item in nutrition.ingredient_calories)
-        assert [request["useWeb"] for request in requests] == [False]
+        assert [request["useWeb"] for request in requests] == (
+            [False] if fault == "none" else [False, False]
+        )
     else:
         with pytest.raises(OrchestratorError) as caught:
             asyncio.run(OrchestratorService(harness.gateway, harness.service).run(harness.data))
         assert caught.value.code == OrchestratorFailure.SPECIALIST_FAILED
         assert [request["useWeb"] for request in requests] == (
-            [False, False] if fault == "partial" else [False]
+            [False] if fault in {"web_citation", "refusal"} else [False, False]
         )
+    if len(requests) == 2:
         if fault == "partial":
             assert len(requests[1]["ingredients"]) == 8
+        else:
+            assert requests[1] == requests[0]
     assert "PRIVATE_CANARY" not in caplog.text
 
 
@@ -1220,7 +1259,8 @@ def test_curry_ai_nutrition_allows_genuine_zero_without_web_search(
             item.source == "ai_knowledge" and item.reference is None
             for item in nutrition.nutrient_estimates
         )
-    assert [request["useWeb"] for request in requests] == [False]
+    recovery_calls = 2 if empty_ai else 1
+    assert [request["useWeb"] for request in requests] == [False] * recovery_calls
     captured = (json.loads(request.content) for request in harness.requests)
     assert [
         request["agent_reference"]["version"]
@@ -1229,7 +1269,7 @@ def test_curry_ai_nutrition_allows_genuine_zero_without_web_search(
         and request["input"].startswith('{"purpose":"nutrition_fallback"')
     ] == [
         harness.gateway._settings.foundry_recipe_nutrition_calorie_agent_version,
-    ]
+    ] * recovery_calls
 
 
 def test_vague_quantity_uses_one_minimized_native_search_then_real_usda_mcp() -> None:

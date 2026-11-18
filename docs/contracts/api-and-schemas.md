@@ -374,7 +374,9 @@ values as `nutrients: [{name, amount, unit}]`, with `source: web_iq | ai_knowled
 `reference` and `basis`. Web references require actual searched sources and native
 citations; AI knowledge requires a null reference and explicit assumptions.
 Up to 90 records can contain disjoint nutrient pairs for the same ingredient
-across web recovery, AI recovery and one residual-only AI repair.
+across legacy web recovery, AI recovery and one bounded AI repair.
+Repair fills only remaining gaps and can replace empty or invalid nutrient data;
+rejected data is never included in the snapshot.
 These estimates fill only requested gaps; AI cannot overwrite USDA or web values.
 Optional `mappings.nutrients` contains USDA amounts for each ingredient's entire
 recipe quantity, not per-serving amounts. Totals must match attributed amounts.

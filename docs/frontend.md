@@ -287,8 +287,9 @@ ingredients when supplied. Legacy partial evidence without detailed coverage is
 conservatively labelled partial. A collapsed **Nutrition details** disclosure holds
 one whole-recipe table: ingredient, calories, protein, carbohydrates, fat, fiber
 and sodium. Each ingredient appears once, with its source linked from its name;
-web/AI estimates are labelled on the affected cells so mixed USDA/estimate rows
-do not imply USDA verification of every value. Missing ingredient values remain
+source labels appear once per source beneath the ingredient, including both USDA
+and AI/web labels for mixed-source rows. Nutrient cells contain values, not repeated
+source labels. Missing ingredient values remain
 **Unavailable**, including legacy snapshots without per-ingredient amounts.
 Estimated matches and quantities retain concise labels and quantity-source links.
 The table scrolls horizontally within a keyboard-focusable region on narrow screens.

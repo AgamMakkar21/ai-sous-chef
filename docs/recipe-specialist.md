@@ -633,9 +633,11 @@ remaining gap honestly rather than fabricate an amount: generation fails explici
 instead of delivering a newly partial recipe. Successful USDA and AI values are
 never overwritten. A valid but partial AI response is retained, and one additional
 tool-free call requests only its remaining ingredient/nutrient pairs within the
-same deadline. Empty or invalid AI responses are not retried, and the two-call
-recovery limit prevents repeated partial answers from looping. Authentication/configuration
-failures remain explicit.
+same deadline. An empty response or rejected JSON/nutrient data can also use this
+second call, without accepting any rejected data or resetting the deadline.
+Refusals, unexpected tool calls/native citations and authentication/transport
+failures do not trigger repair. The two-call limit prevents repeated invalid,
+empty or partial answers from looping. Authentication/configuration failures remain explicit.
 Transient USDA API failure after successful MCP initialization is logged but
 does not prevent startup; initialization/schema/authentication failures remain
 fail-closed. Live release smoke requires complete attributed nutrition,

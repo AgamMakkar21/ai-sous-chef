@@ -490,8 +490,6 @@ class RecipeSpecialistService:
                                     Event.CALORIE_FALLBACK_UNAVAILABLE,
                                     category=ErrorCategory.FOUNDRY_NO_RESULTS,
                                 )
-                            if merged == evidence:
-                                break
                             evidence = merged
                         except (TimeoutError, FoundryGatewayError, ValueError) as error:
                             code = (
@@ -514,6 +512,10 @@ class RecipeSpecialistService:
                                 Event.CALORIE_FALLBACK_UNAVAILABLE,
                                 category=ErrorCategory(code.value),
                             )
+                            if isinstance(error, ValueError) or (
+                                isinstance(error, FoundryGatewayError) and error.repairable_result
+                            ):
+                                continue
                             break
                     if evidence.status != "known":
                         raise FoundryGatewayError(FoundryFailure.NO_RESULTS, request)

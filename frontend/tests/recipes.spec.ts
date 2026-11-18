@@ -324,10 +324,15 @@ for (const backup of ["web_iq", "ai_knowledge"] as const) {
     });
     await expect(rice.getByRole("cell").nth(1)).toHaveText("6.67 g");
     await expect(rice.getByRole("cell").nth(5)).toHaveText("0 mg");
-    if (backup === "ai_knowledge")
-      await expect(rice.getByRole("cell").nth(0)).toHaveText(
-        "100 kcalAI estimate",
-      );
+    if (backup === "ai_knowledge") {
+      await expect(rice.getByRole("cell").nth(0)).toHaveText("100 kcal");
+      await expect(
+        rice.getByRole("rowheader").getByText("AI estimate", { exact: true }),
+      ).toHaveCount(1);
+      await expect(
+        rice.getByRole("rowheader").getByText("USDA", { exact: true }),
+      ).toBeVisible();
+    }
     await expect(
       rice.getByRole("link", {
         name: "rice (opens in a new tab)",
@@ -337,18 +342,27 @@ for (const backup of ["web_iq", "ai_knowledge"] as const) {
     const carrot = breakdown.getByRole("row").filter({
       has: page.getByRole("rowheader", { name: /^carrot/ }),
     });
-    await expect(carrot.getByRole("cell").nth(0)).toContainText("100 kcal");
-    await expect(carrot.getByRole("cell").nth(0)).toContainText(
-      backup === "ai_knowledge" ? "AI estimate" : "Web estimate",
-    );
+    await expect(carrot.getByRole("cell").nth(0)).toHaveText("100 kcal");
+    const carrotWebSource = carrot.getByRole("rowheader").getByRole("link", {
+      name: "Web estimate (opens in a new tab)",
+      exact: true,
+    });
+    await expect(carrotWebSource).toHaveCount(1);
     if (backup === "ai_knowledge") {
-      await expect(carrot.getByRole("cell").nth(1)).toContainText(
-        "Web estimate",
-      );
-      await expect(carrot.getByRole("cell").nth(2)).toContainText(
-        "AI estimate",
+      await expect(
+        carrot.getByRole("rowheader").getByText("AI estimate", { exact: true }),
+      ).toHaveCount(1);
+      await expect(carrotWebSource).toHaveAttribute(
+        "href",
+        n.nutrientEstimates!.find((item) => item.source === "web_iq")!
+          .reference!,
       );
     }
+    await expect(
+      breakdown.getByRole("cell").filter({
+        hasText: /AI estimate|Web estimate|USDA/,
+      }),
+    ).toHaveCount(0);
     await expect(card(page)).not.toContainText("Calculation evidence");
     await expect(
       card(page).getByRole("heading", { name: "Nutrition sources" }),
@@ -527,13 +541,16 @@ test("mixed calorie sources are labeled per ingredient and survive history reloa
     }),
   ).toHaveAttribute("href", "https://nutrition.example.invalid/carrot");
   const oil = table.getByRole("row").filter({
-    has: page.getByRole("rowheader", { name: "olive oil", exact: true }),
+    has: page.getByRole("rowheader", { name: /^olive oil/ }),
   });
-  await expect(oil.getByRole("cell").nth(0)).toHaveText("30 kcalAI estimate");
+  await expect(
+    oil.getByRole("rowheader").getByText("AI estimate", { exact: true }),
+  ).toHaveCount(1);
+  await expect(oil.getByRole("cell").nth(0)).toHaveText("30 kcal");
   await expect(oil.getByRole("cell").nth(1)).toHaveText("Unavailable");
   await page.reload();
   await card(page).getByText("Nutrition details", { exact: true }).click();
-  await expect(oil.getByRole("cell").nth(0)).toHaveText("30 kcalAI estimate");
+  await expect(oil.getByRole("cell").nth(0)).toHaveText("30 kcal");
 });
 
 test("assumed quantity is disclosed with its source without changing the original ingredient", async ({

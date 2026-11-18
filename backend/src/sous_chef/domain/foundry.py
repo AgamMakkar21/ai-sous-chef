@@ -39,8 +39,15 @@ class FoundryFailure(StrEnum):
 class FoundryGatewayError(RuntimeError):
     """Safe failure metadata, never the service's message or request content."""
 
-    def __init__(self, code: FoundryFailure, request: FoundryRequest) -> None:
+    def __init__(
+        self,
+        code: FoundryFailure,
+        request: FoundryRequest,
+        *,
+        repairable_result: bool = False,
+    ) -> None:
         self.code = code
         self.role = request.role
         self.operation_id = request.operation_id
+        self.repairable_result = repairable_result
         super().__init__(f"{code.value}; operation_id={request.operation_id}.")
