@@ -422,12 +422,13 @@ acceptance or an in-progress status is not success. Only then does it update
 release settings and explicitly restart the app, including when pins are
 unchanged. This prevents a settings-triggered restart from interrupting Oryx or
 starting a container without its build manifest and virtual environment.
-The existing five-minute runtime smoke remains mandatory after restart.
+The runtime smoke remains mandatory after restart, with a ten-minute startup
+budget matching the feedback host's smoke budget.
 The restart command uses `--output none`, not JSON parsing: a successful Azure
 CLI restart returns no JSON document. A nonzero restart exit still fails delivery,
 and commands that require structured results still reject empty or malformed JSON.
 
-Smoke checks wait up to five minutes for:
+Smoke checks wait up to ten minutes for:
 
 - `/health`: exact liveness response **and the expected source commit header**.
 - `/ready`: exact readiness response and the same commit. The app reads Cosmos
@@ -437,6 +438,13 @@ Smoke checks wait up to five minutes for:
   timeouts fail closed. No user documents, writes, LLM calls or tool calls occur.
 - Anonymous `/auth/session` and `/api/v1/deployment-smoke`: **401**, not a login
   redirect or success.
+
+App Service can keep routing to the previous healthy instance while the new
+container and authentication sidecar warm up. A responding old commit is not a
+successful rollout. The startup budget accommodates that handover without
+changing per-request readiness or recipe deadlines. If it expires, the error
+identifies the last failed endpoint and a safe HTTP, connection or
+response/commit-mismatch category; no upstream body or exception text is logged.
 
 The Actions environment links the app URL; the run summary records its commit,
 agent enabled/disabled stage, any published versions and smoke outcome.
