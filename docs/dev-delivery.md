@@ -428,6 +428,11 @@ The restart command uses `--output none`, not JSON parsing: a successful Azure
 CLI restart returns no JSON document. A nonzero restart exit still fails delivery,
 and commands that require structured results still reject empty or malformed JSON.
 
+Dev delivery enables telemetry as a separate App Service setting, not as an
+agent/workload pin in `runtime.json`. That receipt retains its strict release
+allowlist: environment-specific tracing configuration must not break artifact
+sealing or be promoted into production with a dev agent release.
+
 Smoke checks wait up to ten minutes for:
 
 - `/health`: exact liveness response **and the expected source commit header**.

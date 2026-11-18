@@ -594,7 +594,6 @@ def deploy() -> None:
             raise DeliveryError(f"Foundry agent release failed: {type(exc).__name__}.") from None
     pins["ASC_APP_WORKLOAD_PRINCIPAL_ID"] = app_principals[0]
     pins["ASC_READINESS_TIMEOUT_SECONDS"] = "10"
-    pins["ASC_TELEMETRY_ENABLED"] = "true"
     archive = Path(os.environ["RUNNER_TEMP"]) / "asc-dev.zip"
     package(sha, archive)
     try:
@@ -637,6 +636,7 @@ def deploy() -> None:
         "-n",
         required("ASC_APP_NAME"),
         "--settings",
+        "ASC_TELEMETRY_ENABLED=true",
         *(f"{name}={value}" for name, value in pins.items()),
     )
     # Explicitly activate the new artifact even when the settings are unchanged.

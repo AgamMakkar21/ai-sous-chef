@@ -322,6 +322,48 @@ class ReleaseTests(unittest.TestCase):
                 github.assert_not_called()
                 azure.assert_not_called()
 
+    def test_dev_telemetry_opt_in_preserves_the_sealable_runtime_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory = root / "release"
+            bundle = write_bundle(directory)
+            archive = (directory / "app.zip").read_bytes()
+            with (
+                patch.dict(
+                    os.environ,
+                    ENV
+                    | {
+                        "GITHUB_REF": "refs/heads/dev",
+                        "GITHUB_SHA": SOURCE,
+                        "RUNNER_TEMP": temporary,
+                        "ASC_RELEASE_DIRECTORY": str(directory),
+                        "GITHUB_OUTPUT": str(root / "output"),
+                        "GITHUB_STEP_SUMMARY": str(root / "summary"),
+                    },
+                ),
+                patch.object(delivery, "command", return_value=SOURCE),
+                patch.object(delivery, "current_dev_commit", return_value=SOURCE),
+                patch.object(delivery, "manifest", return_value={}),
+                patch.object(
+                    delivery,
+                    "target",
+                    return_value=(
+                        APP | {"defaultHostName": "synthetic.azurewebsites.net"},
+                        SETTINGS,
+                    ),
+                ),
+                patch.object(
+                    delivery, "package", side_effect=lambda sha, path: path.write_bytes(archive)
+                ),
+                patch.object(delivery, "az", return_value={"status": 4}) as azure,
+            ):
+                delivery.deploy()
+            self.assertIn("ASC_TELEMETRY_ENABLED=true", azure.call_args_list[1].args)
+            bundle["files"] = {name: release.digest(directory / name) for name in release.FILES}
+            (directory / "bundle.json").write_text(json.dumps(bundle))
+            release.read_bundle(directory)
+            self.assertNotIn("ASC_TELEMETRY_ENABLED", release.read_json(directory / "runtime.json"))
+
     def test_sealing_requires_all_six_quality_checks_for_the_reviewed_feature_head(self) -> None:
         for missing_check in (False, True):
             with (
