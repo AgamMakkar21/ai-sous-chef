@@ -1003,14 +1003,12 @@ def test_incomplete_or_falsely_cited_ai_nutrition_cannot_complete_chat(
         assert client.get(f"{BASE}/{conversation}/turns").json()["items"] == [turn]
         assert send(client, conversation).status_code == response.status_code
         assert len(transport.requests) == (
-            5
-            if fault == "partial"
-            else 4
-            if fault in {"high_usage", "above_old_output_limit"}
-            else 4
+            5 if fault in {"invalid_json", "invented_source", "partial", "empty"} else 4
         )
-        fallback = json.loads(transport.requests[3].content)
-        assert "max_output_tokens" not in fallback
+        for request in transport.requests[3:]:
+            fallback = json.loads(request.content)
+            assert "max_output_tokens" not in fallback
+            assert json.loads(fallback["input"])["useWeb"] is False
 
 
 @pytest.mark.parametrize("use_web", [False, True])
