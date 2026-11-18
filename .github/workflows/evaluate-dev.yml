@@ -1,0 +1,85 @@
+name: Evaluate dev recipes
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evaluate-dev-recipes
+  cancel-in-progress: false
+
+jobs:
+  deployed:
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Require successful deployment of this exact dev source
+        run: python -m scripts.quality_release
+
+  evaluate:
+    needs: deployed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PYTHONPATH: backend/src
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      ASC_RESOURCE_GROUP: ${{ vars.ASC_RESOURCE_GROUP }}
+      ASC_APP_NAME: ${{ vars.ASC_APP_NAME }}
+      ASC_FOUNDRY_ACCOUNT_NAME: ${{ vars.ASC_FOUNDRY_ACCOUNT_NAME }}
+      ASC_FOUNDRY_PROJECT_NAME: ${{ vars.ASC_FOUNDRY_PROJECT_NAME }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install locked evaluation dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Sign in with the dev release identity
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          enable-AzPSSession: false
+      - name: Evaluate synthetic cases against deployed dev pins
+        env:
+          ASC_APPROVE_FOUNDRY_EVALUATION: "1"
+        run: >-
+          python -m scripts.evaluate_quality --live --release-workload
+          --judge-deployment recipe-nutrition
+          --output artifacts/quality-evaluation
+      - name: Retain detailed synthetic evidence even after failure
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: synthetic-recipe-evaluation
+          path: artifacts/quality-evaluation/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Clear Azure login
+        if: always()
+        run: az logout

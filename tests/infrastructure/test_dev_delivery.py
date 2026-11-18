@@ -287,6 +287,18 @@ class DeliveryTests(unittest.TestCase):
                 with self.assertRaises(delivery.DeliveryError):
                     delivery.az("webapp", "restart", expect_json=False)
 
+    def test_command_resolves_platform_launchers_without_using_a_shell(self) -> None:
+        with (
+            patch("scripts.deploy_dev.shutil.which", return_value=r"C:\Azure\az.cmd"),
+            patch(
+                "scripts.deploy_dev.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0, stdout="result"),
+            ) as run,
+        ):
+            self.assertEqual(delivery.command("az", "account", "show"), "result")
+        self.assertEqual(run.call_args.args[0], [r"C:\Azure\az.cmd", "account", "show"])
+        self.assertNotIn("shell", run.call_args.kwargs)
+
     def test_command_failure_identifies_operation_without_credentials_or_output(self) -> None:
         with patch(
             "scripts.deploy_dev.subprocess.run",
@@ -301,6 +313,20 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn("az webapp config appsettings set failed", str(failure.exception))
         for private in ("private-stdout", "private-stderr", "secret=value"):
             self.assertNotIn(private, str(failure.exception))
+
+    def test_synthetic_evaluation_waits_for_deployment_before_federated_login(self) -> None:
+        workflow = (ROOT / ".github/workflows/evaluate-dev.yml").read_text()
+        gate, evaluation = workflow.split("\n  evaluate:", maxsplit=1)
+        self.assertIn("branches: [dev]", gate)
+        self.assertIn("python -m scripts.quality_release", gate)
+        self.assertNotIn("id-token", gate)
+        self.assertNotIn("azure/login", gate)
+        self.assertIn("needs: deployed", evaluation)
+        self.assertIn("environment: dev", evaluation)
+        self.assertIn("--live --release-workload", evaluation)
+        self.assertIn('ASC_APPROVE_FOUNDRY_EVALUATION: "1"', evaluation)
+        for forbidden in ("pull_request:", "pull_request_target:", "workflow_run:"):
+            self.assertNotIn(forbidden, workflow)
 
     def test_workflow_is_separate_from_untrusted_pr_validation(self) -> None:
         workflow = (ROOT / ".github/workflows/deploy-dev.yml").read_text()
@@ -1076,6 +1102,7 @@ class DeliveryTests(unittest.TestCase):
                     expected_flag = "false" if mode == "disabled" else "true"
                     self.assertIn(f"ASC_AGENTS_ENABLED={expected_flag}", updates)
                     self.assertIn("ASC_APP_WORKLOAD_PRINCIPAL_ID=app-principal", updates)
+                    self.assertIn("ASC_TELEMETRY_ENABLED=true", updates)
                     self.assertNotIn("private-token", " ".join(updates))
                     self.assertEqual(cli.call_args_list[2].args[:2], ("webapp", "restart"))
                     self.assertEqual(cli.call_args_list[2].kwargs, {"expect_json": False})

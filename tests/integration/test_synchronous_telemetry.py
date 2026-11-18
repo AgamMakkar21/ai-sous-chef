@@ -150,6 +150,37 @@ def test_request_spans_correlate_real_agent_tools_cosmos_and_persistence(
             assert span.attributes is not None
             count = span.attributes["gen_ai.usage.input_tokens"]
             assert isinstance(count, int) and count > 0
+            agent_name = span.attributes["gen_ai.agent.name"]
+            agent_version = span.attributes["asc.agent.version"]
+            assert isinstance(agent_name, str) and isinstance(agent_version, str)
+            assert span.attributes["gen_ai.agent.id"] == f"{agent_name}:{agent_version}"
+        assert any(
+            span.attributes
+            and span.attributes.get("asc.agent.principal_id")
+            == recipe_settings.foundry_orchestrator_agent_principal_id
+            for span in foundry
+        )
+        for name, tool in (
+            (Operation.SPECIALIST, "recipe_specialist"),
+            (Operation.USDA_SEARCH, "search_foods"),
+            (Operation.USDA_PROFILE, "get_nutrition_profile"),
+        ):
+            attributes = by_name[name].attributes
+            assert attributes is not None
+            assert attributes["gen_ai.operation.name"] == "execute_tool"
+            assert attributes["gen_ai.tool.name"] == tool
+        tool_events = [
+            event
+            for span in foundry
+            for event in span.events
+            if event.name == "gen_ai.tool.observed"
+        ]
+        assert any(
+            event.attributes
+            and event.attributes["gen_ai.tool.name"] == "knowledge_base_retrieve"
+            and event.attributes["asc.tool.timing"] == "response_observed"
+            for event in tool_events
+        )
         assert any(
             span.attributes
             and isinstance(charge := span.attributes.get("asc.cosmos.request_charge"), float)

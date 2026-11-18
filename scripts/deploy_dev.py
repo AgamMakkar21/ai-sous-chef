@@ -34,7 +34,8 @@ class DeliveryError(RuntimeError):
 
 
 def command(*args: str) -> str:
-    result = subprocess.run(args, capture_output=True, text=True, cwd=ROOT)
+    executable = shutil.which(args[0]) or args[0]
+    result = subprocess.run([executable, *args[1:]], capture_output=True, text=True, cwd=ROOT)
     if result.returncode:
         operation = list(args[:2])
         if args[0] == "az":
@@ -593,6 +594,7 @@ def deploy() -> None:
             raise DeliveryError(f"Foundry agent release failed: {type(exc).__name__}.") from None
     pins["ASC_APP_WORKLOAD_PRINCIPAL_ID"] = app_principals[0]
     pins["ASC_READINESS_TIMEOUT_SECONDS"] = "10"
+    pins["ASC_TELEMETRY_ENABLED"] = "true"
     archive = Path(os.environ["RUNNER_TEMP"]) / "asc-dev.zip"
     package(sha, archive)
     try:
