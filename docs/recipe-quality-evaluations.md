@@ -81,11 +81,13 @@ backing model/deployment versions, exact evaluator versions and Foundry run IDs.
 
 ## Approved live baseline
 
-Run only in the configured **dev workload**, with its existing environment,
+Run in the configured **dev workload**, with its existing environment,
 distinct agent identities, USDA setup and managed identity. This command uses
 the existing single-credential factory: dev uses managed identity, without a
-developer-credential fallback. It does not create resources, grant access, publish
-agents, switch providers or deploy anything.
+developer-credential fallback. The explicit release-runner alternative below
+uses the same Azure CLI credential injection as release smoke tests; it never
+changes the app's credential policy. Neither mode creates infrastructure, grants
+access, publishes agents, switches providers or deploys anything.
 
 The operator needs the existing Foundry evaluation permissions and an approved
 structured-output-capable judge deployment. Do not copy secrets into arguments,
@@ -109,11 +111,82 @@ plus four calibration anchors and five graders, or 60 grading slots; service-sid
 judge token use/retries are controlled by Foundry, not a local dollar cap.
 Approval must account for both target and judge costs.
 
+### Automatic synthetic dev evaluations
+
+`.github/workflows/evaluate-dev.yml` runs separately from deployment and recipe
+delivery. On each dev push it waits for the newest exact-source `Deploy dev` run
+to succeed before obtaining Azure credentials. Manual dispatch targets `dev`
+once GitHub has registered this workflow on the repository's default branch
+(`main`); until then, use the authorized operator command below. Dev push
+automation does not require that registration. A failed or pending deployment
+cannot be replaced with an older green run. The runner also checks that the live `/health` commit matches its
+checkout before making paid calls; a superseded source fails closed.
+
+The evaluation job uses the dev environment's existing federated release
+identity, not the app identity and not a credential fallback chain. It reads
+only deployment configuration and the public health endpoint, imports the
+reviewed synthetic corpus, and executes the production orchestration and
+nutrition code with the deployed immutable agent pins. It does not read or
+write consumer Cosmos documents, call the conversation API, or enable native
+continuous evaluation of real conversations. Chat deletion and unsaved draft
+behavior remain outside this synthetic quality suite and have their normal
+API/browser tests.
+
+The workflow explicitly approves each synthetic run in the evaluation step
+and uses the existing `recipe-nutrition` deployment as judge. Exact backing
+model versions and evaluator versions are saved, including whether the
+published evaluator schema requires `deployment_name` or `model`. The judge
+is a separate call, not a change to the recipe agent. Target and judge calls
+still share Foundry deployment capacity; background evaluation has no effect
+on recipe control flow but can cause capacity contention.
+
+The same explicit runner can be started by an authorized operator with the
+existing nonsecret dev delivery variables (`AZURE_SUBSCRIPTION_ID`,
+`ASC_RESOURCE_GROUP`, `ASC_APP_NAME`, `ASC_FOUNDRY_ACCOUNT_NAME` and
+`ASC_FOUNDRY_PROJECT_NAME`) and an authenticated Azure CLI session:
+
+```powershell
+$env:ASC_APPROVE_FOUNDRY_EVALUATION = '1'
+try {
+    python -m scripts.evaluate_quality --live --release-workload --judge-deployment recipe-nutrition --output artifacts\quality-evaluation\dev-baseline
+} finally {
+    Remove-Item Env:\ASC_APPROVE_FOUNDRY_EVALUATION
+}
+```
+
+Keep `--release-workload` on live resume as well. The saved execution identity
+must match; resume never silently switches from managed identity to release
+credentials. Synthetic evidence is retained for 30 days in the
+`synthetic-recipe-evaluation` Actions artifact. The job summary includes Foundry
+evaluation/run IDs. Scores, concise reasons, deterministic tool/nutrition
+evidence, source versions and review templates are in that artifact; private
+provider reasoning is not exported.
+
+Open **Evaluations** in the Foundry project to inspect these end-to-end runs.
+They evaluate captured app orchestration, not a native agent-target monitor, so
+they are not guaranteed to appear in an individual agent's monitoring tab.
+Real-conversation continuous evaluation remains disabled.
+
+The evaluation workflow is deliberately not a deployment or PR gate. An
+uncalibrated baseline returns exit 2 and leaves the evaluation job unsuccessful,
+with its evidence retained; it does not turn a successful app deployment into a
+failed deployment or claim a quality pass. Complete the human review below to
+produce a calibrated result. Failed grades are not repaired by weakening
+thresholds or silently rerunning a paid submission.
+
 The harness registers three content-hashed custom prompt evaluators, resolves
 the two built-ins to exact versions, creates an evaluation through
 `AIProjectClient.get_openai_client().evals.create`, and submits inline JSONL
 through `evals.runs.create`. It follows all result pages and locally reapplies
 the fixed thresholds instead of trusting a service pass flag.
+Evaluation clients explicitly send `Foundry-Features: Evaluations=V1Preview`,
+which the current service requires for custom evaluator registration and
+evaluation APIs. This preview opt-in is limited to evaluation clients, not
+recipe-generation clients. Safe error type and HTTP status are retained on
+runner failures; raw upstream errors and protected exception bodies are not.
+Custom evaluator read-back compares the complete definition by value, allowing
+the service's equivalent integer-to-float normalization without accepting a
+changed prompt or scoring schema.
 
 The polling wait budget is at most 900 seconds; bounded network requests and
 output export add time. A pending, failed, incomplete or

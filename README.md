@@ -225,8 +225,9 @@ are deferred beyond the MVP.
 
 ### Synchronous OpenTelemetry (ASC-52)
 
-`ASC_TELEMETRY_ENABLED=false` is the default in every environment. An explicit
-opt-in adds app-owned spans and metrics to the existing privacy policy; it does
+`ASC_TELEMETRY_ENABLED=false` is the application default. The dev
+foundation parameters explicitly enable it; local and prod remain opt-in.
+Enabling it adds app-owned spans and metrics to the existing privacy policy; it does
 not enable SDK auto-instrumentation, log export, async-learning instrumentation,
 or protected-content capture. Run plain Uvicorn as above.
 
@@ -238,6 +239,15 @@ throttling. Agent spans include configured agent/version/model identifiers and
 numeric token usage. Fixed result/error categories identify rejected output,
 timeouts and exhausted retries, including recipe refusals returned as HTTP 200.
 An absent optional Web IQ call has an explicit `web_iq.skipped` event.
+
+App-managed tool spans include fixed `gen_ai.tool.name` and `execute_tool`
+operation attributes, with actual start/end times. Foundry agent IDs identify
+the invoked `name:version`; identity principal IDs use a separate
+`asc.agent.principal_id` field. Opaque Foundry response IDs support correlation.
+Allowlisted MCP, web and specialist calls returned in a response add
+`gen_ai.tool.observed` events with their output index. These events mark when
+the response was observed, not when a server-side tool started or finished.
+Native server spans are still required for exact MCP/web execution timing.
 
 No span or metric contains prompts, responses, tool arguments, user/partition/item
 IDs, emails, allergies, preferences, notes, resource paths, raw URLs, or exception
@@ -259,6 +269,8 @@ Shutdown flushes and closes the owned providers and credential.
 
 For hosted opt-in and ingestion permissions, follow
 [the reviewed infrastructure setup](infra/README.md#synchronous-application-telemetry-asc-52).
+Reviewed dev app delivery also sets `ASC_TELEMETRY_ENABLED=true`; the app
+identity's component-scoped ingestion role must exist before that release.
 Before enabling, independently verify that native Foundry tracing uses the
 approved Insights destination with protected-content capture disabled. The app
 passes only W3C trace context to Foundry; the client flags above do not configure
@@ -267,6 +279,10 @@ model and native Foundry IQ/Web IQ execution. Its client span measures the total
 call, not invented per-tool timings; detailed model/retrieval/web timings require
 the correlated native server spans. Phased app-owned retrieval and USDA calls
 have their own client boundaries.
+
+Synthetic quality evaluations run in a separate workflow after successful dev
+deployment, never inside recipe requests and never on real conversations.
+See [evaluation setup, evidence and calibration](docs/recipe-quality-evaluations.md#automatic-synthetic-dev-evaluations).
 
 Offline acceptance uses real app/services/SDKs with synthetic transports and
 in-memory telemetry in `tests/integration/test_synchronous_telemetry.py`. This

@@ -1,4 +1,3 @@
-import copy
 import json
 from typing import Any
 
@@ -37,6 +36,7 @@ class Response(HttpResponse):
 class ProjectTransport(HttpTransport[HttpRequest, HttpResponse]):
     def __init__(self) -> None:
         self.requests: list[HttpRequest] = []
+        self.evaluators: dict[str, dict[str, Any]] = {}
 
     def open(self) -> None:
         pass
@@ -63,10 +63,36 @@ class ProjectTransport(HttpTransport[HttpRequest, HttpResponse]):
                 },
             )
         assert "/evaluators/" in request.url
+        name = request.url.split("/evaluators/")[1].split("/")[0]
         if request.method == "GET":
-            return Response(request, {"name": "builtin", "version": "9"})
+            if not name.startswith("builtin."):
+                return Response(
+                    request,
+                    self.evaluators.get(name, {"error": {"code": "NotFound"}}),
+                    status=200 if name in self.evaluators else 404,
+                )
+            return Response(
+                request,
+                {
+                    "name": "builtin",
+                    "version": "9",
+                    "definition": {
+                        "type": "prompt",
+                        "init_parameters": {
+                            "properties": {
+                                "deployment_name": {"type": "string"},
+                                "threshold": {"type": "number"},
+                            }
+                        },
+                    },
+                },
+            )
         assert request.method == "POST"
-        return Response(request, {"name": "custom", "version": "7"}, status=201)
+        assert isinstance(request.body, (str, bytes))
+        value = {"name": name, "version": "7", **json.loads(request.body)}
+        value["definition"]["metrics"]["result"].update(min_value=1.0, max_value=5.0)
+        self.evaluators[name] = value
+        return Response(request, value, status=201)
 
 
 class FoundryTransport:
@@ -215,9 +241,18 @@ def test_pinned_sdk_submits_supported_evaluators_and_inline_data_then_exports_al
             rows(suite, []),
             "judge-deployment",
             state,
-            lambda value: saved.append(copy.deepcopy(value)),
+            lambda value: saved.append(json.loads(json.dumps(value))),
         )
         outputs = collect(client, state, lambda value: None, expected_rows=12, wait_seconds=1)
+        submit(
+            project,
+            client,
+            suite,
+            rows(suite, []),
+            "judge-deployment",
+            {},
+            lambda value: None,
+        )
     assert len(outputs) == 12
     assert outputs[0]["results"][0]["reason"] == "Synthetic grade"
     assert "sample" not in outputs[0]
@@ -230,7 +265,12 @@ def test_pinned_sdk_submits_supported_evaluators_and_inline_data_then_exports_al
     criteria = {item["name"]: item for item in posted[0]["testing_criteria"]}
     assert len(criteria) == 5
     assert criteria["relevance"]["evaluator_version"] == "9"
+    assert criteria["relevance"]["initialization_parameters"] == {
+        "deployment_name": "judge-deployment",
+        "threshold": 4,
+    }
     assert criteria["groundedness"]["data_mapping"]["response"] == "{{item.grounded_response}}"
+    assert criteria["groundedness"]["data_mapping"]["query"] == "{{item.query}}"
     assert criteria["feasibility"]["evaluator_version"] == "7"
     assert criteria["feasibility"]["initialization_parameters"] == {
         "deployment_name": "judge-deployment",
@@ -246,11 +286,36 @@ def test_pinned_sdk_submits_supported_evaluators_and_inline_data_then_exports_al
         definition = json.loads(request.body)["definition"]
         assert definition["type"] == "prompt"
         assert "untrusted data" in definition["prompt_text"]
-        assert definition["metrics"]["result"]["threshold"] == 4
+        assert definition["init_parameters"]["required"] == ["deployment_name", "threshold"]
     pages = [
         request for request in transport.requests if request.url.path.endswith("/output_items")
     ]
     assert len(pages) == 2 and pages[1].url.params["after"] == "output-5"
+
+
+def test_changed_content_hashed_evaluator_is_rejected_without_submitting_another_run() -> None:
+    suite, project_transport, transport = load_suite(), ProjectTransport(), FoundryTransport()
+    with (
+        AIProjectClient(
+            endpoint="https://project.example.invalid/api/projects/test",
+            credential=SyntheticCredential(),
+            transport=project_transport,
+            retry_total=0,
+        ) as project,
+        transport.client() as client,
+    ):
+        submit(project, client, suite, rows(suite, []), "judge", {}, lambda value: None)
+        for value in project_transport.evaluators.values():
+            value["definition"]["prompt_text"] = "Changed remote definition."
+        with pytest.raises(ValueError, match="does not match"):
+            submit(project, client, suite, rows(suite, []), "judge", {}, lambda value: None)
+    assert (
+        sum(
+            request.method == "POST" and request.url.path.endswith("/runs")
+            for request in transport.requests
+        )
+        == 1
+    )
 
 
 def test_ambiguous_submission_is_persisted_and_never_automatically_retried() -> None:

@@ -264,6 +264,8 @@ class FoundationTests(unittest.TestCase):
     def test_synchronous_telemetry_is_opt_in_and_ingests_only_at_the_insights_scope(self) -> None:
         self.assertFalse(self.template["parameters"]["telemetryEnabled"]["defaultValue"])
         self.assertFalse(self.app["parameters"]["telemetryEnabled"]["defaultValue"])
+        self.assertTrue(self.dev["parameters"]["telemetryEnabled"]["value"])
+        self.assertFalse(self.prod["parameters"].get("telemetryEnabled", {}).get("value", False))
         roles = [
             resource
             for resource in self.app["resources"]

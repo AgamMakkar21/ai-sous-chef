@@ -474,6 +474,79 @@ def test_cloud_approval_is_checked_before_settings_or_credentials(
     monkeypatch.setattr(evaluate_quality, "load_settings", forbidden)
     with pytest.raises(ConfigurationError, match="approval"):
         evaluate_quality.live_settings()
+    from scripts import quality_release
+
+    monkeypatch.setattr(quality_release, "release_settings", forbidden)
+    with pytest.raises(ConfigurationError, match="approval"):
+        evaluate_quality.live_settings(release_workload=True)
+
+
+def test_release_evaluation_uses_explicit_release_credentials_without_changing_app_defaults(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    suite: Suite,
+    observations: list[Observation],
+) -> None:
+    from scripts.deploy_dev import _release_project_client
+
+    settings = Settings.model_construct(
+        environment="dev",
+        adapter_mode="live",
+        foundry_project_endpoint=HttpUrl("https://project.example.invalid/api/projects/test"),
+    )
+    by_id = {observation.case_id: observation for observation in observations}
+    factories: list[Any] = []
+    credential = SimpleNamespace(close=lambda: None)
+
+    async def capture(case: Any, defaults: Any, active: Any, **kwargs: Any) -> Observation:
+        assert active is settings
+        factories.append(kwargs["client_factory"])
+        return by_id[case.id]
+
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("Release evaluation must not fall back to app managed identity.")
+
+    def project(**kwargs: Any) -> Any:
+        assert kwargs["credential"] is credential
+        assert kwargs["headers"] == {"Foundry-Features": "Evaluations=V1Preview"}
+
+        def openai(**kwargs: Any) -> Any:
+            assert kwargs["default_headers"] == {"Foundry-Features": "Evaluations=V1Preview"}
+            return nullcontext(object())
+
+        return nullcontext(SimpleNamespace(get_openai_client=openai))
+
+    def submit(*args: Any) -> None:
+        args[-2].update(eval_id="eval-synthetic", run_id="run-synthetic", status="completed")
+
+    monkeypatch.setattr(evaluate_quality, "live_settings", lambda **kwargs: settings)
+    monkeypatch.setattr(evaluate_quality, "build_credential", forbidden)
+    monkeypatch.setattr(evaluate_quality, "AzureCliCredential", lambda: credential)
+    monkeypatch.setattr(evaluate_quality, "AIProjectClient", project)
+    monkeypatch.setattr(evaluate_quality, "deployment_versions", lambda *args: {})
+    monkeypatch.setattr(evaluate_quality, "capture", capture)
+    monkeypatch.setattr(evaluate_quality, "submit", submit)
+    monkeypatch.setattr(
+        evaluate_quality, "collect", lambda *args, **kwargs: judge_outputs(suite, observations)
+    )
+    args = argparse.Namespace(
+        output=tmp_path / "run",
+        live=True,
+        resume=False,
+        report_only=False,
+        judge_deployment="approved-judge",
+        review=None,
+        wait_seconds=1,
+    )
+    assert asyncio.run(evaluate_quality.execute(args, release_workload=True)) == 2
+    result = json.loads((args.output / "report.json").read_text())
+    assert result["execution_identity"] == "azure_cli_release"
+    assert result["foundry"]["run_id"] == "run-synthetic"
+    assert not result["quality_passed"]
+    assert factories == [_release_project_client] * 8
+    args.live = False
+    with pytest.raises(ValueError, match="explicit live"):
+        asyncio.run(evaluate_quality.execute(args, release_workload=True))
 
 
 def test_offline_command_persists_evidence_and_resume_never_recaptures(

@@ -173,8 +173,9 @@ the default backend pytest suite because they require a Bicep compiler.
 
 ### Synchronous application telemetry (ASC-52)
 
-The foundation parameter `telemetryEnabled` defaults to `false` for dev and prod.
-With explicit approval, pass `telemetryEnabled=true` to the foundation
+The foundation parameter `telemetryEnabled` defaults to `false`; the
+`dev.bicepparam` explicitly sets it to `true`. Prod remains opt-in.
+Use the reviewed environment parameters for the foundation
 validation, what-if and deployment commands above. Inspect the preview for the
 app setting and **Monitoring Metrics Publisher**
 (`3913510d-42f4-4e42-8a64-420c390055eb`) assignment on the existing Application
@@ -198,6 +199,24 @@ Foundry tracing. Run the synthetic dev verification in
 [the application telemetry guide](../README.md#synchronous-opentelemetry-asc-52);
 successful deployment/RBAC creation does not prove ingestion or native span
 correlation.
+
+For native Foundry traces, the existing project's `AppInsights` connection must
+use `ProjectManagedIdentity` authentication when Insights has local authentication
+disabled. Grant **Monitoring Metrics Publisher** to the Foundry project's
+system-assigned identity on that same Insights component, separately from the
+app's user-assigned identity. A resource-group identity is not interchangeable
+with either sender. Update the existing connection rather than adding a second
+one. Azure requires `ApplicationInsightsConnectionString` destination metadata
+on this connection; populate it from the existing component within the protected
+Azure configuration, never in source control, CLI output or local metadata files.
+Do not enable local authentication to work around an update failure.
+
+The normal reviewed dev app deployment updates release pins and explicitly
+enables `ASC_TELEMETRY_ENABLED`, without replacing unrelated app settings or
+updating this Foundry connection. Ensure the app identity's ingestion role exists
+before that release. A later foundation deployment must retain the dev telemetry
+opt-in above. Saving app settings restarts the app; do it when no recipe request
+is running.
 
 To stop application export, deploy with `telemetryEnabled=false` and verify the
 app restart. Incremental deployments do not delete an earlier role assignment;

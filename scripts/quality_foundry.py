@@ -13,6 +13,7 @@ from azure.ai.projects.models import (
     PromptBasedEvaluatorDefinition,
     TestingCriterionAzureAIEvaluator,
 )
+from azure.core.exceptions import ResourceNotFoundError
 from openai import OpenAI
 from openai.types.eval_create_params import DataSourceConfigCustom, TestingCriterion
 from openai.types.evals.create_eval_jsonl_run_data_source_param import (
@@ -26,6 +27,7 @@ from scripts.quality_capture import METRICS
 from scripts.quality_evidence import Suite, digest, suite_digest
 
 Save = Callable[[dict[str, Any]], None]
+EVALUATION_HEADERS = {"Foundry-Features": "Evaluations=V1Preview"}
 
 
 def prompt(suite: Suite, metric: str) -> str:
@@ -44,11 +46,21 @@ def prompt(suite: Suite, metric: str) -> str:
 
 
 def criterion(
-    name: str, evaluator_name: str, version: str, judge: str, *, custom: bool = False
+    name: str,
+    evaluator_name: str,
+    version: str,
+    judge: str,
+    *,
+    custom: bool = False,
+    model_parameter: str = "deployment_name",
 ) -> TestingCriterionAzureAIEvaluator:
     mapping = {"query": "{{item.query}}", "response": "{{item.response}}"}
     if name == "groundedness":
-        mapping = {"response": "{{item.grounded_response}}", "context": "{{item.context}}"}
+        mapping = {
+            "query": "{{item.query}}",
+            "response": "{{item.grounded_response}}",
+            "context": "{{item.context}}",
+        }
     elif custom:
         mapping["context"] = "{{item.context}}"
     return TestingCriterionAzureAIEvaluator(
@@ -57,7 +69,7 @@ def criterion(
         evaluator_name=evaluator_name,
         evaluator_version=version,
         initialization_parameters={
-            "deployment_name" if custom else "model": judge,
+            model_parameter: judge,
             "threshold": 4,
         },
         data_mapping=mapping,
@@ -108,7 +120,23 @@ def submit(
         evaluator = project.evaluators.get_version(f"builtin.{metric}", "latest")
         if not evaluator.version:
             raise ValueError("Foundry must resolve an exact built-in evaluator version.")
-        criteria.append(criterion(metric, f"builtin.{metric}", evaluator.version, judge))
+        definition = evaluator.definition
+        parameters = definition.init_parameters if definition is not None else None
+        properties = parameters.get("properties", {}) if parameters is not None else {}
+        model_parameter = next(
+            (key for key in ("deployment_name", "model") if key in properties), None
+        )
+        if model_parameter is None:
+            raise ValueError("Built-in evaluator must declare its judge deployment parameter.")
+        criteria.append(
+            criterion(
+                metric,
+                f"builtin.{metric}",
+                evaluator.version,
+                judge,
+                model_parameter=model_parameter,
+            )
+        )
     for metric in METRICS[2:]:
         definition = PromptBasedEvaluatorDefinition(
             prompt_text=prompt(suite, metric),
@@ -133,22 +161,30 @@ def submit(
                     desirable_direction="increase",
                     min_value=1,
                     max_value=5,
-                    threshold=4,
                     is_primary=True,
                 )
             },
         )
         name = f"asc56-{metric.replace('_', '-')}-{digest(definition.as_dict())[:12]}"
-        evaluator = project.evaluators.create_version(
-            name,
-            EvaluatorVersion(
-                evaluator_type="custom",
-                categories=["quality"],
-                definition=definition,
-                display_name=f"ASC-56 {metric}",
-                metadata={"suite_sha256": suite_digest(suite)},
-            ),
-        )
+        try:
+            evaluator = project.evaluators.get_version(name, "latest")
+        except ResourceNotFoundError:
+            evaluator = project.evaluators.create_version(
+                name,
+                EvaluatorVersion(
+                    evaluator_type="custom",
+                    categories=["quality"],
+                    definition=definition,
+                    display_name=f"ASC-56 {metric}",
+                    metadata={"suite_sha256": suite_digest(suite)},
+                ),
+            )
+        if (
+            not evaluator.version
+            or evaluator.definition is None
+            or evaluator.definition.as_dict() != definition.as_dict()
+        ):
+            raise ValueError("The content-hashed custom evaluator does not match its definition.")
         criteria.append(criterion(metric, name, evaluator.version, judge, custom=True))
         state["evaluators"] = list(criteria)
         save(state)
@@ -205,6 +241,8 @@ def collect(
         state["report_url"] = run.report_url
         state["judge_usage"] = [usage.model_dump(by_alias=True) for usage in run.per_model_usage]
         state["service_estimated_cost"] = run.model_dump().get("estimated_cost")
+        if run.error and run.error.code:
+            state["service_error_code"] = run.error.code
         save(state)
         if run.status in {"completed", "failed", "canceled", "cancelled"}:
             break
