@@ -132,13 +132,24 @@ from sous_chef.domain.agent_identity import AgentRole
 from sous_chef.domain.foundry import FoundryRequest
 
 gateway = FoundryGateway(settings)
-result = await gateway.invoke(
-    FoundryRequest(
-        role=AgentRole.ORCHESTRATOR,
-        prompt=authorized_backend_context,
+async with gateway.lifespan():
+    result = await gateway.invoke(
+        FoundryRequest(
+            role=AgentRole.ORCHESTRATOR,
+            prompt=authorized_backend_context,
+        )
     )
-)
 ```
+
+The app owns one gateway client lifespan per worker. It reuses the Azure
+credential, project client and OpenAI connection pool across agent calls and
+chats; the SDK bearer-token provider still refreshes expiring tokens. Startup
+constructs the clients without requesting a token or invoking an agent, and
+shutdown (including failed startup) closes their resources. Only transport and
+workload authentication are shared: prompts, agent parameters, correlation and
+trace headers remain invocation-local. No conversation or response state is
+cached. Direct calls outside `gateway.lifespan()` retain one-shot client
+ownership and cleanup for scripts and checks.
 
 The frozen, strict `FoundryRequest` bounds the nonblank prompt to 16,000
 characters. `max_output_tokens` is optional and omitted by default; recipe/chat
@@ -178,15 +189,19 @@ Do not serialize the raw SDK exception, service body or traceback to a user.
 | `foundry_no_results` | Recipe knowledge retrieval succeeded but found no supporting sources |
 | `foundry_rejected` | Other service rejection, including incorrect agent/version configuration |
 
-The total async deadline covers credential/client setup, the network operation
-and response handling. Both Azure SDK and OpenAI automatic retries are disabled.
+The total async deadline still covers token acquisition, the network operation
+and response handling, plus client construction for one-shot calls. Both Azure
+SDK and OpenAI automatic retries are disabled.
 No failed invocation is automatically replayed. When explicitly configured,
 recipe recovery is a separately budgeted invocation of the tool-free `ai_recipe`
 source, not another attempt at the failed MCP/native-web invocation. It receives
 the original authorized context, never the failed source's snippets.
 
 Cancel the awaiting task to cancel local in-flight work. `asyncio.CancelledError`
-propagates unchanged, clients/credentials close, and no replacement run starts.
+propagates unchanged and no replacement run starts. A cancelled invocation does
+not close the worker's shared clients or credentials, so other chats can
+continue; those resources close at lifespan exit. One-shot calls still close
+their own clients and credentials on cancellation.
 Cancellation or timeout does **not** prove that a remote agent stopped or never
 started; do not blindly resend. The [chat operation fence](conversations.md#failure-and-explicit-retry)
 and explicit close action prevent late output from overwriting a newer attempt.

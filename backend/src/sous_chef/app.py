@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -71,13 +71,14 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         try:
-            if chat_executor is not None:
-                await run_in_threadpool(_encoding)
-            if nutrition is not None:
-                async with nutrition.lifespan():
+            async with AsyncExitStack() as stack:
+                if chat_executor is not None:
+                    await run_in_threadpool(_encoding)
+                if isinstance(chat_executor, RecipeChatExecutor):
+                    await stack.enter_async_context(chat_executor.lifespan())
+                if nutrition is not None:
+                    await stack.enter_async_context(nutrition.lifespan())
                     app.state.nutrition = nutrition
-                    yield
-            else:
                 yield
         finally:
             await run_in_threadpool(telemetry.shutdown)

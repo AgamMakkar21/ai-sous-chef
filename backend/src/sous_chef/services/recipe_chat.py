@@ -1,5 +1,7 @@
 """Compose the managed agents; durable admission and final delivery remain in ChatService."""
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from uuid import uuid4
 
 from sous_chef.adapters.foundry_gateway import FoundryGateway
@@ -15,9 +17,24 @@ from sous_chef.settings import ConfigurationError, Settings
 
 
 class RecipeChatExecutor:
-    def __init__(self, orchestrator: OrchestratorService, entity_id: str) -> None:
+    def __init__(
+        self,
+        orchestrator: OrchestratorService,
+        entity_id: str,
+        *,
+        gateway: FoundryGateway | None = None,
+    ) -> None:
         self._orchestrator = orchestrator
         self._entity_id = entity_id
+        self._gateway = gateway
+
+    @asynccontextmanager
+    async def lifespan(self) -> AsyncIterator[None]:
+        if self._gateway is None:
+            yield
+        else:
+            async with self._gateway.lifespan():
+                yield
 
     @classmethod
     def from_settings(
@@ -47,6 +64,7 @@ class RecipeChatExecutor:
         return cls(
             OrchestratorService(gateway, specialist),
             settings.foundry_orchestrator_agent_name,
+            gateway=gateway,
         )
 
     async def execute(self, request: ChatExecution) -> ValidatedReply:

@@ -1,7 +1,8 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
+from time import time
 from typing import Any
 from uuid import uuid4
 
@@ -82,6 +83,7 @@ class Harness:
         self.closed = False
         self.cancelled = False
         self.client_closed = False
+        self.clients: list[AsyncOpenAI] = []
 
     async def handle(self, request: httpx2.Request) -> httpx2.Response:
         self.requests.append(request)
@@ -118,6 +120,7 @@ class Harness:
             _strict_response_validation=True,
             http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(self.handle)),
         )
+        self.clients.append(client)
         try:
             async with client:
                 yield client
@@ -154,6 +157,154 @@ def test_pinned_managed_agent_request_and_typed_result(role: AgentRole) -> None:
     assert harness.closed and harness.client_closed
     assert "private" not in repr(request)
     assert "ready" not in repr(result)
+
+
+def test_lifespan_reuses_one_client_and_can_be_reopened_after_shutdown() -> None:
+    harness = Harness()
+    gateway = FoundryGateway(settings(), client_factory=harness.factory)
+
+    async def run() -> None:
+        async with gateway.lifespan():
+            assert not harness.requests
+            for role in AgentRole:
+                result = await gateway.invoke(FoundryRequest(role=role, prompt="hello"))
+                assert result.text == "ready"
+            assert len(harness.clients) == 1
+            assert not harness.clients[0].is_closed()
+        assert harness.clients[0].is_closed()
+        async with gateway.lifespan():
+            result = await gateway.invoke(
+                FoundryRequest(role=AgentRole.ORCHESTRATOR, prompt="another request")
+            )
+            assert result.text == "ready"
+            assert len(harness.clients) == 2
+            assert not harness.clients[1].is_closed()
+        assert all(client.is_closed() for client in harness.clients)
+
+    asyncio.run(run())
+    assert len(harness.requests) == 3
+
+
+def test_shared_client_keeps_concurrent_inputs_roles_and_correlations_isolated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = Harness()
+    entered = asyncio.Event()
+
+    async def handle(request: httpx2.Request) -> httpx2.Response:
+        response = await Harness.handle(harness, request)
+        if len(harness.requests) == 2:
+            entered.set()
+        await entered.wait()
+        body = response.json()
+        body["id"] = "resp_" + request.headers["X-Client-Request-Id"]
+        body["output"][0]["content"][0]["text"] = json.loads(request.content)["input"]
+        return httpx2.Response(200, json=body)
+
+    monkeypatch.setattr(harness, "handle", handle)
+    gateway = FoundryGateway(settings(), client_factory=harness.factory)
+    requests = [
+        FoundryRequest(role=role, prompt=f"private input for {role.value}") for role in AgentRole
+    ]
+
+    async def run() -> None:
+        previous_trace = trace_id.get()
+        async with gateway.lifespan(), asyncio.timeout(1):
+            results = await asyncio.gather(*(gateway.invoke(request) for request in requests))
+            for request, result in zip(requests, results, strict=True):
+                assert result.text == request.prompt
+                assert result.role == request.role
+                assert result.operation_id == request.operation_id
+                assert result.response_id == f"resp_{request.operation_id}"
+            assert len(harness.clients) == 1 and not harness.clients[0].is_closed()
+            assert trace_id.get() == previous_trace
+
+    asyncio.run(run())
+    for request, call in zip(requests, harness.requests, strict=True):
+        assert call.headers["X-Client-Request-Id"] == str(request.operation_id)
+        assert json.loads(call.content) == {
+            "input": request.prompt,
+            "agent_reference": {
+                "type": "agent_reference",
+                "name": "orchestrator-agent"
+                if request.role == AgentRole.ORCHESTRATOR
+                else "recipe-agent",
+                "version": "2" if request.role == AgentRole.ORCHESTRATOR else "3",
+            },
+        }
+    assert harness.client_closed
+
+
+@pytest.mark.parametrize(
+    ("status", "fault", "failure"),
+    [
+        (401, "", FoundryFailure.AUTHENTICATION),
+        (429, "", FoundryFailure.THROTTLED),
+        (503, "", FoundryFailure.UNAVAILABLE),
+        (200, "connection", FoundryFailure.UNAVAILABLE),
+        (200, "timeout", FoundryFailure.TIMEOUT),
+        (200, "deadline", FoundryFailure.TIMEOUT),
+        (200, "invalid_json", FoundryFailure.INVALID_RESULT),
+    ],
+)
+def test_failed_shared_invocation_is_not_replayed_or_allowed_to_close_the_client(
+    status: int, fault: str, failure: FoundryFailure
+) -> None:
+    harness = Harness(status, fault=fault, hang=fault == "deadline")
+    gateway = FoundryGateway(
+        settings(foundry_invocation_timeout_seconds=0.1), client_factory=harness.factory
+    )
+    request = FoundryRequest(role=AgentRole.ORCHESTRATOR, prompt="first request")
+
+    async def run() -> None:
+        async with gateway.lifespan():
+            with pytest.raises(FoundryGatewayError) as caught:
+                await gateway.invoke(request)
+            assert caught.value.code == failure
+            assert caught.value.operation_id == request.operation_id
+            assert len(harness.requests) == 1
+            assert not harness.clients[0].is_closed()
+            harness.status, harness.fault, harness.hang = 200, "", False
+            result = await gateway.invoke(
+                FoundryRequest(role=AgentRole.RECIPE_NUTRITION, prompt="independent request")
+            )
+            assert result.text == "ready"
+            assert len(harness.clients) == 1
+
+    asyncio.run(run())
+    assert len(harness.requests) == 2
+    assert harness.client_closed
+
+
+def test_cancelling_one_shared_request_does_not_block_or_close_other_chats() -> None:
+    harness = Harness(hang=True)
+    gateway = FoundryGateway(settings(), client_factory=harness.factory)
+
+    async def run() -> None:
+        async with gateway.lifespan(), asyncio.timeout(1):
+            blocked = asyncio.create_task(
+                gateway.invoke(FoundryRequest(role=AgentRole.ORCHESTRATOR, prompt="blocked"))
+            )
+            while not harness.requests:
+                await asyncio.sleep(0)
+            harness.hang = False
+            result = await gateway.invoke(
+                FoundryRequest(role=AgentRole.RECIPE_NUTRITION, prompt="concurrent chat")
+            )
+            assert result.text == "ready" and not blocked.done()
+            blocked.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await blocked
+            assert harness.cancelled and not harness.clients[0].is_closed()
+            result = await gateway.invoke(
+                FoundryRequest(role=AgentRole.ORCHESTRATOR, prompt="later chat")
+            )
+            assert result.text == "ready"
+            assert len(harness.clients) == 1
+
+    asyncio.run(run())
+    assert len(harness.requests) == 3
+    assert harness.client_closed
 
 
 @pytest.mark.parametrize(
@@ -286,8 +437,10 @@ def test_credential_failure_is_safe_and_does_not_invoke_agent() -> None:
     assert "private" not in str(caught.value)
 
 
-def test_real_sdk_factory_uses_project_token_scope_and_disables_retries(
+@pytest.mark.parametrize("reuse", [False, True])
+def test_real_sdk_factory_refreshes_tokens_and_disables_retries(
     monkeypatch: pytest.MonkeyPatch,
+    reuse: bool,
 ) -> None:
     harness = Harness()
     scopes: list[str] = []
@@ -302,29 +455,50 @@ def test_real_sdk_factory_uses_project_token_scope_and_disables_retries(
 
         async def get_token(self, *requested_scopes: str, **kwargs: Any) -> AccessToken:
             scopes.extend(requested_scopes)
-            return AccessToken("synthetic-token", 9999999999)
+            return AccessToken(
+                f"synthetic-token-{len(scopes)}",
+                int(time()) + (1 if len(scopes) == 1 else 3600),
+            )
 
     monkeypatch.setattr(foundry_gateway, "build_async_credential", lambda _: Credential())
     original = AIProjectClient.get_openai_client
     options: list[dict[str, Any]] = []
+    clients: list[AsyncOpenAI] = []
 
     def get_client(project: Any, **kwargs: Any) -> AsyncOpenAI:
         options.append(kwargs.copy())
         kwargs["http_client"] = httpx2.AsyncClient(transport=httpx2.MockTransport(harness.handle))
-        return original(project, **kwargs)
+        client = original(project, **kwargs)
+        clients.append(client)
+        return client
 
     monkeypatch.setattr(AIProjectClient, "get_openai_client", get_client)
-    result = asyncio.run(
-        FoundryGateway(settings()).invoke(
-            FoundryRequest(role=AgentRole.ORCHESTRATOR, prompt="hello")
-        )
+    gateway = FoundryGateway(settings())
+
+    async def run() -> None:
+        async with gateway.lifespan() if reuse else nullcontext():
+            assert not scopes and not harness.requests
+            for _ in range(3 if reuse else 1):
+                result = await gateway.invoke(
+                    FoundryRequest(role=AgentRole.ORCHESTRATOR, prompt="hello")
+                )
+                assert result.text == "ready"
+            if reuse:
+                assert not closed and not clients[0].is_closed()
+
+    asyncio.run(run())
+    assert scopes == ["https://ai.azure.com/.default"] * (2 if reuse else 1)
+    tokens = (
+        ["synthetic-token-1", "synthetic-token-2", "synthetic-token-2"]
+        if reuse
+        else ["synthetic-token-1"]
     )
-    assert result.text == "ready"
-    assert scopes == ["https://ai.azure.com/.default"]
-    assert harness.requests[0].headers["Authorization"] == "Bearer synthetic-token"
-    assert len(harness.requests) == 1
+    assert [request.headers["Authorization"] for request in harness.requests] == [
+        f"Bearer {token}" for token in tokens
+    ]
     assert options == [{"max_retries": 0, "timeout": 60, "_strict_response_validation": True}]
     assert closed == [True]
+    assert len(clients) == 1 and clients[0].is_closed()
 
 
 @pytest.mark.parametrize(

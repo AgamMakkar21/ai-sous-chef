@@ -1294,8 +1294,10 @@ def test_combined_revision_preserves_context_and_enriches_only_its_current_ingre
     assert correction in requests[3]["input"]
 
 
-def test_chat_uses_the_startup_checked_nutrition_client(
-    recipe_settings: Settings, auth_headers: dict[str, str]
+def test_chat_shares_startup_clients_and_closes_them_on_shutdown(
+    recipe_settings: Settings,
+    recipe_transport: RecipeChatHarness,
+    auth_headers: dict[str, str],
 ) -> None:
     with patch.object(
         RecipeChatExecutor, "from_settings", wraps=RecipeChatExecutor.from_settings
@@ -1306,7 +1308,28 @@ def test_chat_uses_the_startup_checked_nutrition_client(
             assert factory.call_count == 1
             assert factory.call_args.kwargs["nutrition"] is nutrition
             assert nutrition._client is not None
+            assert len(recipe_transport.clients) == 1
+            assert not recipe_transport.clients[0].is_closed()
+            assert not recipe_transport.requests
         assert nutrition._client is None
+        assert recipe_transport.client_closed
+
+
+def test_failed_nutrition_startup_closes_the_foundry_client_without_invoking_agents(
+    recipe_settings: Settings,
+    recipe_transport: RecipeChatHarness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fail_check(self: UsdaNutritionTool, *, startup: bool = False) -> None:
+        raise ConfigurationError("Synthetic USDA startup failure.")
+
+    monkeypatch.setattr(UsdaNutritionTool, "check", fail_check)
+    with pytest.raises(ConfigurationError, match="Synthetic USDA startup failure"):
+        with TestClient(create_app(recipe_settings)):
+            pytest.fail("Broken startup must not succeed.")
+    assert len(recipe_transport.clients) == 1
+    assert recipe_transport.client_closed
+    assert not recipe_transport.requests
 
 
 @pytest.mark.parametrize("use_web", [False, True])
@@ -1342,6 +1365,7 @@ def test_pantry_recipe_returns_and_replays_the_same_grounded_structured_exchange
     assert {source["kind"] for source in recipe["sources"]} == {"curated_recipe", "usda"}
     assert bool(recipe["webGrounding"]) == use_web
     assert len(recipe_transport.requests) == 3 + int(use_web)
+    assert len(recipe_transport.clients) == 1 and not recipe_transport.client_closed
     context = recipe_transport.contexts[0]
     assert context.current_request == content
     assert context.explicit_preferences.allergies == ("peanut", "peaches")

@@ -221,6 +221,27 @@ class FoundryGateway:
             )
         self._settings = settings
         self._factory = client_factory or _project_client
+        self._client: AsyncOpenAI | None = None
+
+    @asynccontextmanager
+    async def lifespan(self) -> AsyncIterator[None]:
+        if self._client is not None:
+            raise ConfigurationError("The Foundry client lifespan is already active.")
+        async with self._factory(self._settings) as client:
+            self._client = client
+            try:
+                yield
+            finally:
+                self._client = None
+
+    @asynccontextmanager
+    async def _invocation_client(self) -> AsyncIterator[AsyncOpenAI]:
+        client = self._client
+        if client is not None:
+            yield client
+        else:
+            async with self._factory(self._settings) as client:
+                yield client
 
     async def invoke(self, request: FoundryRequest) -> FoundryResult:
         return await self._execute(request, self._result)
@@ -384,7 +405,7 @@ class FoundryGateway:
                 )
             try:
                 async with asyncio.timeout(self._settings.foundry_invocation_timeout_seconds):
-                    async with self._factory(self._settings) as client:
+                    async with self._invocation_client() as client:
                         body: dict[str, object] = {
                             "agent_reference": {
                                 "type": "agent_reference",
