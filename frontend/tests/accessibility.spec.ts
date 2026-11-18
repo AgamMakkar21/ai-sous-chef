@@ -637,7 +637,7 @@ test("grocery removal restores focus after cancelling or deleting the focused ro
 test("explicit chat selection focuses its transcript without stealing focus on tab restoration", async ({
   page,
 }) => {
-  await kitchen(page);
+  const { recipe } = await kitchen(page);
   await page.goto("/");
   await activate(
     page,
@@ -670,24 +670,30 @@ test("explicit chat selection focuses its transcript without stealing focus on t
     page.getByRole("button", { name: "Send request", exact: true }),
   );
   await expect(
-    page.getByRole("region", { name: "Simple carrot rice", exact: true }),
+    page.getByRole("region", { name: recipe.title, exact: true }),
   ).toBeVisible();
+  const transcript = page.getByRole("region", {
+    name: `Conversation: ${recipe.title}`,
+    exact: true,
+  });
+  await expect(transcript).toBeVisible();
+  const heading = transcript.getByRole("heading", {
+    name: recipe.title,
+    level: 2,
+    exact: true,
+  });
   const selectedChat = chats.getByRole("button", {
-    name: content,
+    name: recipe.title,
     exact: false,
   });
   await activate(page, selectedChat);
-  await expect(
-    page.getByRole("heading", { name: content, exact: true }),
-  ).toBeFocused();
+  await expect(heading).toBeFocused();
   await activate(
     page,
     page.getByRole("tab", { name: "Groceries", exact: true }),
   );
   await page.keyboard.press("ArrowRight");
-  await expect(
-    page.getByRole("heading", { name: content, exact: true }),
-  ).toBeVisible();
+  await expect(heading).toBeVisible();
   await expect(
     page.getByRole("tab", { name: "Sous Chef", exact: true }),
   ).toBeFocused();

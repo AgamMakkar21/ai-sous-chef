@@ -151,7 +151,7 @@ function Transcript({
   return (
     <section
       className="conversation-transcript"
-      aria-labelledby="transcript-title"
+      aria-label={`Conversation: ${title}`}
     >
       <div className="conversation-heading">
         <h2 id="transcript-title" ref={heading} tabIndex={-1}>
