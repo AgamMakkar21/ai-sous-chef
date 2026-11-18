@@ -75,6 +75,30 @@ at 320, 390, 680, 768, 1024, and 1440 pixels. Existing grocery, profile, recipe,
 conversation, and accessibility tests continue to exercise the real UI with
 synthetic API responses.
 
+### Public sign-in page
+
+The hosted App Service `/auth/login` page uses the same pixel-kitchen palette,
+Jersey 10 headline, and appearance preference. A centered card stacks equal-width
+Microsoft, Google, and GitHub links with inline provider logos. A decorative
+pixel frying pan flips an egg below the card once over four seconds; reduced
+motion disables the animation. All sign-in links work without JavaScript.
+
+The backend renders `backend/src/sous_chef/templates/login.html` with a packaged
+copy of the existing font and its full license. These resources intentionally
+live outside the generated `static/` directory: the login page cannot depend on
+the protected app bundle, and Vite clears that directory when building. No
+external fonts, logos, scripts, or services are loaded. Its Content Security
+Policy authorizes only the exact inline style/script hashes and embedded font,
+while retaining the default-deny, framing, base-URL, and form restrictions.
+
+Authentication behavior is unchanged: the same three fixed provider routes lead
+to Easy Auth, query parameters (including theme previews) remain rejected, and
+local/non-App-Service modes keep their existing responses. Use the theme button
+or saved `sous-chef-theme` preference to preview this page. `login.spec.ts` covers
+keyboard access, both themes at the design breakpoints, contrast, reduced motion,
+storage failure, and script-free links. Backend integration tests check the
+actual response, exact CSP hashes, packaged font, and authentication boundaries.
+
 ## Build and run
 
 Use Node.js **24 LTS** and npm in the same operating system as `node_modules`.

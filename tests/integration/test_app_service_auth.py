@@ -1,6 +1,10 @@
 import asyncio
+import base64
+import hashlib
 import json
+import re
 from collections.abc import AsyncIterator
+from importlib.resources import files
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -9,6 +13,7 @@ from fastapi.testclient import TestClient
 from jwt import InvalidTokenError, PyJWKClientConnectionError
 from sous_chef.adapters.app_service_auth import (
     MAX_IDENTITY_SIZE,
+    PROVIDERS,
     AppServiceSessionVerifier,
     verified_session_identity,
 )
@@ -245,6 +250,68 @@ def test_provider_login_and_session(
         assert response.json()["userId"] == user.user_id
         assert set(response.json()) == {"userId", "csrfToken"}
         verify.assert_awaited_once_with("opaque-cookie")
+
+
+def test_public_login_is_self_contained_with_exact_inline_csp(
+    session_settings: Settings,
+) -> None:
+    with (
+        patch.object(AppServiceSessionVerifier, "verify", new_callable=AsyncMock) as verify,
+        TestClient(create_app(session_settings), base_url=ORIGIN) as client,
+    ):
+        response = client.get("/auth/login")
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert response.headers["referrer-policy"] == "no-referrer"
+        assert response.headers["content-type"] == "text/html; charset=utf-8"
+        assert "__JERSEY_FONT__" not in response.text
+        assert "__FONT_LICENSE__" not in response.text
+        assert "SIL OPEN FONT LICENSE" in response.text
+        assert re.findall(r'href="/auth/login/([^"]+)"', response.text) == list(PROVIDERS)
+        for label in PROVIDERS.values():
+            assert f"<span>Sign in with {label}</span>" in response.text
+        assert not re.search(r"\b(?:src|href)=[\"'](?:https?:|//)", response.text)
+
+        font = re.findall(r'data:font/woff2;base64,([^"]+)', response.text)
+        assert len(font) == 1
+        assert base64.b64decode(font[0], validate=True) == (
+            files("sous_chef")
+            .joinpath("templates", "assets", "jersey-10-kitchen.woff2")
+            .read_bytes()
+        )
+        directives = {
+            parts[0]: parts[1:]
+            for entry in response.headers["content-security-policy"].split(";")
+            if (parts := entry.split())
+        }
+        assert set(directives) == {
+            "default-src",
+            "style-src",
+            "script-src",
+            "font-src",
+            "frame-ancestors",
+            "base-uri",
+            "form-action",
+        }
+        for tag in ("script", "style"):
+            blocks = re.findall(rf"<{tag}>(.*?)</{tag}>", response.text, flags=re.DOTALL)
+            assert blocks
+            expected = [
+                f"'sha256-{base64.b64encode(hashlib.sha256(block.encode()).digest()).decode()}'"
+                for block in blocks
+            ]
+            assert directives[f"{tag}-src"] == expected
+        assert directives["font-src"] == ["data:"]
+        for name in ("default-src", "frame-ancestors", "base-uri", "form-action"):
+            assert directives[name] == ["'none'"]
+
+        for query in ("returnTo=https://attacker.invalid", "scoutTheme=light"):
+            rejected = client.get(f"/auth/login?{query}")
+            assert rejected.status_code == 400
+            assert "location" not in rejected.headers
+        assert client.get("/").status_code == 401
+        verify.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
