@@ -6,6 +6,8 @@ import Groceries from "./Groceries";
 import IngredientLookup from "./IngredientLookup";
 import ConversationPanel from "./ConversationPanel";
 import RecipeHistory from "./RecipeHistory";
+import { KitchenHero, KitchenIcon, PixelArt } from "./KitchenArt";
+import fontLicense from "./assets/Jersey-10-OFL.txt?raw";
 import type { Session, Snapshot } from "./profile";
 
 type State =
@@ -18,25 +20,16 @@ const tabs = [
   {
     id: "groceries",
     name: "Groceries",
-    title: "Good cooking starts with what you have.",
-    text: "",
-    symbol: "01",
   },
   {
     id: "sous-chef",
     name: "Sous Chef",
-    title: "A little inspiration for your everyday.",
-    text: "Create independent conversations and revisit their message history.",
-    symbol: "02",
   },
   {
     id: "recipe-history",
     name: "Recipe History",
-    title: "Make room for your next favorite.",
-    text: "",
-    symbol: "03",
   },
-];
+] as const;
 
 function initialTab(): string {
   const hash = window.location.hash.slice(1);
@@ -51,6 +44,9 @@ export default function App() {
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [theme, setTheme] = useState(() =>
+    document.documentElement.dataset.theme === "light" ? "light" : "dark",
+  );
   const leaving = useRef(false);
   const profileButton = useRef<HTMLButtonElement>(null);
   const main = useRef<HTMLElement>(null);
@@ -154,6 +150,22 @@ export default function App() {
     setSaved(false);
   }
 
+  function toggleTheme() {
+    const next = theme === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    setTheme(next);
+    try {
+      localStorage.setItem("sous-chef-theme", next);
+    } catch {
+      // Theme changes still work when browser storage is unavailable.
+    }
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("scoutTheme")) {
+      url.searchParams.set("scoutTheme", next);
+      window.history.replaceState(null, "", url);
+    }
+  }
+
   const ready = state.kind === "ready" ? state : null;
   const completed = Boolean(ready?.snapshot.profile.onboardingCompleted);
   const showProfile = ready && (!completed || editing);
@@ -181,48 +193,53 @@ export default function App() {
       <header className="app-header">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 32 32" fill="none">
-              <path
-                d="M7 16h18v3a9 9 0 0 1-18 0v-3ZM5 16h22M12 5v5m5-7v7m5-5v5"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+            <PixelArt kind="pot" />
           </span>
           <div>
-            <span className="brand-name">AI Sous Chef</span>
+            <span className="brand-name" aria-label="AI Sous Chef">
+              sous<span>.</span>chef
+            </span>
             <span className="brand-caption">
-              A kitchen that feels like you.
+              YOUR EVERYDAY COOKING COMPANION
             </span>
           </div>
         </div>
-        {ready && (
-          <div className="header-actions">
-            {completed && (
-              <button
-                ref={profileButton}
-                className="button secondary"
-                disabled={busy}
-                onClick={openProfile}
+        <div className="header-actions">
+          {ready && (
+            <>
+              {completed && (
+                <button
+                  ref={profileButton}
+                  className="button secondary"
+                  disabled={busy}
+                  onClick={openProfile}
+                  aria-label="Cooking profile"
+                >
+                  <KitchenIcon name="profile" />
+                  <span className="profile-label">Cooking profile</span>
+                </button>
+              )}
+              <a
+                className="sign-out"
+                href="/auth/logout"
+                aria-disabled={busy}
+                onClick={(event) => {
+                  if (busy || !discard()) event.preventDefault();
+                  else leaving.current = true;
+                }}
               >
-                Cooking profile
-              </button>
-            )}
-            <a
-              className="sign-out"
-              href="/auth/logout"
-              aria-disabled={busy}
-              onClick={(event) => {
-                if (busy || !discard()) event.preventDefault();
-                else leaving.current = true;
-              }}
-            >
-              Sign out
-            </a>
-          </div>
-        )}
+                Sign out
+              </a>
+            </>
+          )}
+          <button
+            className="button secondary theme-toggle"
+            aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+            onClick={toggleTheme}
+          >
+            <KitchenIcon name={theme === "dark" ? "sun" : "moon"} />
+          </button>
+        </div>
       </header>
       <Tabs.Root
         value={ready && completed && !editing ? selected : ""}
@@ -237,6 +254,7 @@ export default function App() {
               key={tab.id}
               disabled={!completed || busy}
             >
+              <KitchenIcon name={tab.id} />
               {tab.name}
             </Tabs.Trigger>
           ))}
@@ -343,47 +361,25 @@ export default function App() {
                     />
                   ) : (
                     <>
-                      <section className="welcome-panel">
-                        <div>
-                          <p className="eyebrow">YOUR KITCHEN, YOUR WAY</p>
-                          <h1>{tab.title}</h1>
-                          <p className="welcome-copy">
-                            A little less wondering what to cook. A little more
-                            making it your own.
-                          </p>
-                        </div>
-                        <div className="kitchen-art" aria-hidden="true">
-                          <span className="art-ring">
-                            <svg viewBox="0 0 120 120" fill="none">
-                              <path
-                                d="M24 55h72v10a36 36 0 0 1-72 0V55ZM16 55h88M43 22v16m18-24v24m18-16v16"
-                                stroke="currentColor"
-                                strokeWidth="4"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              />
-                            </svg>
-                          </span>
-                          <span className="art-label">
-                            MADE FOR YOUR EVERYDAY
-                          </span>
-                        </div>
-                      </section>
-                      {tab.id === "groceries" ? (
-                        <>
-                          <Groceries
-                            session={ready.session}
-                            onExpired={expire}
-                            onBusy={setBusy}
-                            onSession={(session) =>
-                              setState((current) =>
-                                current.kind === "ready" &&
-                                current.session.userId === session.userId
-                                  ? { ...current, session }
-                                  : current,
-                              )
-                            }
-                          />
+                      <KitchenHero />
+                      <div className="kitchen-workspace">
+                        <Groceries
+                          session={ready.session}
+                          onExpired={expire}
+                          onBusy={setBusy}
+                          onSession={(session) =>
+                            setState((current) =>
+                              current.kind === "ready" &&
+                              current.session.userId === session.userId
+                                ? { ...current, session }
+                                : current,
+                            )
+                          }
+                        />
+                        <aside
+                          className="kitchen-aside"
+                          aria-label="Cooking inspiration and nutrition"
+                        >
                           <IngredientLookup
                             key={ready.session.userId}
                             session={ready.session}
@@ -397,24 +393,25 @@ export default function App() {
                               )
                             }
                           />
-                        </>
-                      ) : (
-                        <section className="card coming-next">
-                          <span className="step">{tab.symbol}</span>
-                          <div>
-                            <p className="eyebrow">COMING NEXT</p>
-                            <h2>{tab.name}</h2>
-                            <p>{tab.text}</p>
+                          <section className="card inspiration">
+                            <PixelArt kind="lemon" />
+                            <p className="eyebrow">BIG FLAVOR. SMALL EFFORT.</p>
+                            <h2>A fridge full of possibilities.</h2>
+                            <p>
+                              Let your ingredients lead the way. Bring them to
+                              your sous chef for a little inspiration.
+                            </p>
                             <button
                               className="text-button"
-                              onClick={openProfile}
+                              disabled={busy}
+                              onClick={() => selectTab("sous-chef")}
                             >
-                              Review your cooking profile{" "}
-                              <span aria-hidden="true">&rarr;</span>
+                              Let&apos;s cook something
+                              <KitchenIcon name="arrow" />
                             </button>
-                          </div>
-                        </section>
-                      )}
+                          </section>
+                        </aside>
+                      </div>
                     </>
                   )}
                 </Tabs.Content>
@@ -426,6 +423,10 @@ export default function App() {
       <footer className="app-footer">
         <span>Thoughtful cooking. Your preferences, respected.</span>
         <span>Profile updates never make AI calls.</span>
+        <details className="font-license">
+          <summary>Jersey 10 font license</summary>
+          <pre>{fontLicense}</pre>
+        </details>
       </footer>
     </div>
   );

@@ -296,7 +296,7 @@ async function onboarding(page: Page) {
   );
   await expect(
     page.getByRole("heading", {
-      name: "Good cooking starts with what you have.",
+      name: "YOUR KITCHEN",
     }),
   ).toBeVisible();
 }
@@ -457,7 +457,7 @@ test("keyboard alone completes onboarding, groceries, recipe save/cooking and fe
   });
   await type(page, ingredient, "Carrots");
   await expect(ingredient).toHaveCSS("outline-style", "solid");
-  await expect(ingredient).toHaveCSS("outline-width", "3px");
+  await expect(ingredient).toHaveCSS("outline-width", "2px");
   await page.keyboard.press("Tab");
   await page.keyboard.press("Shift+Tab");
   await expect(ingredient).toBeFocused();

@@ -47,6 +47,34 @@ ASC-64 / [#59](https://github.com/AgamMakkar21/ai-sous-chef/issues/59) adds
 [keyboard, responsive and accessibility acceptance checks](accessibility-acceptance.md),
 including the recorded walkthrough, browser evidence and testing limitations.
 
+## Visual design
+
+The [supplied design guide](../AI%20SOUS%20DESIGN.md) defines the compact pixel
+kitchen: **YOUR KITCHEN** in Jersey 10, warm orange actions, original inline
+produce sprites, underlined tabs, and a two-column groceries/nutrition workspace.
+`frontend/src/kitchen.css` applies the design tokens and responsive presentation
+over the existing component styles, including chat, history, and the full profile.
+Light-mode functional accents are darkened for readable text contrast; decorative
+produce and headline colors retain the reference palette.
+
+This is a visual adaptation, not the guide's standalone demo. Authentication,
+one server-saved inventory, profile safety fields, recipe workflows, and live USDA
+requests are unchanged. There are no sample kitchens, reset controls, canned
+replies, or browser-stored account data. The inspiration action opens the existing
+Sous Chef tab without sending a request.
+
+Dark is the default. The theme button persists only `sous-chef-theme` in browser
+storage and still works for the current page when storage is unavailable.
+`?scoutTheme=light` and `?scoutTheme=dark` override that preference for previews.
+The supplied Jersey 10 headline subset and its SIL Open Font License are bundled
+inside the existing single-file build; no font CDN is contacted. The license is
+also readable in the footer. Rebuild the subset before changing the headline.
+
+`design.spec.ts` checks the font, theme behavior, reduced motion, and both themes
+at 320, 390, 680, 768, 1024, and 1440 pixels. Existing grocery, profile, recipe,
+conversation, and accessibility tests continue to exercise the real UI with
+synthetic API responses.
+
 ## Build and run
 
 Use Node.js **24 LTS** and npm in the same operating system as `node_modules`.

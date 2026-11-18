@@ -22,6 +22,25 @@
         document.documentElement.setAttribute("data-theme", theme);
       })();
     </script>
+    <script>
+      (() => {
+        const requested = new URLSearchParams(location.search).get(
+          "scoutTheme",
+        );
+        let saved;
+        try {
+          saved = localStorage.getItem("sous-chef-theme");
+        } catch {
+          saved = null;
+        }
+        document.documentElement.dataset.theme =
+          requested === "light" || requested === "dark"
+            ? requested
+            : saved === "light"
+              ? "light"
+              : "dark";
+      })();
+    </script>
     <style>
       :root {
         color-scheme: light;

@@ -11,6 +11,7 @@ import {
   type Inventory,
 } from "./api";
 import type { Session } from "./profile";
+import { IngredientArt, KitchenIcon } from "./KitchenArt";
 
 type Props = {
   session: Session;
@@ -218,8 +219,16 @@ export default function Groceries({
 
   return (
     <section aria-label="Grocery inventory">
-      <div className="card">
-        <h2>Your groceries</h2>
+      <div className="card grocery-card">
+        <div className="card-heading">
+          <div>
+            <p className="eyebrow">01 / THE PREP STATION</p>
+            <h2>Your groceries</h2>
+          </div>
+          <span className="heading-icon">
+            <KitchenIcon name="groceries" />
+          </span>
+        </div>
         <p id="grocery-help">
           Add what you have. Quantity and unit are optional; leave quantity
           blank when unknown. Plus and minus change a known quantity by 1 in its
@@ -268,6 +277,7 @@ export default function Groceries({
                       required
                       maxLength={200}
                       autoComplete="off"
+                      placeholder="e.g. cherry tomatoes"
                       aria-invalid={invalidName}
                       aria-describedby={`grocery-help${invalidName ? " grocery-notice" : ""}`}
                       onChange={() => {
@@ -317,82 +327,89 @@ export default function Groceries({
               >
                 {inventory.items.map((row) => (
                   <li key={row.groceryId} className="grocery-row">
-                    <h3>{row.name}</h3>
-                    <p className="grocery-amount">
-                      {row.quantity === null
-                        ? "Quantity unknown"
-                        : row.quantity}
-                      {row.unit ? ` ${row.unit}` : ""}
-                    </p>
-                    <div className="grocery-controls">
+                    <div className="grocery-row-heading">
+                      <IngredientArt name={row.name} />
+                      <div className="grocery-row-copy">
+                        <h3>{row.name}</h3>
+                        <p className="grocery-amount">
+                          {row.quantity === null
+                            ? "Quantity unknown"
+                            : row.quantity}
+                          {row.unit ? ` ${row.unit}` : ""}
+                        </p>
+                      </div>
                       <button
-                        className="button secondary"
-                        disabled={busy || failed || row.quantity === null}
-                        aria-label={`Decrease ${row.name}`}
-                        onClick={() => adjust(row, -1)}
-                      >
-                        -1
-                      </button>
-                      <button
-                        className="button secondary"
-                        disabled={
-                          busy ||
-                          failed ||
-                          row.quantity === null ||
-                          row.quantity > 999999
-                        }
-                        aria-label={`Increase ${row.name}`}
-                        onClick={() => adjust(row, 1)}
-                      >
-                        +1
-                      </button>
-                      <button
-                        className="button secondary"
+                        className="button secondary grocery-delete"
                         disabled={busy || failed}
                         aria-label={`Delete ${row.name}`}
                         onClick={() => requestRemoval(row)}
                       >
-                        Delete
+                        <KitchenIcon name="trash" />
                       </button>
                     </div>
-                    <form
-                      key={`${inventory.etag}-${failed}`}
-                      aria-label={`Edit ${row.name} quantity`}
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        void save({
-                          method: "PATCH",
-                          id: row.groceryId,
-                          input: {
-                            quantity: quantity(
-                              String(
-                                new FormData(event.currentTarget).get(
-                                  "quantity",
-                                ) ?? "",
-                              ),
-                            ),
-                          },
-                        });
-                      }}
-                    >
-                      <fieldset
-                        className="form-fields grocery-edit"
-                        disabled={busy || failed}
-                      >
-                        <div className="field">
-                          <label htmlFor={`quantity-${row.groceryId}`}>
-                            Quantity for {row.name}
-                          </label>
-                          <QuantityInput
-                            id={`quantity-${row.groceryId}`}
-                            value={row.quantity}
-                          />
-                        </div>
-                        <button className="button secondary" type="submit">
-                          Save quantity
+                    <div className="grocery-quantity-editor">
+                      <div className="grocery-controls">
+                        <button
+                          className="button secondary"
+                          disabled={busy || failed || row.quantity === null}
+                          aria-label={`Decrease ${row.name}`}
+                          onClick={() => adjust(row, -1)}
+                        >
+                          -1
                         </button>
-                      </fieldset>
-                    </form>
+                        <button
+                          className="button secondary"
+                          disabled={
+                            busy ||
+                            failed ||
+                            row.quantity === null ||
+                            row.quantity > 999999
+                          }
+                          aria-label={`Increase ${row.name}`}
+                          onClick={() => adjust(row, 1)}
+                        >
+                          +1
+                        </button>
+                      </div>
+                      <form
+                        key={`${inventory.etag}-${failed}`}
+                        aria-label={`Edit ${row.name} quantity`}
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void save({
+                            method: "PATCH",
+                            id: row.groceryId,
+                            input: {
+                              quantity: quantity(
+                                String(
+                                  new FormData(event.currentTarget).get(
+                                    "quantity",
+                                  ) ?? "",
+                                ),
+                              ),
+                            },
+                          });
+                        }}
+                      >
+                        <fieldset
+                          className="form-fields grocery-edit"
+                          disabled={busy || failed}
+                        >
+                          <div className="field">
+                            <label htmlFor={`quantity-${row.groceryId}`}>
+                              Quantity for {row.name}
+                            </label>
+                            <QuantityInput
+                              id={`quantity-${row.groceryId}`}
+                              value={row.quantity}
+                            />
+                          </div>
+                          <button className="button secondary" type="submit">
+                            Save quantity
+                          </button>
+                        </fieldset>
+                      </form>
+                    </div>
                   </li>
                 ))}
               </ul>

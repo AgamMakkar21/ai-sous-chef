@@ -1,0 +1,928 @@
+@font-face {
+  font-family: "Jersey 10";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./assets/jersey-10-kitchen.woff2") format("woff2");
+}
+
+/* The supplied design palette overrides the shared Clawpilot defaults. */
+:root,
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --cp-bg: #1a1a1a;
+  --cp-text: #dedede;
+  --cp-text-soft: #b0b0b0;
+  --cp-text-muted: #919191;
+  --cp-border-strong: #5f5f5f;
+  --cp-warning: #fbbf24;
+  --cp-danger: #f87171;
+  --cp-success: #4ade80;
+  --cp-orange: color-mix(in srgb, var(--cp-warning) 64%, var(--cp-danger));
+  --cp-coral: var(--cp-danger);
+  --cp-button-ink: var(--cp-bg);
+  --cp-produce-highlight: #dedede;
+  --cp-produce-shadow: #919191;
+  --cp-produce-detail: #5f5f5f;
+  --cp-tomato-shadow: var(--cp-danger);
+  --cp-leaf-shadow: var(--cp-produce-shadow);
+  --cp-avocado-flesh: var(--cp-produce-highlight);
+  --cp-stalk-highlight: var(--cp-produce-highlight);
+  --cp-pixel-shadow: color-mix(
+    in srgb,
+    var(--cp-coral) 32%,
+    var(--cp-button-ink)
+  );
+  --cp-bg-elevated: color-mix(in srgb, var(--cp-bg) 97%, var(--cp-text));
+  --cp-surface: color-mix(in srgb, var(--cp-bg) 95%, var(--cp-text));
+  --cp-surface-soft: color-mix(in srgb, var(--cp-bg) 92%, var(--cp-text));
+  --cp-border: color-mix(in srgb, var(--cp-bg) 85%, var(--cp-text));
+  --cp-accent: var(--cp-orange);
+  --cp-action-text: var(--cp-orange);
+  --cp-status-text: var(--cp-success);
+  --cp-sheen: rgba(255, 255, 255, 0.04);
+  --cp-overlay: rgba(41, 41, 41, 0.88);
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+  --cp-bg: #f7f4f0;
+  --cp-bg-elevated: #fcfbf8;
+  --cp-surface: #ffffff;
+  --cp-surface-soft: #f5f5f5;
+  --cp-border: #dedede;
+  --cp-border-strong: #919191;
+  --cp-text: #242424;
+  --cp-text-muted: #5c5c5c;
+  --cp-text-soft: #6f6f6f;
+  --cp-orange: #db7332;
+  --cp-warning: #e9a23b;
+  --cp-danger: #ca3a31;
+  --cp-success: #4ca154;
+  --cp-button-ink: var(--cp-surface);
+  --cp-pixel-shadow: #e7bcb8;
+  --cp-produce-highlight: #efc6a7;
+  --cp-produce-shadow: #efc6a7;
+  --cp-produce-detail: #8bc89a;
+  --cp-tomato-shadow: #dc8280;
+  --cp-leaf-shadow: #8bc89a;
+  --cp-avocado-flesh: var(--cp-text);
+  --cp-stalk-highlight: var(--cp-text);
+  --cp-sheen: rgba(255, 255, 255, 0.55);
+  --cp-overlay: rgba(255, 255, 255, 0.8);
+  /* Darker functional accents retain readable contrast at compact text sizes. */
+  --cp-action-text: color-mix(in srgb, var(--cp-orange) 68%, var(--cp-text));
+  --cp-accent: var(--cp-action-text);
+  --cp-status-text: color-mix(in srgb, var(--cp-success) 70%, var(--cp-text));
+}
+
+:root,
+html[data-theme] {
+  --cp-accent-hover: color-mix(in srgb, var(--cp-accent) 90%, var(--cp-text));
+  --cp-accent-soft: color-mix(in srgb, var(--cp-orange) 8%, var(--cp-bg));
+  --cp-accent-fg: var(--cp-button-ink);
+  --cp-link: var(--cp-action-text);
+  --cp-grid: color-mix(in srgb, var(--cp-text) 9%, var(--cp-bg));
+  --cp-clear: color-mix(in srgb, var(--cp-bg) 0%, transparent);
+  --cp-hero-start: var(--cp-warning);
+  --cp-hero-middle: var(--cp-orange);
+  --cp-hero-end: var(--cp-coral);
+  --cp-card-shadow: 0 1px 2px var(--cp-sheen);
+}
+
+body {
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select,
+textarea,
+a {
+  transition:
+    border-color 160ms,
+    background-color 160ms,
+    color 160ms;
+}
+
+button:disabled,
+.sign-out[aria-disabled="true"] {
+  opacity: 0.4;
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--cp-action-text);
+}
+
+h2 {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+}
+
+.app-shell {
+  max-width: 1200px;
+  padding: 0 32px;
+}
+
+.app-header {
+  min-height: 98px;
+  padding: 20px 0;
+}
+
+.brand-mark {
+  width: 40px;
+  height: 40px;
+  background: var(--cp-clear);
+}
+
+.brand-mark svg {
+  width: 40px;
+  height: 40px;
+}
+
+.brand-name {
+  font-size: 23px;
+  line-height: 1.15;
+  letter-spacing: -1.1px;
+}
+
+.brand-name > span {
+  color: var(--cp-orange);
+}
+
+.brand-caption,
+.eyebrow,
+.hero-footnote,
+.scene-label,
+.app-footer {
+  font-family: Consolas, "Courier New", Courier, monospace;
+}
+
+.brand-caption {
+  margin-top: 4px;
+  font-size: 9px;
+  letter-spacing: 0.4px;
+  color: var(--cp-text-muted);
+}
+
+.font-license {
+  flex-basis: 100%;
+}
+
+.font-license summary {
+  cursor: pointer;
+  min-height: 44px;
+  padding-block: 12px;
+}
+
+.font-license pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+
+.header-actions {
+  gap: 16px;
+}
+
+.kitchen-icon {
+  display: block;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+}
+
+.button {
+  gap: 8px;
+  padding: 10px 16px;
+  font-size: 12px;
+  border-color: var(--cp-border);
+}
+
+.primary {
+  border-color: var(--cp-accent);
+}
+
+.secondary {
+  background: var(--cp-bg-elevated);
+}
+
+.theme-toggle {
+  padding: 10px;
+  min-width: 44px;
+}
+
+.sign-out {
+  font-size: 12px;
+}
+
+.tab-list {
+  gap: 28px;
+  padding-bottom: 0;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 0;
+  border-bottom: 2px solid var(--cp-clear);
+  background: var(--cp-clear);
+  padding: 12px 2px;
+  margin-bottom: -1px;
+  min-height: 50px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.tab[data-state="active"],
+.tab[data-state="active"]:hover {
+  color: var(--cp-action-text);
+  background: var(--cp-clear);
+  border-bottom-color: var(--cp-action-text);
+  text-decoration: none;
+}
+
+.tab:not(:disabled):hover {
+  color: var(--cp-text);
+  background: var(--cp-clear);
+}
+
+main {
+  padding: 20px 0 32px;
+}
+
+.eyebrow {
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 1.5px;
+  color: var(--cp-action-text);
+  margin-bottom: 8px;
+}
+
+.kitchen-hero {
+  display: flex;
+  align-items: center;
+  min-height: 286px;
+  position: relative;
+  isolation: isolate;
+  margin-bottom: 28px;
+  border-bottom: 1px solid var(--cp-border);
+  background-image: radial-gradient(
+    var(--cp-grid) 0.7px,
+    var(--cp-clear) 0.7px
+  );
+  background-size: 20px 20px;
+}
+
+.hero-copy {
+  position: relative;
+  z-index: 1;
+  width: 58%;
+  padding: 28px 0 36px;
+}
+
+.hero-copy .eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  letter-spacing: 2px;
+  margin-bottom: 16px;
+}
+
+.hero-copy .kitchen-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.kitchen-hero h1 {
+  font-family: "Jersey 10", Consolas, "Courier New", monospace;
+  font-size: clamp(64px, 8vw, 112px);
+  font-weight: 400;
+  font-synthesis: none;
+  line-height: 0.95;
+  letter-spacing: 0;
+  margin: 0 0 20px;
+  background: linear-gradient(
+    180deg,
+    var(--cp-hero-start),
+    var(--cp-hero-middle) 45%,
+    var(--cp-hero-end)
+  );
+  color: var(--cp-action-text);
+  background-clip: text;
+  -webkit-text-fill-color: var(--cp-clear);
+  filter: drop-shadow(0 5px 0 var(--cp-pixel-shadow));
+}
+
+.welcome-copy {
+  font-size: 13px;
+  line-height: 1.7;
+  margin-bottom: 16px;
+  max-width: 400px;
+}
+
+.hero-footnote {
+  color: var(--cp-text-muted);
+  font-size: 9px;
+  letter-spacing: 1.1px;
+  margin-bottom: 0;
+}
+
+.hero-footnote span {
+  color: var(--cp-action-text);
+  padding: 0 4px;
+}
+
+.produce-scene {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 46%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.produce-scene::before {
+  content: "";
+  position: absolute;
+  width: 220px;
+  height: 220px;
+  border: 1px dashed var(--cp-border);
+  border-radius: 50%;
+  top: 30px;
+  left: calc(50% - 110px);
+}
+
+.floating {
+  position: absolute;
+  animation: kitchen-float 6s ease-in-out infinite;
+}
+
+.floating svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.tomato {
+  width: 67px;
+  height: 67px;
+  left: 12%;
+  top: 37px;
+  --tilt: -15deg;
+}
+
+.avocado {
+  width: 65px;
+  height: 80px;
+  right: 9%;
+  top: 34px;
+  animation-delay: -2.1s;
+  --tilt: 18deg;
+}
+
+.carrot {
+  width: 70px;
+  height: 90px;
+  left: 17%;
+  bottom: 25px;
+  animation-delay: -3.4s;
+  --tilt: 22deg;
+}
+
+.lemon {
+  width: 43px;
+  height: 43px;
+  left: 47%;
+  top: 11px;
+  animation-delay: -1.2s;
+  --tilt: -20deg;
+}
+
+.broccoli {
+  width: 77px;
+  height: 83px;
+  right: 14%;
+  bottom: 25px;
+  animation-delay: -4.5s;
+  --tilt: -14deg;
+}
+
+.pot {
+  width: 95px;
+  height: 95px;
+  left: calc(50% - 48px);
+  top: 98px;
+  animation-delay: -0.6s;
+  --tilt: 0deg;
+}
+
+.scene-label {
+  position: absolute;
+  font-size: 9px;
+  color: var(--cp-text-muted);
+  letter-spacing: 1px;
+  right: 30%;
+  top: 204px;
+  transform: rotate(-5deg);
+}
+
+.spark {
+  position: absolute;
+  color: var(--cp-orange);
+  font:
+    18px Consolas,
+    monospace;
+}
+
+.spark.one {
+  left: 4%;
+  top: 149px;
+}
+
+.spark.two {
+  right: 3%;
+  top: 154px;
+  font-size: 12px;
+  color: var(--cp-success);
+}
+
+@keyframes kitchen-float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(var(--tilt, 0deg));
+  }
+  50% {
+    transform: translateY(-11px) rotate(calc(var(--tilt, 0deg) + 5deg));
+  }
+}
+
+.kitchen-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(280px, 1fr);
+  align-items: start;
+  gap: 22px;
+}
+
+.kitchen-workspace > *,
+.kitchen-aside > * {
+  min-width: 0;
+}
+
+.kitchen-aside {
+  display: grid;
+  gap: 18px;
+}
+
+.card {
+  padding: 24px;
+  box-shadow: var(--cp-card-shadow);
+}
+
+.card-heading {
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.card-heading h2 {
+  margin-bottom: 0;
+}
+
+.heading-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--cp-border);
+  border-radius: 10px;
+  color: var(--cp-action-text);
+}
+
+.grocery-card,
+.kitchen-aside .card {
+  margin-bottom: 0;
+}
+
+#grocery-help,
+#nutrition-help {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--cp-text-muted);
+  margin-bottom: 20px;
+}
+
+.grocery-entry {
+  grid-template-columns: minmax(0, 1fr) 110px 110px;
+  gap: 12px 10px;
+}
+
+.grocery-entry > .button {
+  grid-column: 1 / -1;
+}
+
+.field label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cp-text-soft);
+  margin-bottom: 7px;
+}
+
+.field input,
+.field textarea,
+.field select {
+  font-size: 13px;
+  border-color: var(--cp-border-strong);
+  border-radius: 8px;
+  background: var(--cp-bg-elevated);
+  min-height: 44px;
+  padding: 10px 12px;
+}
+
+.field select {
+  margin-top: 0;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  border-color: var(--cp-action-text);
+}
+
+.field input::placeholder,
+.field textarea::placeholder {
+  color: var(--cp-text-muted);
+  opacity: 1;
+}
+
+.grocery-list {
+  margin-top: 20px;
+}
+
+.grocery-row {
+  padding: 20px 0;
+}
+
+.grocery-row:last-child {
+  padding-bottom: 0;
+}
+
+.grocery-row-heading {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.grocery-row-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.ingredient-art {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--cp-surface-soft);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.ingredient-art svg {
+  width: 28px;
+  height: 28px;
+}
+
+.grocery-row h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.grocery-amount {
+  font-size: 12px;
+  color: var(--cp-text-muted);
+  margin-bottom: 0;
+}
+
+.grocery-delete {
+  padding: 10px;
+  min-width: 44px;
+  border-color: var(--cp-clear);
+  background: var(--cp-clear);
+  color: var(--cp-text-muted);
+}
+
+.grocery-delete:hover:not(:disabled) {
+  color: var(--cp-danger);
+}
+
+.grocery-quantity-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  margin-top: 12px;
+  padding-left: 52px;
+}
+
+.grocery-controls,
+.grocery-edit {
+  margin-bottom: 0;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.grocery-quantity-editor > form {
+  min-width: 0;
+  flex: 1 1 220px;
+}
+
+.grocery-edit .field {
+  flex: 1 1 100px;
+  min-width: 80px;
+  max-width: 180px;
+}
+
+.grocery-edit input {
+  font-variant-numeric: tabular-nums;
+}
+
+.grocery-edit label {
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.grocery-controls .button {
+  min-width: 44px;
+  padding-inline: 8px;
+  border-radius: 7px;
+}
+
+.ingredient-lookup {
+  margin-top: 0;
+}
+
+.ingredient-lookup-form {
+  display: grid;
+  gap: 12px;
+}
+
+.ingredient-lookup .privacy-note {
+  margin: 16px 0 0;
+  font-size: 11px;
+  color: var(--cp-text-muted);
+}
+
+.inspiration {
+  position: relative;
+  background: linear-gradient(
+    130deg,
+    color-mix(in srgb, var(--cp-orange) 6%, var(--cp-surface)),
+    var(--cp-surface)
+  );
+}
+
+.inspiration > svg {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  width: 32px;
+  height: 32px;
+  transform: rotate(15deg);
+}
+
+.inspiration .eyebrow {
+  max-width: calc(100% - 40px);
+  margin-bottom: 12px;
+}
+
+.inspiration h2 {
+  font-size: 18px;
+  max-width: 220px;
+}
+
+.inspiration p:not(.eyebrow) {
+  font-size: 13px;
+  line-height: 1.7;
+  max-width: 270px;
+}
+
+.text-button {
+  color: var(--cp-action-text);
+  background: var(--cp-clear);
+  font-size: 13px;
+}
+
+.inspiration .text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0;
+}
+
+.notice,
+.success-notice {
+  font-size: 13px;
+}
+
+.app-footer {
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  color: var(--cp-text-muted);
+}
+
+.recipe-source-tag {
+  border-radius: 4px;
+}
+
+.skip-link {
+  z-index: 10;
+}
+
+@media (min-width: 1500px) {
+  .app-shell {
+    max-width: 1280px;
+  }
+  .kitchen-hero {
+    min-height: 310px;
+  }
+  .produce-scene {
+    max-width: 480px;
+    right: 30px;
+  }
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    padding-inline: 24px;
+  }
+  .kitchen-workspace {
+    grid-template-columns: minmax(0, 1.5fr) minmax(250px, 1fr);
+    gap: 16px;
+  }
+  .kitchen-hero h1 {
+    font-size: clamp(56px, 8vw, 72px);
+  }
+  .grocery-entry {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .grocery-entry > .field:first-child {
+    grid-column: 1 / -1;
+  }
+  .grocery-quantity-editor {
+    padding-left: 0;
+  }
+}
+
+@media (max-width: 680px) {
+  .app-shell {
+    padding-inline: 18px;
+  }
+  .app-header {
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 12px;
+    padding: 20px 0;
+    min-height: 90px;
+  }
+  .brand {
+    gap: 8px;
+  }
+  .brand-caption,
+  .profile-label {
+    display: none;
+  }
+  .brand-name {
+    font-size: 21px;
+  }
+  .brand-mark,
+  .brand-mark svg {
+    width: 32px;
+    height: 32px;
+  }
+  .header-actions {
+    width: auto;
+    gap: 8px;
+  }
+  .header-actions .button {
+    min-width: 44px;
+    padding: 10px;
+  }
+  .sign-out {
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .tab-list {
+    gap: 12px;
+  }
+  .tab {
+    padding: 12px 0;
+    font-size: 12px;
+    gap: 6px;
+    flex: 0 1 auto;
+  }
+  .tab .kitchen-icon {
+    width: 15px;
+    height: 15px;
+  }
+  .kitchen-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .kitchen-hero {
+    min-height: 252px;
+    margin-bottom: 24px;
+  }
+  .hero-copy {
+    width: 100%;
+    padding: 20px 0 28px;
+  }
+  .kitchen-hero h1 {
+    font-size: clamp(52px, 14vw, 80px);
+    max-width: 100%;
+  }
+  .hero-copy .eyebrow {
+    font-size: 9px;
+    margin-bottom: 48px;
+  }
+  .welcome-copy {
+    font-size: 12px;
+  }
+  .hero-footnote {
+    font-size: 8px;
+  }
+  .produce-scene {
+    width: 100%;
+    height: 56px;
+    top: 26px;
+  }
+  .produce-scene::before,
+  .produce-scene .pot,
+  .produce-scene .lemon,
+  .produce-scene .broccoli,
+  .scene-label,
+  .spark {
+    display: none;
+  }
+  .produce-scene .tomato {
+    width: 32px;
+    height: 32px;
+    left: 52%;
+    top: 4px;
+  }
+  .produce-scene .avocado {
+    width: 28px;
+    height: 36px;
+    right: 8%;
+    top: 0;
+  }
+  .produce-scene .carrot {
+    width: 26px;
+    height: 38px;
+    left: 68%;
+    top: 12px;
+    bottom: auto;
+  }
+  .card {
+    padding: 20px;
+  }
+  .grocery-entry {
+    gap: 12px 8px;
+  }
+  .grocery-edit {
+    flex-wrap: wrap;
+  }
+  .grocery-edit .field {
+    flex-basis: 100px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+  button:active:not(:disabled) {
+    transform: none;
+  }
+}
