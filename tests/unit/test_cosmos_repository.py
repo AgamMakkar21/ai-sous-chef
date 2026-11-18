@@ -314,6 +314,14 @@ class Transport(AsyncHttpTransport[HttpRequest, AsyncHttpResponse]):
                 and document["recordKind"] == parameters["@kind"]
                 and document["createdAt"] <= parameters.get("@upper", "9999")
                 and (
+                    "NOT IS_DEFINED(c.deleted)" not in body["query"]
+                    or document.get("deleted") is not True
+                )
+                and (
+                    "c.nextTurnIndex > 0" not in body["query"]
+                    or document.get("nextTurnIndex", 0) > 0
+                )
+                and (
                     "@retainedAfter" not in parameters
                     or document["createdAt"] > parameters["@retainedAfter"]
                 )

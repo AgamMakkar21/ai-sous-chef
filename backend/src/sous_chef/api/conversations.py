@@ -108,6 +108,17 @@ def create_conversation_router(
         response.headers["Cache-Control"] = "no-store"
         return await ConversationService(settings).turns(user, conversation_id, parameters)
 
+    @router.delete("/{conversation_id}", status_code=204)
+    async def delete_conversation(
+        conversation_id: UUID4,
+        user: CurrentUser,
+        request: Request,
+    ) -> Response:
+        if request.query_params or await request.body():
+            raise RequestValidationError([{"type": "extra_forbidden", "loc": ("request",)}])
+        await ConversationService(settings).delete(user, conversation_id)
+        return Response(status_code=204, headers={"Cache-Control": "no-store"})
+
     @router.post("/{conversation_id}/turns", response_model=TurnEnvelope | OperationEnvelope)
     async def send_turn(
         conversation_id: UUID4,

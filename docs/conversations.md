@@ -142,6 +142,26 @@ listing. It does not affect conversation IDs, stored history or creation
 deduplication. Do not log keys, cursors, idempotency keys, titles or messages.
 Do not change Azure settings or deploy as part of local implementation.
 
+## Chat lifecycle
+
+New Chat opens a browser-only draft. Opening another draft, switching tabs or
+reloading without sending does not create a conversation on the server. On the
+first send, the client creates the conversation with a stable idempotency key
+before submitting the request. Uncertain creation is reconciled with that same
+key, never by automatically creating another chat. Conversation lists exclude
+metadata with no accepted turns, including older empty chats and creation
+attempts whose first send was rejected. Failed or pending accepted requests
+still count as history.
+
+Select a saved chat and choose Delete chat to remove it after confirmation.
+Deletion clears its selected navigation and operation reference, while leaving
+other chats and saved Recipe History entries intact. It is a conditional soft
+deletion: the chat and its transcript become inaccessible immediately and
+cannot be restored through the app; underlying records follow the existing
+retention and account-erasure policies. An active or unresolved request must
+be completed or explicitly closed before deletion. A concurrent send and delete
+cannot both claim the same conversation revision.
+
 ## HTTP contract
 
 All routes require the existing verified `CurrentUser` boundary. Cookie-authenticated
@@ -153,6 +173,7 @@ Successful responses use `Cache-Control: no-store`.
 | `POST /api/v1/conversations` | JSON object with optional `title`; required `Idempotency-Key` header | 201 `{ "data": { "conversationId", "title", "createdAt", "updatedAt" } }`, `ETag`, and `Location` pointing to its turns |
 | `GET /api/v1/conversations` | Optional `limit` and `cursor` query parameters | 200 `{ "items": [summaries], "nextCursor": string or null }` |
 | `GET /api/v1/conversations/{conversationId}/turns` | Server-issued UUIDv4; optional `limit` and `cursor` | 200 `{ "items": [turns], "nextCursor": string or null }` |
+| `DELETE /api/v1/conversations/{conversationId}` | Owned UUIDv4; no body or query parameters; normal mutation CSRF protection | 204, including a repeated deletion; 404 for missing/foreign chats; 409 for active work or a changed revision |
 
 An omitted title becomes `New conversation`. Titles are trimmed and must contain
 1-100 Unicode code points; non-string values and unknown mutation properties

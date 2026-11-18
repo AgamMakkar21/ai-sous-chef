@@ -99,6 +99,7 @@ CASES = (
     EndpointCase("POST", BASE, 201, {"title": "matrix new conversation"}, None),
     EndpointCase("GET", BASE, guarded_record="conversation"),
     EndpointCase("GET", BASE + "/{conversation_id}/turns", guarded_record="conversation"),
+    EndpointCase("DELETE", BASE + "/{conversation_id}", 204, guarded_record="conversation"),
     SEND_CASE,
     INSPECT_CASE,
     CLOSE_CASE,
@@ -249,6 +250,12 @@ def two_user_api(
                 turns.append(str(result.json()["data"]["turnId"]))
                 if index == 0:
                     generated_recipe_id = result.json()["data"]["generatedRecipeId"]
+            assert (
+                send(
+                    client, second, key="seed-second-chat", content=f"{marker} second question"
+                ).status_code
+                == 200
+            )
             saved = client.post(
                 "/api/v1/recipes",
                 json={"generatedRecipeId": generated_recipe_id, "cooked": True},
@@ -344,6 +351,23 @@ def test_structured_recipe_and_reference_stay_in_the_authenticated_partition(
     assert_problem(inspected, 404, "not_found")
     assert turn["generatedRecipeId"] not in denied.text + inspected.text
     assert len(api.executor.calls) == calls
+
+
+def test_chat_deletion_keeps_saved_recipes_and_other_chats(two_user_api: TwoUserApi) -> None:
+    actor = two_user_api.users[0]
+    client = two_user_api.client
+    response = client.delete(f"{BASE}/{actor.conversation_id}", headers=actor.headers)
+    assert response.status_code == 204
+    assert (
+        client.get(f"/api/v1/recipes/{actor.history_id}", headers=actor.headers).status_code == 200
+    )
+    assert (
+        client.get(
+            f"{BASE}/{actor.second_conversation_id}/turns", headers=actor.headers
+        ).status_code
+        == 200
+    )
+    assert client.get(actor.path(INSPECT_CASE), headers=actor.headers).status_code == 404
 
 
 @pytest.mark.parametrize("include_in_schema", [True, False])

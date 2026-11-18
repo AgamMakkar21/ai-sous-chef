@@ -140,8 +140,9 @@ none accepts a `userId` route/body field.
 | `POST /groceries` | Add name, optional quantity/unit; duplicate check and collection ETag |
 | `PATCH /groceries/{groceryId}` | Set a positive quantity or explicit unknown (`null`), and/or selected unit/name, conditionally |
 | `DELETE /groceries/{groceryId}` | Remove a confirmed row conditionally |
-| `POST /conversations` | Create an empty owned conversation |
-| `GET /conversations` | Paginated summaries |
+| `POST /conversations` | Create owned conversation metadata; the browser calls this on the first send, not when opening an empty draft |
+| `GET /conversations` | Paginated nonempty, non-deleted summaries |
+| `DELETE /conversations/{conversationId}` | Conditionally soft-delete an owned chat; repeat deletion returns 204, active work or a changed revision returns 409; no body or query parameters |
 | `GET /conversations/{conversationId}/turns` | Paginated ordered complete-exchange records, including explicit pending/failure state |
 | `POST /conversations/{conversationId}/turns` | Accept user text under one idempotency key; create a pending turn and persist validated output in that same turn |
 | `GET /conversations/{conversationId}/operations/{operationId}` | Inspect known pending/completed/failed/unknown send outcome without another model invocation |
@@ -237,7 +238,7 @@ Transactions are limited to one container and logical partition; sharing
 | Grocery row | `groceryId`, `name`, `ingredientId?`, `quantity: number or null`, `unit: string or null`, `updatedAt` |
 | Explicit preferences | `allergies[]`, `dietaryRestrictions[]`, `likes[]`, `dislikes[]`, `preferredCuisines[]`, `spicePreference`, `cookingSkill`, `typicalTimeBudgetMinutes`, `nutritionGoals[]` |
 | Learned candidate | `insightKey`, `insight`, `confidence`, `evidenceCount`, `supportingCookedCount`, `supportUnits`, `oppositionUnits`, `source: "recipe_feedback"`, `lastUpdated`, `latestEvidenceAt`, `policyVersion` |
-| `ChatHistory.conversation` | `conversationId`, `title`, `nextTurnIndex`, last activity and active-operation reference; no turn array |
+| `ChatHistory.conversation` | `conversationId`, `title`, `nextTurnIndex`, last activity and active-operation reference; optional `deleted` flag (absent means false); no turn array |
 | `ChatHistory.turn` | `conversationId`, `turnIndex`, status, bounded `messages[]`, current operation reference, optional validated recipe snapshot and bounded tool/source references |
 | Turn message | Server-issued `messageId`, server-controlled `role: user/assistant`, `entityId`, `content`, `timestamp`; no browser-controlled role/entity |
 | `ChatHistory.sendOperation` | `conversationId`, `turnId`, idempotency identity/hash, attempt state, `providerResponseId?`, turn/result references, safe failure code |
@@ -281,7 +282,9 @@ ASC-21 stores a separate internal `ChatHistory.conversationCreation` receipt
 atomically with newly created conversation metadata. It holds the canonical
 creation-request hash and conversation reference. Its deterministic,
 operation-scoped `conversation-create:<digest>` ID is not a public resource ID.
-Receipts remain until conversation deletion and never appear in history lists.
+Receipts never appear in history lists. Soft-deleted conversations cannot be
+revived by replaying their creation receipt; underlying records follow the
+existing retention and account-erasure policies.
 See [the implemented conversation API](../conversations.md) for exact requests,
 public projections and encrypted cursor configuration.
 

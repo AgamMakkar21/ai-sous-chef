@@ -156,11 +156,20 @@ through the existing sign-in flow, and late responses after navigation are ignor
 ## Conversation navigation (ASC-39)
 
 The Sous Chef tab uses the existing owned conversation APIs, not a second history
-store or a model call. New Chat creates an empty conversation only on explicit
-action. Each creation has a fresh idempotency key and uses a freshly verified
+store or a model call. New Chat opens a local draft; no server conversation is
+created until its first valid request is sent. Empty drafts are discarded on
+leaving or reloading, and saved lists exclude chats without accepted turns.
+First-send creation has a stable idempotency key and uses a freshly verified
 session and CSRF token. An uncertain result or CSRF failure never automatically
-replays the write: **Check chat creation** explicitly repeats the same key/body.
-The backend receipt resolves a committed creation to the original opaque ID.
+replays the write: **Check this request** explicitly repeats the same creation
+key/body before sending. The backend receipt resolves a committed creation to the
+original opaque ID, which is remembered before submitting the first request.
+
+Select a saved chat and choose **Delete chat** to confirm deletion. The action
+clears selected navigation and its remembered operation, refreshes the list and
+keeps saved Recipe History entries. Failures remain explicit and can be retried;
+active or unresolved work must finish or be closed before deletion. Chat deletion
+uses the [soft-deletion and retention contract](conversations.md#chat-lifecycle).
 
 Session storage retains only the selected opaque conversation UUID, any unresolved
 creation key and a SHA-256 owner scope. It contains no messages, titles, user IDs,

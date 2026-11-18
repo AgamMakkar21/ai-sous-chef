@@ -62,9 +62,12 @@ async function conversations(page: BrowserPage) {
     ]),
     reads: [] as string[],
     writes: [] as { key: string; token: string | undefined; body: unknown }[],
+    sends: [] as string[],
+    loseSendResponse: false,
+    deletes: [] as { id: string; token: string | undefined }[],
     receipts: new Map<string, Conversation>(),
     failure: null as {
-      target: "list" | "history" | "create";
+      target: "list" | "history" | "create" | "delete";
       status: number;
       commit?: boolean;
       html?: boolean;
@@ -74,11 +77,41 @@ async function conversations(page: BrowserPage) {
   await page.route("**/api/v1/conversations**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    const creating = request.method() === "POST";
     const id = url.pathname.split("/")[4];
-    const target = creating ? "create" : id ? "history" : "list";
+    if (request.method() === "POST" && url.pathname.endsWith("/turns")) {
+      if (!id) throw new Error("Missing conversation ID.");
+      const saved = turn(id, request.postDataJSON().content as string);
+      state.sends.push(id);
+      state.turns.set(`${id}:`, { items: [saved], nextCursor: null });
+      if (state.loseSendResponse) {
+        state.loseSendResponse = false;
+        await route.abort("failed");
+        return;
+      }
+      await route.fulfill({ json: { data: saved } });
+      return;
+    }
+    const creating = request.method() === "POST";
+    const deleting = request.method() === "DELETE";
+    const target = deleting
+      ? "delete"
+      : creating
+        ? "create"
+        : id
+          ? "history"
+          : "list";
     const failure = state.failure?.target === target ? state.failure : null;
     if (failure) state.failure = null;
+    if (deleting) {
+      if (!id) throw new Error("Missing conversation ID.");
+      state.deletes.push({ id, token: request.headers()["x-csrf-token"] });
+      if (!failure) {
+        state.chats = state.chats.filter((chat) => chat.conversationId !== id);
+        state.turns.delete(`${id}:`);
+        await route.fulfill({ status: 204 });
+        return;
+      }
+    }
     if (creating) {
       expect(url.pathname).toBe("/api/v1/conversations");
       const key = request.headers()["idempotency-key"];
@@ -102,7 +135,7 @@ async function conversations(page: BrowserPage) {
         await route.fulfill({ status: 201, json: { data: created } });
         return;
       }
-    } else {
+    } else if (!deleting) {
       state.reads.push(`${url.pathname}${url.search}`);
       expect(url.searchParams.get("limit")).toBe("20");
       expect([...url.searchParams.keys()].sort()).toEqual(
@@ -171,7 +204,7 @@ async function choose(page: BrowserPage, title: string) {
   await page.getByRole("button", { name: title, exact: false }).click();
 }
 
-test("New Chat creates independent stable IDs with current CSRF and no messages sent", async ({
+test("empty drafts are not saved and the first send creates one chat with current CSRF", async ({
   page,
 }) => {
   const { chat, state } = await conversations(page);
@@ -185,33 +218,40 @@ test("New Chat creates independent stable IDs with current CSRF and no messages 
   await expect(
     page.getByText("No messages in this chat yet.", { exact: true }),
   ).toBeVisible();
-  const first = [...chat.receipts.values()][0];
-  if (!first) throw new Error("Missing first created conversation.");
+  expect(chat.writes).toHaveLength(0);
   await page.getByRole("button", { name: "New Chat", exact: true }).click();
-  await expect.poll(() => chat.receipts.size).toBe(2);
   await expect(
     page.getByText("No messages in this chat yet.", { exact: true }),
   ).toBeVisible();
-  const second = [...chat.receipts.values()][1];
-  if (!second) throw new Error("Missing second created conversation.");
-  expect(second.conversationId).not.toBe(first.conversationId);
-  expect(chat.writes.map((write) => write.body)).toEqual([{}, {}]);
-  expect(chat.writes.map((write) => write.token)).toEqual([
-    "r".repeat(43),
-    "r".repeat(43),
-  ]);
-  expect(chat.writes[0]?.key).not.toBe(chat.writes[1]?.key);
+  expect(chat.writes).toHaveLength(0);
+  expect(chat.reads.every((read) => !read.includes("/turns"))).toBe(true);
   await page.reload();
   await expect(
-    page.getByText("No messages in this chat yet.", { exact: true }),
+    page.getByRole("region", { name: "No conversation selected" }),
   ).toBeVisible();
-  expect(chat.reads.at(-1)).toContain(`/${second.conversationId}/turns?`);
-  expect(chat.writes).toHaveLength(2);
+  await page.getByRole("button", { name: "New Chat", exact: true }).click();
+  await page.getByRole("textbox").fill("   ");
+  await page.getByRole("button", { name: "Send request", exact: true }).click();
+  await expect(
+    page.getByText("Write a request between 1 and 4,000 characters."),
+  ).toBeVisible();
+  expect(chat.writes).toHaveLength(0);
+  await page.getByRole("textbox").fill("A quick dinner");
+  await page.getByRole("button", { name: "Send request", exact: true }).click();
+  await expect(
+    page.getByText("Reply: A quick dinner", { exact: true }),
+  ).toBeVisible();
+  expect(chat.writes.map((write) => write.body)).toEqual([{}]);
+  expect(chat.writes[0]?.token).toBe("r".repeat(43));
+  expect(chat.sends).toHaveLength(1);
+  await page.reload();
+  await expect(
+    page.getByText("Reply: A quick dinner", { exact: true }),
+  ).toBeVisible();
   await openChats(page);
-  await page.locator(".conversation-list .conversation-choice").last().click();
-  await expect
-    .poll(() => chat.reads.at(-1))
-    .toContain(`/${first.conversationId}/turns?`);
+  await expect(
+    page.locator(".conversation-list .conversation-choice"),
+  ).toHaveCount(1);
 });
 
 test("selecting, switching tabs and reloading preserve the right transcript and highlight", async ({
@@ -419,25 +459,23 @@ test("list, history and malformed/foreign history failures stay explicit and pri
   ).toBeVisible();
 });
 
-test("uncertain creation survives reload and reconciles the original key only on explicit action", async ({
+test("uncertain first-send creation retries the original key only on explicit action", async ({
   page,
 }) => {
   const { chat } = await conversations(page);
   chat.failure = { target: "create", status: 0, commit: true };
   await page.goto("/#sous-chef");
   await page.getByRole("button", { name: "New Chat", exact: true }).click();
+  await page.getByRole("textbox").fill("A quick dinner");
+  await page.getByRole("button", { name: "Send request", exact: true }).click();
   await expect(
-    page.getByText("Chat creation is not confirmed.", { exact: false }),
+    page.getByText("No completed answer is confirmed.", { exact: false }),
   ).toBeVisible();
   expect(chat.writes).toHaveLength(1);
-  await page.reload();
+  expect(chat.sends).toHaveLength(0);
+  await page.getByRole("button", { name: "Check this request" }).click();
   await expect(
-    page.getByRole("button", { name: "Check chat creation" }),
-  ).toBeEnabled();
-  expect(chat.writes).toHaveLength(1);
-  await page.getByRole("button", { name: "Check chat creation" }).click();
-  await expect(
-    page.getByText("No messages in this chat yet.", { exact: true }),
+    page.getByText("Reply: A quick dinner", { exact: true }),
   ).toBeVisible();
   expect(chat.writes).toHaveLength(2);
   expect(chat.writes[1]?.key).toBe(chat.writes[0]?.key);
@@ -451,17 +489,93 @@ test("CSRF failures do not replay creation and a reviewed retry uses a fresh tok
   chat.failure = { target: "create", status: 403 };
   await page.goto("/#sous-chef");
   await page.getByRole("button", { name: "New Chat", exact: true }).click();
+  await page.getByRole("textbox").fill("A quick dinner");
+  await page.getByRole("button", { name: "Send request", exact: true }).click();
   await expect(
     page.getByText("Your security token changed.", { exact: false }),
   ).toBeVisible();
   expect(chat.writes).toHaveLength(1);
   state.token = "r".repeat(43);
-  await page.getByRole("button", { name: "Check chat creation" }).click();
+  await page.getByRole("button", { name: "Check this request" }).click();
   await expect(
-    page.getByText("No messages in this chat yet.", { exact: true }),
+    page.getByText("Reply: A quick dinner", { exact: true }),
   ).toBeVisible();
   expect(chat.writes[1]?.token).toBe("r".repeat(43));
   expect(chat.writes[1]?.key).toBe(chat.writes[0]?.key);
+});
+
+test("a lost first-send response restores the real chat without creating or sending again", async ({
+  page,
+}) => {
+  const { chat } = await conversations(page);
+  chat.loseSendResponse = true;
+  await page.goto("/#sous-chef");
+  await page.getByRole("button", { name: "New Chat", exact: true }).click();
+  await page.getByRole("textbox").fill("A quick dinner");
+  await page.getByRole("button", { name: "Send request", exact: true }).click();
+  await expect(
+    page.getByText("No completed answer is confirmed.", { exact: false }),
+  ).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.reload();
+  await expect(
+    page.getByText("Reply: A quick dinner", { exact: true }),
+  ).toBeVisible();
+  expect(chat.writes).toHaveLength(1);
+  expect(chat.sends).toHaveLength(1);
+});
+
+test("delete confirms intent, uses current CSRF and clears the selected chat across reloads", async ({
+  page,
+}) => {
+  const { chat, state } = await conversations(page);
+  await page.goto("/#sous-chef");
+  await choose(page, "Quick lunches");
+  await expect(
+    page.getByText("Lemony lunch ideas", { exact: true }),
+  ).toBeVisible();
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page.getByRole("button", { name: "Delete chat", exact: true }).click();
+  expect(chat.deletes).toHaveLength(0);
+  state.token = "r".repeat(43);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Delete chat", exact: true }).click();
+  await expect(
+    page.getByRole("region", { name: "No conversation selected" }),
+  ).toBeVisible();
+  expect(chat.deletes).toEqual([{ id: firstId, token: "r".repeat(43) }]);
+  await page.reload();
+  await openChats(page);
+  await expect(
+    page.getByRole("button", { name: "Quick lunches", exact: false }),
+  ).toHaveCount(0);
+  await choose(page, "Weekend dinners");
+  await expect(
+    page.getByText("Weekend vegetable supper", { exact: true }),
+  ).toBeVisible();
+});
+
+test("failed deletion keeps the selected chat and allows an explicit retry", async ({
+  page,
+}) => {
+  const { chat } = await conversations(page);
+  await page.goto("/#sous-chef");
+  await choose(page, "Quick lunches");
+  chat.failure = { target: "delete", status: 503 };
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Delete chat", exact: true }).click();
+  await expect(
+    page.getByText("Chat deletion could not be confirmed.", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Lemony lunch ideas", { exact: true }),
+  ).toBeVisible();
+  expect(chat.deletes).toHaveLength(1);
+  await page.getByRole("button", { name: "Delete chat", exact: true }).click();
+  await expect(
+    page.getByRole("region", { name: "No conversation selected" }),
+  ).toBeVisible();
+  expect(chat.deletes).toHaveLength(2);
 });
 
 for (const failure of ["html401", "identity"] as const) {

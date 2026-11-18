@@ -24,6 +24,7 @@ from sous_chef.domain.cosmos import (
     NewRecord,
     ProductContainer,
     RecordKind,
+    RecordPatch,
 )
 from sous_chef.services import conversations, pagination
 from sous_chef.settings import ConfigurationError, Settings
@@ -129,6 +130,17 @@ def seed_turns(
                     ),
                 )
                 ids.append(str(record.body["id"]))
+            conversation = await repository.read(user, CHAT, conversation_id)
+            if conversation is not None:
+                await repository.patch(
+                    user,
+                    CHAT,
+                    conversation_id,
+                    RecordPatch(
+                        etag=conversation.etag,
+                        fields={"nextTurnIndex": max(indices) + 1},
+                    ),
+                )
         return ids
 
     return asyncio.run(scenario())
@@ -177,9 +189,8 @@ def test_creation_is_owned_idempotent_and_has_no_transcript(
     assert conversation["nextTurnIndex"] == 0
     assert conversation["activeOperationId"] is None
     assert conversation["title"] == "Private title"
-    listed = api.get(BASE).json()["items"][0]
-    assert listed["createdAt"] == conversation["createdAt"] == "2026-01-01T00:00:00.000000Z"
-    assert listed["updatedAt"] == conversation["updatedAt"]
+    assert api.get(BASE).json() == {"items": [], "nextCursor": None}
+    assert conversation["createdAt"] == "2026-01-01T00:00:00.000000Z"
     assert "messages" not in conversation
     assert not any(name == "Users" for name, _, _ in transport.documents)
     assert api.get(f"{BASE}/{first}/turns").json() == {"items": [], "nextCursor": None}
@@ -265,6 +276,7 @@ def test_incomplete_turns_have_no_claimed_assistant_success(
     assert result.status_code == 200
     assert result.json()["items"][0]["status"] == status
     assert [message["role"] for message in result.json()["items"][0]["messages"]] == ["user"]
+    assert [item["conversationId"] for item in pages(api, BASE)] == [conversation_id]
 
 
 def test_conversation_pagination_keeps_ties_and_first_upper_bound(
@@ -276,6 +288,8 @@ def test_conversation_pagination_keeps_ties_and_first_upper_bound(
     transport, _ = harness
     ids = [create(api, f"Conversation {index}") for index in range(5)]
     seed_turns(conversation_settings, OWNER, ids[0], (0, 1, 2))
+    for conversation_id in ids[1:]:
+        seed_turns(conversation_settings, OWNER, conversation_id, (0,))
     response = api.get(BASE, params={"limit": 2})
     assert response.status_code == 200
     first = response.json()
@@ -378,10 +392,13 @@ def test_invalid_query_and_client_scope_are_rejected(api: TestClient, query: str
 
 
 def test_untrusted_identity_hints_cannot_change_the_scope(
-    api: TestClient, harness: tuple[Transport, SyntheticCredential]
+    api: TestClient,
+    harness: tuple[Transport, SyntheticCredential],
+    conversation_settings: Settings,
 ) -> None:
     transport, _ = harness
     item_id = create(api)
+    seed_turns(conversation_settings, OWNER, item_id, (0,))
     response = api.get(
         BASE,
         headers={
@@ -407,6 +424,8 @@ def test_cursors_are_authenticated_bound_and_expire_without_refreshing(
     ids = [create(api) for _ in range(4)]
     seed_turns(conversation_settings, OWNER, ids[0], (0, 1, 2))
     seed_turns(conversation_settings, OWNER, ids[1], (0, 1))
+    for conversation_id in ids[2:]:
+        seed_turns(conversation_settings, OWNER, conversation_id, (0,))
     now = int(time())
     monkeypatch.setattr(pagination, "time", lambda: now)
     cursor = api.get(BASE, params={"limit": 1}).json()["nextCursor"]
@@ -510,6 +529,7 @@ def test_two_signed_users_reuse_creation_keys_without_sharing_history(
     api: TestClient,
     harness: tuple[Transport, SyntheticCredential],
     signing_key: rsa.RSAPrivateKey,
+    conversation_settings: Settings,
 ) -> None:
     transport, _ = harness
     key = str(uuid4())
@@ -528,6 +548,7 @@ def test_two_signed_users_reuse_creation_keys_without_sharing_history(
     assert response.status_code == 201
     second = response.json()["data"]["conversationId"]
     assert first != second
+    seed_turns(conversation_settings, OTHER, second, (0,))
     listed = api.get(BASE, headers=other_headers)
     assert listed.status_code == 200
     assert [item["conversationId"] for item in listed.json()["items"]] == [second]
@@ -545,7 +566,9 @@ def test_cursor_rotation_does_not_break_durable_creation(
 ) -> None:
     key = str(uuid4())
     original = create(api, key=key)
-    create(api)
+    second = create(api)
+    seed_turns(conversation_settings, OWNER, original, (0,))
+    seed_turns(conversation_settings, OWNER, second, (0,))
     cursor = api.get(BASE, params={"limit": 1}).json()["nextCursor"]
     rotated = conversation_settings.model_copy(
         update={"pagination_key": SecretStr(Fernet.generate_key().decode())}
@@ -553,6 +576,59 @@ def test_cursor_rotation_does_not_break_durable_creation(
     with TestClient(create_app(rotated), headers=auth_headers) as restarted:
         assert create(restarted, key=key) == original
         assert restarted.get(BASE, params={"cursor": cursor}).status_code == 400
+
+
+def test_delete_hides_history_and_is_idempotent_without_affecting_other_chats(
+    api: TestClient,
+    conversation_settings: Settings,
+) -> None:
+    key = str(uuid4())
+    first, second = create(api, key=key), create(api)
+    create(api)
+    seed_turns(conversation_settings, OWNER, first, (0,))
+    seed_turns(conversation_settings, OWNER, second, (0,), "failed")
+    assert len(pages(api, BASE)) == 2
+    response = api.delete(f"{BASE}/{first}")
+    assert response.status_code == 204
+    assert response.headers["cache-control"] == "no-store"
+    assert api.delete(f"{BASE}/{first}").status_code == 204
+    replay = api.post(
+        BASE, json={"title": "Private conversation"}, headers={"Idempotency-Key": key}
+    )
+    assert replay.status_code == 404
+    assert api.get(f"{BASE}/{first}/turns").status_code == 404
+    assert (
+        api.post(
+            f"{BASE}/{first}/turns",
+            json={"content": "Another request"},
+            headers={"Idempotency-Key": str(uuid4())},
+        ).status_code
+        == 404
+    )
+    assert [item["conversationId"] for item in pages(api, BASE)] == [second]
+    assert api.get(f"{BASE}/{second}/turns").status_code == 200
+
+
+def test_delete_rejects_foreign_missing_and_active_chats(
+    api: TestClient,
+    harness: tuple[Transport, SyntheticCredential],
+) -> None:
+    transport, _ = harness
+    owned = create(api)
+    foreign = str(uuid4())
+    record = transport.documents[(CHAT.value, OWNER.user_id, owned)]
+    transport.documents[(CHAT.value, OTHER.user_id, foreign)] = {
+        **record,
+        "id": foreign,
+        "conversationId": foreign,
+        "userId": OTHER.user_id,
+    }
+    for identifier in (foreign, str(uuid4())):
+        assert api.delete(f"{BASE}/{identifier}").status_code == 404
+    record["activeOperationId"] = str(uuid4())
+    assert api.delete(f"{BASE}/{owned}").status_code == 409
+    assert record.get("deleted") is not True
+    assert api.delete(f"{BASE}/{owned}?userId=forged").status_code == 422
 
 
 def test_batch_rejection_is_atomic_and_has_bounded_safe_throttle_retry(
@@ -616,13 +692,18 @@ def test_cookie_mutations_still_require_origin_and_csrf(
     }
     with TestClient(create_app(hosted), base_url="https://testserver", headers=headers) as client:
         assert client.post(BASE, json={}).status_code == 403
+        assert client.delete(f"{BASE}/{uuid4()}").status_code == 403
         session = client.get("/auth/session")
         assert session.status_code == 200
         client.headers["X-CSRF-Token"] = session.json()["csrfToken"]
         client.headers["Origin"] = "https://wrong-origin.invalid"
         assert client.post(BASE, json={}).status_code == 403
+        assert client.delete(f"{BASE}/{uuid4()}").status_code == 403
         client.headers["Origin"] = "https://testserver"
-        assert client.post(BASE, json={}).status_code == 201
+        response = client.post(BASE, json={})
+        assert response.status_code == 201
+        conversation_id = response.json()["data"]["conversationId"]
+        assert client.delete(f"{BASE}/{conversation_id}").status_code == 204
 
 
 def test_chunked_oversize_body_is_rejected_without_a_content_length(

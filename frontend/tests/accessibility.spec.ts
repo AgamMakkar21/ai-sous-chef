@@ -656,12 +656,29 @@ test("explicit chat selection focuses its transcript without stealing focus on t
   });
   if ((await sidebar.getAttribute("aria-expanded")) === "false")
     await activate(page, sidebar);
-  const selectedChat = page
-    .getByRole("navigation", { name: "Conversations", exact: true })
-    .getByRole("button", { name: "New chat", exact: false });
+  const chats = page.getByRole("navigation", {
+    name: "Conversations",
+    exact: true,
+  });
+  await expect(chats.getByRole("button")).toHaveCount(0);
+  const content = "Carrot rice for dinner";
+  await page
+    .getByRole("textbox", { name: "What would you like to cook?" })
+    .fill(content);
+  await activate(
+    page,
+    page.getByRole("button", { name: "Send request", exact: true }),
+  );
+  await expect(
+    page.getByRole("region", { name: "Simple carrot rice", exact: true }),
+  ).toBeVisible();
+  const selectedChat = chats.getByRole("button", {
+    name: content,
+    exact: false,
+  });
   await activate(page, selectedChat);
   await expect(
-    page.getByRole("heading", { name: "New chat", exact: true }),
+    page.getByRole("heading", { name: content, exact: true }),
   ).toBeFocused();
   await activate(
     page,
@@ -669,7 +686,7 @@ test("explicit chat selection focuses its transcript without stealing focus on t
   );
   await page.keyboard.press("ArrowRight");
   await expect(
-    page.getByRole("heading", { name: "New chat", exact: true }),
+    page.getByRole("heading", { name: content, exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("tab", { name: "Sous Chef", exact: true }),

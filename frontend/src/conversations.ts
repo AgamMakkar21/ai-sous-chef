@@ -479,3 +479,17 @@ export async function createConversation(
     throw new ApiError(502, "invalid_response");
   return value.data;
 }
+
+export async function deleteConversation(
+  session: Session,
+  conversationId: string,
+  signal: AbortSignal,
+): Promise<void> {
+  const current = await verifySession(session, signal);
+  const response = await request(`/api/v1/conversations/${conversationId}`, {
+    method: "DELETE",
+    signal,
+    headers: { "X-CSRF-Token": current.csrfToken },
+  });
+  if (response.status !== 204) throw new ApiError(502, "invalid_response");
+}

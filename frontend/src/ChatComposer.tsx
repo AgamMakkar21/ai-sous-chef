@@ -35,6 +35,7 @@ export default function ChatComposer({
   onBusy,
   onDirty,
   blocked = false,
+  prepare,
 }: {
   id: string;
   owner: string;
@@ -47,6 +48,7 @@ export default function ChatComposer({
   onBusy: (busy: boolean) => void;
   onDirty: (dirty: boolean) => void;
   blocked?: boolean;
+  prepare?: (signal: AbortSignal) => Promise<string>;
 }) {
   const [draft, setDraft] = useState("");
   const [phase, setPhase] = useState<Phase>("checking");
@@ -55,6 +57,7 @@ export default function ChatComposer({
   const [validation, setValidation] = useState("");
   const [storageNotice, setStorageNotice] = useState("");
   const attempt = useRef<ChatAttempt | null>(null);
+  const conversationId = useRef(id);
   const busy = useRef(false);
   const lifetime = useRef<AbortController | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -74,14 +77,14 @@ export default function ChatComposer({
   const remember = useCallback(
     (operation: string | null) => {
       try {
-        rememberOperation(owner, id, operation);
+        rememberOperation(owner, conversationId.current, operation);
       } catch {
         setStorageNotice(
           "This browser cannot remember operation checks after reload. Saved requests remain on the server.",
         );
       }
     },
-    [owner, id],
+    [owner],
   );
 
   const accept = useCallback(
@@ -242,9 +245,11 @@ export default function ChatComposer({
     setNotice("");
     setPhase("sending");
     try {
+      if (prepare) conversationId.current = await prepare(controller.signal);
+      const target = conversationId.current;
       const result = await sendMessage(
         session,
-        id,
+        target,
         original,
         controller.signal,
       );
@@ -264,7 +269,7 @@ export default function ChatComposer({
           result.operation ??
           (await inspectOperation(
             session,
-            id,
+            target,
             result.operationId,
             controller.signal,
           ));
