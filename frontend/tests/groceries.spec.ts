@@ -444,27 +444,41 @@ test("rapid input is single-flight; stale concurrent update must be reviewed", a
   page,
 }) => {
   const state = await backend(page, [milk]);
-  state.delayed = true;
+  let release!: () => void;
+  const pendingWrite = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/v1/groceries/*", async (route) => {
+    if (route.request().method() === "PATCH") await pendingWrite;
+    await route.fallback();
+  });
   await page.goto("/");
   const increase = page.getByRole("button", {
     name: "Increase Milk",
     exact: true,
   });
-  await expect(increase).toBeEnabled();
-  await increase.evaluate((button: HTMLButtonElement) => {
-    button.click();
-    button.click();
-    button.click();
+  const chefTab = page.getByRole("tab", {
+    name: "Sous Chef",
+    exact: true,
   });
-  await expect(
-    page.getByText("Updating your groceries...", { exact: true }),
-  ).toBeVisible();
-  await expect(row(page).locator(".grocery-amount")).toHaveText("2 l");
-  await expect(
-    page.getByRole("tab", { name: "Sous Chef", exact: true }),
-  ).toBeDisabled();
+  await expect(increase).toBeEnabled();
+  try {
+    await increase.evaluate((button: HTMLButtonElement) => {
+      button.click();
+      button.click();
+      button.click();
+    });
+    await expect(
+      page.getByText("Updating your groceries...", { exact: true }),
+    ).toBeVisible();
+    await expect(row(page).locator(".grocery-amount")).toHaveText("2 l");
+    await expect(chefTab).toBeDisabled();
+  } finally {
+    release();
+  }
   await expect(row(page).locator(".grocery-amount")).toHaveText("3 l");
   await expect(increase).toBeEnabled();
+  await expect(chefTab).toBeEnabled();
   expect(state.writes).toHaveLength(1);
   state.items[0]!.quantity = 9;
   state.revision++;
