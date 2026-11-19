@@ -2,13 +2,15 @@ from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from sous_chef.api.problems import problem_response
+from sous_chef.domain.receipts import MAX_RECEIPT_BYTES, RECEIPT_PATH
 
 MAX_BODY_BYTES = 128 * 1024
 
 
 class ProductBodyLimitMiddleware:
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, *, receipts_enabled: bool = False) -> None:
         self.app = app
+        self.receipts_enabled = receipts_enabled
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if (
@@ -19,6 +21,11 @@ class ProductBodyLimitMiddleware:
             await self.app(scope, receive, send)
             return
         headers = Headers(scope=scope)
+        limit = (
+            MAX_RECEIPT_BYTES
+            if self.receipts_enabled and scope["path"] == RECEIPT_PATH and scope["method"] == "POST"
+            else MAX_BODY_BYTES
+        )
         lengths = headers.getlist("content-length")
         if lengths and (
             len(lengths) != 1
@@ -30,14 +37,14 @@ class ProductBodyLimitMiddleware:
                 400, "invalid_input", "Invalid request", "Invalid request length."
             )(scope, receive, send)
             return
-        oversized = bool(lengths and int(lengths[0]) > MAX_BODY_BYTES)
+        oversized = bool(lengths and int(lengths[0]) > limit)
         body = bytearray()
         while not oversized:
             message = await receive()
             if message["type"] == "http.disconnect":
                 return
             chunk = message.get("body", b"")
-            oversized = len(body) + len(chunk) > MAX_BODY_BYTES
+            oversized = len(body) + len(chunk) > limit
             if not oversized:
                 body.extend(chunk)
             if not message.get("more_body", False):

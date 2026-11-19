@@ -18,10 +18,12 @@ from sous_chef.api.nutrition import create_nutrition_router
 from sous_chef.api.observability import RequestLoggingMiddleware
 from sous_chef.api.problems import problem_response, register_problem_handlers
 from sous_chef.api.profiles import create_profile_router
+from sous_chef.api.receipts import create_receipt_router
 from sous_chef.api.recipes import create_recipe_router
 from sous_chef.domain.chat import ChatExecutor
 from sous_chef.domain.context import LearnedPreferenceReader
 from sous_chef.domain.readiness import ReadinessProbe
+from sous_chef.domain.receipts import ReceiptReader
 from sous_chef.services.context import _encoding
 from sous_chef.services.nutrition import UsdaNutritionTool
 from sous_chef.services.readiness import ReadinessService
@@ -46,6 +48,7 @@ def create_app(
     chat_executor: ChatExecutor | None = None,
     learned_preference_reader: LearnedPreferenceReader | None = None,
     telemetry: Telemetry | None = None,
+    receipt_reader: ReceiptReader | None = None,
 ) -> FastAPI:
     configure_safe_telemetry()
     config = settings if settings is not None else load_settings()
@@ -91,12 +94,13 @@ def create_app(
         lifespan=lifespan,
     )
     register_problem_handlers(app)
-    app.add_middleware(ProductBodyLimitMiddleware)
+    app.add_middleware(ProductBodyLimitMiddleware, receipts_enabled=config.receipts_enabled)
     app.add_middleware(AuthenticationMiddleware, settings=config)
     app.add_middleware(RequestLoggingMiddleware, telemetry=telemetry)
     app.include_router(create_auth_router(config))
     app.include_router(create_conversation_router(config, chat_executor, learned_preference_reader))
     app.include_router(create_grocery_router(config))
+    app.include_router(create_receipt_router(config, receipt_reader))
     app.include_router(create_nutrition_router())
     app.include_router(create_profile_router(config))
     app.include_router(create_recipe_router(config, chat_executor, learned_preference_reader))

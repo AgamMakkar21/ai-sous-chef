@@ -340,6 +340,35 @@ input[type="checkbox"] {
 .success-notice {
   border-color: var(--cp-success);
 }
+.receipt-upload {
+  margin-bottom: 20px;
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+.receipt-upload > details > summary {
+  width: fit-content;
+  min-height: 44px;
+  padding: 12px 0;
+  color: var(--cp-action-text);
+  font-weight: 600;
+  cursor: pointer;
+}
+.receipt-file-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.receipt-file-row .field {
+  flex: 1 1 240px;
+}
+.receipt-upload .field-help {
+  margin: 8px 0 0;
+}
+.receipt-upload > [role="status"],
+.receipt-upload > [role="alert"] {
+  margin-top: 12px;
+}
 .reconciliation {
   border-color: var(--cp-border-strong);
 }

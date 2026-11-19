@@ -51,7 +51,7 @@ def create_grocery_router(settings: Settings) -> APIRouter:
         require_no_query(request)
         groceries, etag = await service.list(user)
         set_revision_headers(response, etag)
-        return groceries
+        return groceries.model_copy(update={"receipt_import_enabled": settings.receipts_enabled})
 
     @router.post("", status_code=201)
     async def add(

@@ -5,14 +5,17 @@ import {
   getGroceries,
   getSession,
   groceryUnits,
+  uploadReceipt,
   type Grocery,
   type GroceryChange,
   type GroceryUnit,
   type Inventory,
+  type ReceiptResult,
 } from "./api";
 import type { Session } from "./profile";
 import { KitchenIcon } from "./KitchenArt";
 import { CartoonButton } from "@/components/ui/cartoon-button";
+import ReceiptUpload from "./ReceiptUpload";
 
 type Props = {
   session: Session;
@@ -233,6 +236,39 @@ export default function Groceries({
     }
   }
 
+  async function importReceipt(
+    file: File,
+    key: string,
+  ): Promise<ReceiptResult> {
+    const current = confirmedInventory.current;
+    if (lock.current || quantityChanges.current.size || failed || !current)
+      throw new ApiError(409);
+    working(true);
+    setRemoving(null);
+    try {
+      const result = await uploadReceipt(session, current, file, key);
+      const saved = await getGroceries();
+      confirmedInventory.current = saved;
+      setInventory(saved);
+      return result;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        onExpired();
+      } else {
+        try {
+          const saved = await getGroceries();
+          confirmedInventory.current = saved;
+          setInventory(saved);
+        } catch (reloadError) {
+          failure(reloadError);
+        }
+      }
+      throw error;
+    } finally {
+      working(false);
+    }
+  }
+
   async function flushQuantities() {
     if (lock.current) return;
     if (quantityTimer.current !== null) clearTimeout(quantityTimer.current);
@@ -347,6 +383,12 @@ export default function Groceries({
         {quantityPending && !busy && <p role="status">Saving quantities...</p>}
         {inventory && (
           <>
+            {inventory.receiptImportEnabled && (
+              <ReceiptUpload
+                disabled={busy || failed || quantityPending}
+                onUpload={importReceipt}
+              />
+            )}
             <form ref={addForm} onSubmit={add} aria-label="Add grocery">
               <fieldset
                 className="form-fields"
@@ -426,6 +468,11 @@ export default function Groceries({
                             : row.quantity}
                           {row.unit ? ` ${row.unit}` : ""}
                         </p>
+                        {row.receipt?.quantitySource === "estimated" && (
+                          <p className="receipt-estimate">
+                            Estimated: {row.receipt.estimateReason}
+                          </p>
+                        )}
                       </div>
                       <CartoonButton
                         className="secondary grocery-delete"
