@@ -180,11 +180,13 @@ for (const theme of ["dark", "light"]) {
     async function checkControls() {
       await expect(
         page.locator(
-          "button:not(.cartoon-button):not(.conversation-choice), a.button:not(.cartoon-button)",
+          "button:not(.cartoon-button):not(.conversation-choice):not(.conversation-delete), a.button:not(.cartoon-button)",
         ),
       ).toHaveCount(0);
       const styles = await page
-        .locator("button:not(.conversation-choice), a.button")
+        .locator(
+          "button:not(.conversation-choice):not(.conversation-delete), a.button",
+        )
         .evaluateAll((buttons) =>
           buttons.map((button) => {
             const style = getComputedStyle(button);
@@ -448,7 +450,11 @@ test("all kitchen tabs share display typography without clipping or changing con
           };
         });
         if (tab === "Groceries") references.set(width, typography);
-        else
+        else if (tab === "Sous Chef") {
+          expect(typography.fontFamily).toBe(references.get(width)?.fontFamily);
+          expect(typography.fontWeight).toBe("400");
+          expect(typography.fontSize).toBe(width <= 720 ? "24px" : "32px");
+        } else
           expect
             .soft(typography, `${tab}, ${theme}, ${width}px`)
             .toEqual(references.get(width));

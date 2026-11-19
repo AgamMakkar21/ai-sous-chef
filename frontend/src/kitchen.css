@@ -712,6 +712,357 @@ html[data-theme="light"] .grocery-entry > .button {
   font-size: 13px;
 }
 
+.app-shell:has(.conversation-panel) {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-shell:has(.conversation-panel) > .kitchen-tabs,
+.kitchen-tabs:has(.conversation-panel) > main,
+main > [role="tabpanel"]:has(.conversation-panel),
+.conversation-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.kitchen-tabs:has(.conversation-panel) > main {
+  padding-block: 16px;
+}
+
+.conversation-toolbar {
+  margin-bottom: 12px;
+  gap: 12px;
+}
+
+.conversation-toolbar h1.kitchen-title {
+  margin: 0;
+  font-size: 2rem;
+}
+
+.conversation-toolbar > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.conversation-toolbar .sidebar-toggle {
+  margin: 0;
+  padding-inline: 12px;
+}
+
+.conversation-layout.card {
+  --cp-accent-soft: color-mix(in srgb, var(--cp-orange) 12%, var(--cp-surface));
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  gap: 0;
+  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.conversation-layout[data-sidebar-open="false"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.conversation-layout aside {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--cp-border);
+  padding: 16px 8px 8px;
+  background: var(--cp-surface);
+}
+
+.conversation-layout aside[hidden] {
+  display: none;
+}
+
+.conversation-layout aside > .conversation-heading {
+  padding-inline: 8px;
+  gap: 8px;
+}
+
+.conversation-layout aside h2 {
+  font-size: 1rem;
+}
+
+.conversation-layout aside > .conversation-heading .button {
+  min-height: 48px;
+  padding: 8px 12px;
+  font-size: 11px;
+}
+
+.chat-list-scroll,
+.conversation-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+}
+
+.chat-list-scroll {
+  flex: 1;
+}
+
+.conversation-list li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 8px;
+}
+
+.conversation-list li:hover,
+.conversation-list li[data-selected="true"] {
+  background: var(--cp-accent-soft);
+}
+
+.conversation-choice,
+.conversation-choice[aria-current="true"] {
+  min-width: 0;
+  min-height: 48px;
+  margin: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 12px 8px;
+}
+
+.conversation-choice span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.conversation-choice[aria-current="true"] span {
+  font-weight: 700;
+}
+
+.conversation-delete {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--cp-text-soft);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .conversation-delete {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .conversation-list li:hover .conversation-delete,
+  .conversation-list li:focus-within .conversation-delete {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .conversation-delete:hover {
+    color: var(--cp-danger);
+  }
+}
+
+.conversation-transcript {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.conversation-transcript[data-empty="true"]::after {
+  content: "";
+  flex: 1;
+}
+
+.conversation-transcript:has(
+    .chat-recovery-scroll > .notice,
+    .request-recovery,
+    .turn-status:not(:empty)
+  )::after {
+  display: none;
+}
+
+.conversation-transcript > .conversation-heading {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--cp-border);
+  flex-wrap: nowrap;
+}
+
+.conversation-heading h2 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 1rem;
+}
+
+.conversation-scroll {
+  flex: 1;
+  padding: 24px;
+}
+
+.conversation-scroll > * {
+  max-width: 760px;
+  margin-inline: auto;
+}
+
+.conversation-empty {
+  display: flex;
+  height: 100%;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 0;
+}
+
+.conversation-empty svg {
+  width: 80px;
+  height: 80px;
+}
+
+.conversation-message {
+  border: 0;
+  padding: 16px 0;
+  background: transparent;
+}
+
+.conversation-message.assistant {
+  background: transparent;
+}
+
+.conversation-message .message-heading time {
+  color: var(--cp-text);
+}
+
+.conversation-message.user {
+  margin-left: auto;
+  max-width: min(90%, 65ch);
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--cp-accent-soft);
+}
+
+.chat-composer {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  width: 100%;
+  max-width: 808px;
+  min-height: 0;
+  max-height: 70%;
+  margin: 0 auto;
+  padding: 12px 24px 20px;
+  border: 0;
+}
+
+.chat-recovery-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  padding: 6px;
+  margin: -6px -6px 6px;
+}
+
+.chat-recovery-scroll:has(> .turn-status:only-child:empty),
+.chat-recovery-scroll > .turn-status:empty {
+  display: none;
+}
+
+.chat-composer form {
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.chat-recovery-scroll .notice {
+  margin-top: 0;
+}
+
+.chat-recovery-scroll > .request-recovery {
+  margin-top: 12px;
+  padding-bottom: 6px;
+}
+
+.chat-composer textarea {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  min-height: 120px;
+  max-height: 30dvh;
+  padding: 14px 80px 14px 16px;
+  margin: 0;
+  border-radius: 16px;
+  font-size: 16px;
+}
+
+.chat-composer .chat-actions {
+  display: contents;
+}
+
+.chat-composer .chat-actions > .secondary {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin-top: 8px;
+}
+
+.chat-composer form > .notice {
+  grid-column: 1 / -1;
+  margin-block: 8px 0;
+}
+
+.chat-send.cartoon-button {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: end;
+  margin: 12px;
+  width: 48px;
+  padding-inline: 12px;
+}
+
+.chat-send .kitchen-icon {
+  transform: rotate(-90deg);
+}
+
+.conversation-heading .chat-tool {
+  flex-shrink: 0;
+  width: 48px;
+  padding-inline: 12px;
+}
+
+@media (max-width: 720px) {
+  .conversation-toolbar h1.kitchen-title {
+    font-size: 1.5rem;
+  }
+  .conversation-layout.card {
+    position: relative;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .conversation-layout aside {
+    border: 0;
+    padding: 12px 8px;
+  }
+  .conversation-layout[data-sidebar-open="true"] > .conversation-transcript {
+    display: none;
+  }
+  .conversation-transcript > .conversation-heading {
+    padding-inline: 12px;
+  }
+  .conversation-scroll {
+    padding: 16px 12px;
+  }
+  .chat-composer {
+    padding: 8px 12px 12px;
+  }
+}
+
 .recipe-source-tag {
   border-radius: 4px;
 }

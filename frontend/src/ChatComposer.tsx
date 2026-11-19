@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "./api";
 import { CartoonButton } from "@/components/ui/cartoon-button";
+import { KitchenIcon } from "./KitchenArt";
 import {
   CHAT_TIMEOUT_MS,
   closeOperation,
@@ -52,6 +53,11 @@ export default function ChatComposer({
   prepare?: (signal: AbortSignal) => Promise<string>;
 }) {
   const [draft, setDraft] = useState("");
+  const currentDraft = useRef("");
+  const updateDraft = useCallback((value: string) => {
+    currentDraft.current = value;
+    setDraft(value);
+  }, []);
   const [phase, setPhase] = useState<Phase>("checking");
   const [operationId, setOperationId] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
@@ -68,12 +74,14 @@ export default function ChatComposer({
   );
   const unresolved = Boolean(unresolvedTurn);
   const persistedOperationId = unresolvedTurn?.operationId;
-  const locked =
-    blocked ||
-    working ||
+  const locked = blocked || working;
+  const sendLocked =
+    locked ||
+    unresolved ||
     phase === "pending" ||
     phase === "unknown" ||
-    phase === "uncertain";
+    phase === "uncertain" ||
+    !historyReady;
 
   const remember = useCallback(
     (operation: string | null) => {
@@ -99,6 +107,7 @@ export default function ChatComposer({
         throw new ApiError(502, "invalid_response");
       onTurn(operation.turn);
       const status = operation.turn.status;
+      const sentContent = operation.turn.messages[0]!.content;
       if (
         (status === "pending" || status === "outcomeUnknown") &&
         operation.turn.operationId
@@ -110,16 +119,24 @@ export default function ChatComposer({
         remember(null);
         setOperationId(null);
         attempt.current = null;
-        setDraft("");
+        if (currentDraft.current.trim() === sentContent) updateDraft("");
         setNotice("");
         setPhase("idle");
       } else if (status === "failed") {
         remember(null);
         setOperationId(null);
+        const sameRequest = currentDraft.current.trim() === sentContent;
+        attempt.current = sameRequest
+          ? {
+              key: original?.key ?? crypto.randomUUID(),
+              content: sentContent,
+              retryOfTurnId: operation.turn.turnId,
+            }
+          : null;
         setNotice(
-          "No completed answer was saved. Explicitly retry the saved request below.",
+          "No completed answer was saved. Edit your request or retry it.",
         );
-        setPhase("failed");
+        setPhase(sameRequest ? "failed" : "idle");
       } else if (status === "outcomeUnknown") {
         setNotice(
           "The outcome is unknown. Check saved status, or explicitly close the interrupted request without retrying. No new generation will be sent automatically.",
@@ -130,14 +147,14 @@ export default function ChatComposer({
         setPhase("pending");
       }
     },
-    [onTurn, remember],
+    [onTurn, remember, updateDraft],
   );
 
   const failed = useCallback(
     (error: unknown) => {
       if (error instanceof ApiError && error.status === 401) {
         attempt.current = null;
-        setDraft("");
+        updateDraft("");
         onExpired();
       } else if (error instanceof ApiError && error.code === "send_conflict") {
         attempt.current = null;
@@ -154,12 +171,12 @@ export default function ChatComposer({
             : error instanceof ApiError && error.code === "idempotency_conflict"
               ? "This request conflicts with its saved receipt. Check saved history; do not send it with a new key."
               : attempt.current
-                ? "No completed answer is confirmed. Check this same request before taking another action. Your input has been kept."
+                ? "No completed answer is confirmed. You can edit your text; check this request before sending again."
                 : "No completed answer is confirmed. Check saved status or persisted history before taking another action.",
         );
       }
     },
-    [onExpired, onRefresh],
+    [onExpired, onRefresh, updateDraft],
   );
 
   useEffect(() => {
@@ -214,7 +231,7 @@ export default function ChatComposer({
       try {
         const operation = await inspectOperation(
           session,
-          id,
+          conversationId.current,
           operationId!,
           controller.signal,
         );
@@ -236,12 +253,12 @@ export default function ChatComposer({
     };
   }, [phase, operationId, id, session, accept, failed]);
 
-  async function send(original: ChatAttempt) {
+  async function send(original: ChatAttempt, preserveDraft = false) {
     const controller = lifetime.current;
     if (!controller || busy.current) return;
     busy.current = true;
     attempt.current = original;
-    setDraft(original.content);
+    if (!preserveDraft) updateDraft(original.content);
     setValidation("");
     setNotice("");
     setPhase("sending");
@@ -260,7 +277,7 @@ export default function ChatComposer({
         remember(null);
         attempt.current = null;
         setOperationId(null);
-        setDraft("");
+        if (currentDraft.current.trim() === original.content) updateDraft("");
         setPhase("idle");
         input.current?.focus();
       } else {
@@ -288,7 +305,7 @@ export default function ChatComposer({
     if (!controller || busy.current) return;
     const target = savedId ?? persistedOperationId ?? operationId;
     if (!target) {
-      if (attempt.current) await send(attempt.current);
+      if (attempt.current) await send(attempt.current, true);
       else onRefresh();
       return;
     }
@@ -299,7 +316,7 @@ export default function ChatComposer({
     try {
       const operation = await inspectOperation(
         session,
-        id,
+        conversationId.current,
         target,
         controller.signal,
       );
@@ -319,7 +336,7 @@ export default function ChatComposer({
     try {
       const operation = await closeOperation(
         session,
-        id,
+        conversationId.current,
         savedId,
         controller.signal,
       );
@@ -335,41 +352,135 @@ export default function ChatComposer({
   }
 
   function submit() {
-    if (locked || unresolved || !historyReady || phase === "failed") return;
+    if (sendLocked) return;
     const content = draft.trim();
     if (!content || [...content].length > 4000) {
       setValidation("Write a request between 1 and 4,000 characters.");
       input.current?.focus();
       return;
     }
-    void send({ key: crypto.randomUUID(), content });
+    const previous = attempt.current;
+    void send({
+      key: crypto.randomUUID(),
+      content,
+      ...(previous?.retryOfTurnId && previous.content === content
+        ? { retryOfTurnId: previous.retryOfTurnId }
+        : {}),
+    });
   }
 
   return (
     <section className="chat-composer" aria-label="Recipe request">
-      {storageNotice && (
-        <p className="notice" role="status">
-          {storageNotice}
+      <div
+        className="chat-recovery-scroll"
+        role="region"
+        aria-label="Request status"
+        tabIndex={0}
+      >
+        {storageNotice && (
+          <p className="notice" role="status">
+            {storageNotice}
+          </p>
+        )}
+        {notice && (
+          <div className="notice" role="alert">
+            <p>I couldn't complete that recipe request</p>
+            <p>{notice}</p>
+          </div>
+        )}
+        <p className="turn-status" role="status" aria-live="polite">
+          {phase === "sending"
+            ? "Sending your request. Waiting for a saved reply..."
+            : phase === "checking"
+              ? "Checking the saved request..."
+              : phase === "pending"
+                ? "Awaiting a reply. Status is checked automatically; no new generation is sent."
+                : unresolved
+                  ? "This chat has an unresolved request. Check its saved state before sending another."
+                  : ""}
         </p>
-      )}
-      {notice && (
-        <div className="notice" role="alert">
-          <p>I couldn't complete that recipe request</p>
-          <p>{notice}</p>
-        </div>
-      )}
-      <p className="turn-status" role="status" aria-live="polite">
-        {phase === "sending"
-          ? "Sending your request. Waiting for a saved reply..."
-          : phase === "checking"
-            ? "Checking the saved request..."
-            : phase === "pending"
-              ? "Awaiting a reply. Status is checked automatically; no new generation is sent."
-              : unresolved
-                ? "This chat has an unresolved request. Check its saved state before sending another."
-                : ""}
-      </p>
+        {turns.some((turn) => turn.status !== "completed") && (
+          <section
+            className="request-recovery"
+            aria-label="Saved request recovery"
+          >
+            {turns
+              .filter((turn) => turn.status !== "completed")
+              .map((turn) => (
+                <div className="saved-request" key={turn.turnId}>
+                  <p>
+                    {safeTitle(turn.messages[0]?.content ?? "Saved request")}
+                  </p>
+                  {turn.status === "failed" ? (
+                    <>
+                      <p>
+                        I couldn't complete that recipe request. No completed
+                        answer was saved.
+                      </p>
+                      <CartoonButton
+                        className="secondary"
+                        disabled={
+                          working ||
+                          locked ||
+                          unresolved ||
+                          !historyReady ||
+                          (draft.trim().length > 0 &&
+                            draft.trim() !== turn.messages[0]?.content)
+                        }
+                        onClick={() =>
+                          void send({
+                            key: crypto.randomUUID(),
+                            content: turn.messages[0]!.content,
+                            retryOfTurnId: turn.turnId,
+                          })
+                        }
+                      >
+                        Retry saved request
+                      </CartoonButton>
+                    </>
+                  ) : (
+                    <>
+                      <p>
+                        {turn.status === "pending"
+                          ? "This request is pending. Leaving or reloading does not cancel it."
+                          : "The outcome is unknown. Closing this attempt marks it failed without generating another answer. Retry remains a separate action."}
+                      </p>
+                      {turn.operationId && (
+                        <CartoonButton
+                          className="secondary"
+                          disabled={working}
+                          onClick={() =>
+                            void check(turn.operationId ?? undefined)
+                          }
+                        >
+                          Check saved status
+                        </CartoonButton>
+                      )}
+                      {turn.status === "outcomeUnknown" && turn.operationId && (
+                        <CartoonButton
+                          className="secondary"
+                          disabled={working}
+                          onClick={() => void close(turn.operationId!)}
+                        >
+                          Close interrupted request without retrying
+                        </CartoonButton>
+                      )}
+                    </>
+                  )}
+                </div>
+              ))}
+            <CartoonButton
+              className="secondary"
+              disabled={working}
+              onClick={onRefresh}
+            >
+              Check saved history
+            </CartoonButton>
+          </section>
+        )}
+      </div>
       <form
+        className="field"
         aria-label="Send a recipe request"
         aria-busy={working || phase === "pending"}
         onSubmit={(event) => {
@@ -377,17 +488,21 @@ export default function ChatComposer({
           submit();
         }}
       >
-        <label htmlFor="recipe-request">What would you like to cook?</label>
+        <label className="sr-only" htmlFor="recipe-request">
+          What would you like to cook?
+        </label>
         <textarea
           id="recipe-request"
           ref={input}
           value={draft}
           rows={3}
+          placeholder="What would you like to cook?"
           readOnly={locked}
           aria-invalid={Boolean(validation)}
-          aria-describedby={`recipe-request-help${validation ? " recipe-request-error" : ""}`}
+          aria-description="Enter to send. Shift+Enter for a new line."
+          aria-describedby={validation ? "recipe-request-error" : undefined}
           onChange={(event) => {
-            setDraft(event.target.value);
+            updateDraft(event.target.value);
             setValidation("");
             if (phase === "failed") {
               attempt.current = null;
@@ -406,11 +521,6 @@ export default function ChatComposer({
             }
           }}
         />
-        <p id="recipe-request-help" className="privacy-note">
-          Up to 4,000 characters. Enter sends; Shift+Enter adds a line. Editing
-          a failed request starts a new turn; retry below keeps its original
-          text.
-        </p>
         {validation && (
           <p id="recipe-request-error" className="notice" role="alert">
             {validation}
@@ -418,12 +528,13 @@ export default function ChatComposer({
         )}
         <div className="chat-actions">
           <CartoonButton
-            label={phase === "sending" ? "Sending..." : "Send request"}
+            className="chat-send"
+            aria-label={phase === "sending" ? "Sending..." : "Send request"}
             type="submit"
-            disabled={
-              locked || unresolved || !historyReady || phase === "failed"
-            }
-          />
+            disabled={sendLocked}
+          >
+            <KitchenIcon name="arrow" />
+          </CartoonButton>
           {(phase === "uncertain" || phase === "unknown") &&
             !persistedOperationId && (
               <CartoonButton
@@ -436,89 +547,6 @@ export default function ChatComposer({
             )}
         </div>
       </form>
-      {turns.some((turn) => turn.status !== "completed") && (
-        <section
-          className="request-recovery"
-          aria-label="Saved request recovery"
-        >
-          {turns
-            .filter((turn) => turn.status !== "completed")
-            .map((turn) => (
-              <div className="saved-request" key={turn.turnId}>
-                <p>{safeTitle(turn.messages[0]?.content ?? "Saved request")}</p>
-                {turn.status === "failed" ? (
-                  <>
-                    <p>
-                      I couldn't complete that recipe request. No completed
-                      answer was saved.
-                    </p>
-                    <CartoonButton
-                      className="secondary"
-                      disabled={
-                        working ||
-                        locked ||
-                        unresolved ||
-                        !historyReady ||
-                        (draft.trim().length > 0 &&
-                          draft.trim() !== turn.messages[0]?.content)
-                      }
-                      onClick={() =>
-                        void send({
-                          key: crypto.randomUUID(),
-                          content: turn.messages[0]!.content,
-                          retryOfTurnId: turn.turnId,
-                        })
-                      }
-                    >
-                      Retry saved request
-                    </CartoonButton>
-                  </>
-                ) : (
-                  <>
-                    <p>
-                      {turn.status === "pending"
-                        ? "This request is pending. Leaving or reloading does not cancel it."
-                        : "The outcome is unknown. Closing this attempt marks it failed without generating another answer. Retry remains a separate action."}
-                    </p>
-                    {turn.operationId && (
-                      <CartoonButton
-                        className="secondary"
-                        disabled={working}
-                        onClick={() =>
-                          void check(turn.operationId ?? undefined)
-                        }
-                      >
-                        Check saved status
-                      </CartoonButton>
-                    )}
-                    {turn.status === "outcomeUnknown" && turn.operationId && (
-                      <CartoonButton
-                        className="secondary"
-                        disabled={working}
-                        onClick={() => void close(turn.operationId!)}
-                      >
-                        Close interrupted request without retrying
-                      </CartoonButton>
-                    )}
-                  </>
-                )}
-              </div>
-            ))}
-          <CartoonButton
-            className="secondary"
-            disabled={working}
-            onClick={onRefresh}
-          >
-            Check saved history
-          </CartoonButton>
-        </section>
-      )}
-      <p className="privacy-note">
-        There is no remote cancellation control. Refreshing or closing the page
-        does not prove a request stopped. Draft text stays in memory and is
-        cleared on leaving this view or session expiry; accepted requests remain
-        on the server.
-      </p>
     </section>
   );
 }

@@ -362,6 +362,8 @@ for (const theme of ["light", "dark"]) {
     ).toBeVisible();
     if ((await sidebar.getAttribute("aria-expanded")) === "false")
       await sidebar.click();
+    await accessible(page, info, "chat-sidebar");
+    if (info.project.name === "phone") await sidebar.click();
     await accessible(page, info, "long-recipe");
     await page
       .getByRole("button", { name: "Save to Cook", exact: true })
@@ -652,6 +654,7 @@ test("explicit chat selection focuses its transcript without stealing focus on t
     exact: true,
   });
   await expect(chats.getByRole("button")).toHaveCount(0);
+  if ((page.viewportSize()?.width ?? 0) <= 720) await activate(page, sidebar);
   const content = "Carrot rice for dinner";
   await page
     .getByRole("textbox", { name: "What would you like to cook?" })
@@ -677,6 +680,8 @@ test("explicit chat selection focuses its transcript without stealing focus on t
     name: recipe.title,
     exact: false,
   });
+  if ((await sidebar.getAttribute("aria-expanded")) === "false")
+    await activate(page, sidebar);
   await activate(page, selectedChat);
   await expect(heading).toBeFocused();
   await activate(

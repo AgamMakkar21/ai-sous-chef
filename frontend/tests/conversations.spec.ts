@@ -212,6 +212,15 @@ async function choose(page: BrowserPage, title: string) {
   await page.getByRole("button", { name: title, exact: false }).click();
 }
 
+async function removeChat(page: BrowserPage, title: string) {
+  await openChats(page);
+  const row = page.locator(".conversation-list li").filter({
+    has: page.getByRole("button", { name: title, exact: true }),
+  });
+  await row.hover();
+  await row.getByRole("button", { name: "Delete chat", exact: true }).click();
+}
+
 test("empty drafts are not saved and the first send creates one chat with current CSRF", async ({
   page,
 }) => {
@@ -222,22 +231,23 @@ test("empty drafts are not saved and the first send creates one chat with curren
     page.getByRole("button", { name: "New Chat", exact: true }),
   ).toBeEnabled();
   state.token = "r".repeat(43);
-  await page.getByRole("button", { name: "New Chat", exact: true }).click();
+  await expect(page.getByRole("textbox")).toBeEnabled();
   await expect(
-    page.getByText("No messages in this chat yet.", { exact: true }),
-  ).toBeVisible();
+    page.locator(
+      "#recipe-request-help, .chat-composer .privacy-note, .conversation-toolbar p, .conversation-empty h2",
+    ),
+  ).toHaveCount(0);
   expect(chat.writes).toHaveLength(0);
+  await page.getByRole("textbox").fill("An unsent idea");
   await page.getByRole("button", { name: "New Chat", exact: true }).click();
-  await expect(
-    page.getByText("No messages in this chat yet.", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("textbox")).toHaveValue("An unsent idea");
   expect(chat.writes).toHaveLength(0);
   expect(chat.reads.every((read) => !read.includes("/turns"))).toBe(true);
+  page.once("dialog", (dialog) => dialog.accept());
   await page.reload();
   await expect(
-    page.getByRole("region", { name: "No conversation selected" }),
+    page.getByRole("region", { name: "Conversation: New chat", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "New Chat", exact: true }).click();
   await page.getByRole("textbox").fill("   ");
   await page.getByRole("button", { name: "Send request", exact: true }).click();
   await expect(
@@ -260,6 +270,46 @@ test("empty drafts are not saved and the first send creates one chat with curren
   await expect(
     page.locator(".conversation-list .conversation-choice"),
   ).toHaveCount(1);
+});
+
+test("trash controls appear only for the hovered or keyboard-focused row on desktop and stay available on touch", async ({
+  page,
+}) => {
+  await conversations(page);
+  await page.goto("/#sous-chef");
+  await openChats(page);
+  const first = page.locator(".conversation-list li").filter({
+    has: page.getByRole("button", { name: "Quick lunches", exact: true }),
+  });
+  const trash = first.getByRole("button", { name: "Delete chat", exact: true });
+  const other = page
+    .locator(".conversation-list li")
+    .filter({
+      has: page.getByRole("button", { name: "Weekend dinners", exact: true }),
+    })
+    .getByRole("button", { name: "Delete chat", exact: true });
+  await expect(trash).toBeAttached();
+  if (
+    await page.evaluate(
+      () => matchMedia("(hover: hover) and (pointer: fine)").matches,
+    )
+  ) {
+    await expect(trash).toHaveCSS("opacity", "0");
+    await first.hover();
+    await expect(trash).toHaveCSS("opacity", "1");
+    await expect(other).toHaveCSS("opacity", "0");
+    await page.mouse.move(0, 0);
+    await expect(trash).toHaveCSS("opacity", "0");
+    await first
+      .getByRole("button", { name: "Quick lunches", exact: true })
+      .focus();
+    await expect(trash).toHaveCSS("opacity", "1");
+    await page.keyboard.press("Tab");
+    await expect(trash).toBeFocused();
+  } else {
+    await expect(trash).toHaveCSS("opacity", "1");
+    await expect(other).toHaveCSS("opacity", "1");
+  }
 });
 
 test("completed recipes replace new-chat labels and keep their titles after reload", async ({
@@ -314,7 +364,7 @@ test("selecting, switching tabs and reloading preserve the right transcript and 
   await choose(page, "Quick lunches");
   const entry = page.locator(".conversation-list .conversation-choice").first();
   await expect(entry).not.toHaveClass(/cartoon-button/);
-  await expect(entry).toHaveCSS("border-radius", "10px");
+  await expect(entry).toHaveCSS("border-radius", "8px");
   await expect(entry).toHaveCSS("box-shadow", "none");
   await expect(entry.locator(".cartoon-highlight")).toHaveCount(0);
   await expect(
@@ -349,7 +399,7 @@ test("selecting, switching tabs and reloading preserve the right transcript and 
   });
 });
 
-test("chat and transcript pages are bounded and loaded only on explicit navigation", async ({
+test("scrolling loads bounded chat and message pages without replacing prior rows", async ({
   page,
 }) => {
   const { chat } = await conversations(page);
@@ -372,10 +422,12 @@ test("chat and transcript pages are bounded and loaded only on explicit navigati
   await page.goto("/#sous-chef");
   await openChats(page);
   await expect(
-    page.getByRole("button", { name: "More chats", exact: true }),
-  ).toBeEnabled();
+    page.getByRole("button", { name: "Quick lunches", exact: true }),
+  ).toBeVisible();
   expect(chat.reads).toHaveLength(1);
-  await page.getByRole("button", { name: "More chats", exact: true }).click();
+  await page
+    .getByRole("region", { name: "Chat list", exact: true })
+    .press("End");
   await page
     .locator(".conversation-list")
     .getByRole("button", { name: "New chat", exact: false })
@@ -389,20 +441,19 @@ test("chat and transcript pages are bounded and loaded only on explicit navigati
   );
   expect(chat.reads.some((read) => read.includes("turn-page-2"))).toBe(false);
   await page
-    .getByRole("button", { name: "Later messages", exact: true })
-    .click();
+    .getByRole("region", { name: "Messages", exact: true })
+    .press("End");
   await expect(
     page.getByText("A later exchange", { exact: true }),
   ).toBeVisible();
   await expect(
     messages.getByText("A fresh third topic", { exact: true }),
-  ).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "Earlier messages", exact: true })
-    .click();
-  await expect(
-    messages.getByText("A fresh third topic", { exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: /More chats|Earlier messages|Later messages/,
+    }),
+  ).toHaveCount(0);
   await page.reload();
   await expect(
     messages.getByText("A fresh third topic", { exact: true }),
@@ -470,6 +521,152 @@ test("message markup stays text, navigation stores no content and mobile keyboar
   );
 });
 
+test("additional pages preserve loaded chats and require explicit retry after a failed read", async ({
+  page,
+}) => {
+  const { chat } = await conversations(page);
+  chat.listPages.set("", {
+    items: [summary(firstId, "Quick lunches")],
+    nextCursor: "next",
+  });
+  chat.listPages.set("next", {
+    items: [summary(secondId, "Weekend dinners")],
+    nextCursor: "loop",
+  });
+  chat.listPages.set("loop", {
+    items: [summary(thirdId, "Rejected repeated cursor")],
+    nextCursor: "loop",
+  });
+  await page.goto("/#sous-chef");
+  await openChats(page);
+  const list = page.getByRole("region", { name: "Chat list", exact: true });
+  await expect(
+    page.getByRole("button", { name: "Quick lunches", exact: true }),
+  ).toBeVisible();
+  chat.failure = { target: "list", status: 503 };
+  await list.press("End");
+  await expect(page.getByRole("alert")).toContainText(
+    "More chats could not be loaded.",
+  );
+  expect(chat.reads).toHaveLength(2);
+  await list.press("End");
+  await expect(
+    page.getByRole("button", { name: "Quick lunches", exact: true }),
+  ).toBeVisible();
+  expect(chat.reads).toHaveLength(2);
+  await page
+    .getByRole("button", { name: "Try chats again", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Weekend dinners", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".conversation-choice")).toHaveCount(2);
+  await list.press("End");
+  await expect(page.getByRole("alert")).toContainText(
+    "More chats could not be loaded.",
+  );
+  await expect(page.locator(".conversation-choice")).toHaveCount(2);
+  expect(chat.reads).toHaveLength(4);
+});
+
+test("deleting another chat keeps the current conversation and unsent request", async ({
+  page,
+}) => {
+  const { chat } = await conversations(page);
+  await page.goto("/#sous-chef");
+  await choose(page, "Quick lunches");
+  await page.getByRole("textbox").fill("Keep this draft");
+  await openChats(page);
+  page.once("dialog", (dialog) => dialog.accept());
+  await removeChat(page, "Weekend dinners");
+  await expect(
+    page.getByRole("button", { name: "Weekend dinners", exact: true }),
+  ).toHaveCount(0);
+  const toggle = page.getByRole("button", {
+    name: "Conversations",
+    exact: true,
+  });
+  if (
+    (page.viewportSize()?.width ?? 0) <= 720 &&
+    (await toggle.getAttribute("aria-expanded")) === "true"
+  )
+    await toggle.click();
+  await expect(page.getByRole("textbox")).toHaveValue("Keep this draft");
+  await expect(
+    page.getByText("Lemony lunch ideas", { exact: true }),
+  ).toBeVisible();
+  expect(chat.deletes.map((item) => item.id)).toEqual([secondId]);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "New Chat", exact: true }).click();
+  await expect(page.getByRole("textbox")).toHaveValue("");
+  expect(chat.writes).toHaveLength(0);
+});
+
+test("the chat list and messages scroll inside the viewport independently", async ({
+  page,
+}, info) => {
+  const { chat } = await conversations(page);
+  chat.chats = [
+    summary(firstId, "Quick lunches"),
+    ...Array.from({ length: 19 }, (_, i) =>
+      summary(crypto.randomUUID(), `Saved chat ${i}`),
+    ),
+  ];
+  chat.turns.set(`${firstId}:`, {
+    items: Array.from({ length: 20 }, (_, i) =>
+      turn(firstId, `Request ${i}: ${"Vegetable supper. ".repeat(20)}`, i),
+    ),
+    nextCursor: null,
+  });
+  await page.goto("/#sous-chef");
+  await choose(page, "Quick lunches");
+  const messages = page.getByRole("region", { name: "Messages", exact: true });
+  const list = page.locator(".chat-list-scroll");
+  await expect(page.locator(".conversation-message")).toHaveCount(40);
+  const mainBounds = await messages.boundingBox();
+  expect(mainBounds).not.toBeNull();
+  await page.mouse.move(
+    mainBounds!.x + mainBounds!.width / 2,
+    mainBounds!.y + mainBounds!.height / 2,
+  );
+  await page.mouse.wheel(0, 300);
+  await expect
+    .poll(() => messages.evaluate((e) => e.scrollTop))
+    .toBeGreaterThan(0);
+  const mainScroll = await messages.evaluate((e) => e.scrollTop);
+  expect(await list.evaluate((e) => e.scrollTop)).toBe(0);
+  if (info.project.name === "phone") {
+    await page.screenshot({
+      path: info.outputPath("chat-messages.png"),
+      fullPage: true,
+    });
+    await openChats(page);
+    await expect(messages).toBeHidden();
+  }
+  const sidebarBounds = await list.boundingBox();
+  expect(sidebarBounds).not.toBeNull();
+  await page.mouse.move(
+    sidebarBounds!.x + sidebarBounds!.width / 2,
+    sidebarBounds!.y + sidebarBounds!.height / 2,
+  );
+  await page.mouse.wheel(0, 300);
+  await expect.poll(() => list.evaluate((e) => e.scrollTop)).toBeGreaterThan(0);
+  if (info.project.name === "desktop")
+    expect(await messages.evaluate((e) => e.scrollTop)).toBe(mainScroll);
+  expect(await page.evaluate(() => document.scrollingElement?.scrollTop)).toBe(
+    0,
+  );
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollHeight <= innerHeight + 1,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: info.outputPath("chat-workspace.png"),
+    fullPage: true,
+  });
+});
+
 test("list, history and malformed/foreign history failures stay explicit and private", async ({
   page,
 }) => {
@@ -494,7 +691,14 @@ test("list, history and malformed/foreign history failures stay explicit and pri
     page.getByText("Lemony lunch ideas", { exact: true }),
   ).toBeVisible();
   chat.failure = { target: "history", status: 200, invalid: "foreign" };
-  await page.getByRole("button", { name: "Refresh history" }).click();
+  await openChats(page);
+  await page
+    .getByRole("button", { name: "Refresh chats and messages" })
+    .click();
+  if ((page.viewportSize()?.width ?? 0) <= 720)
+    await page
+      .getByRole("button", { name: "Conversations", exact: true })
+      .click();
   await expect(
     page.getByText("Messages could not be loaded.", { exact: false }),
   ).toBeVisible();
@@ -561,6 +765,84 @@ test("CSRF failures do not replay creation and a reviewed retry uses a fresh tok
   expect(chat.writes[1]?.key).toBe(chat.writes[0]?.key);
 });
 
+test("New Chat can leave an attempted first send without replaying it", async ({
+  page,
+}) => {
+  const { chat } = await conversations(page);
+  chat.loseSendResponse = true;
+  await page.goto("/#sous-chef");
+  await page.getByRole("textbox").fill("Original request");
+  await page.getByRole("button", { name: "Send request", exact: true }).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await page.getByRole("textbox").fill("Edited request");
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page.getByRole("button", { name: "New Chat", exact: true }).click();
+  await expect(page.getByRole("textbox")).toHaveValue("Edited request");
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "New Chat", exact: true }).click();
+  await expect(page.getByRole("textbox")).toHaveValue("");
+  await expect(
+    page.getByRole("button", { name: "Send request", exact: true }),
+  ).toBeEnabled();
+  expect(chat.writes).toHaveLength(1);
+  expect(chat.sends).toHaveLength(1);
+});
+
+test("first-send reconciliation keeps edits when a draft becomes a saved chat", async ({
+  page,
+}) => {
+  const { chat } = await conversations(page);
+  chat.loseSendResponse = true;
+  await page.goto("/#sous-chef");
+  await page.getByRole("textbox").fill("Original request");
+  await page.getByRole("button", { name: "Send request", exact: true }).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await page.getByRole("textbox").fill("Edited request");
+  await page
+    .getByRole("button", { name: "Check this request", exact: true })
+    .click();
+  await expect(
+    page.getByText("Reply: Original request", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("textbox")).toHaveValue("Edited request");
+  expect(chat.writes).toHaveLength(2);
+  expect(chat.writes[1]?.key).toBe(chat.writes[0]?.key);
+  expect(chat.receipts.size).toBe(1);
+});
+
+test("one refresh updates the chat list and messages while preserving unsent text", async ({
+  page,
+}) => {
+  const { chat } = await conversations(page);
+  await page.goto("/#sous-chef");
+  await choose(page, "Quick lunches");
+  await page.getByRole("textbox").fill("Keep this draft");
+  chat.chats[0]!.title = "Updated chat title";
+  chat.turns.set(`${firstId}:`, {
+    items: [turn(firstId, "Updated saved exchange")],
+    nextCursor: null,
+  });
+  await openChats(page);
+  await page
+    .getByRole("button", { name: "Refresh chats and messages", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Updated chat title", exact: true }),
+  ).toBeVisible();
+  const toggle = page.getByRole("button", {
+    name: "Conversations",
+    exact: true,
+  });
+  if ((page.viewportSize()?.width ?? 0) <= 720) await toggle.click();
+  await expect(
+    page.getByText("Updated saved exchange", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("textbox")).toHaveValue("Keep this draft");
+  await expect(
+    page.getByRole("button", { name: "Refresh history", exact: true }),
+  ).toHaveCount(0);
+});
+
 test("a lost first-send response restores the real chat without creating or sending again", async ({
   page,
 }) => {
@@ -592,13 +874,13 @@ test("delete confirms intent, uses current CSRF and clears the selected chat acr
     page.getByText("Lemony lunch ideas", { exact: true }),
   ).toBeVisible();
   page.once("dialog", (dialog) => dialog.dismiss());
-  await page.getByRole("button", { name: "Delete chat", exact: true }).click();
+  await removeChat(page, "Quick lunches");
   expect(chat.deletes).toHaveLength(0);
   state.token = "r".repeat(43);
   page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Delete chat", exact: true }).click();
+  await removeChat(page, "Quick lunches");
   await expect(
-    page.getByRole("region", { name: "No conversation selected" }),
+    page.getByRole("region", { name: "Conversation: New chat", exact: true }),
   ).toBeVisible();
   expect(chat.deletes).toEqual([{ id: firstId, token: "r".repeat(43) }]);
   await page.reload();
@@ -620,17 +902,17 @@ test("failed deletion keeps the selected chat and allows an explicit retry", asy
   await choose(page, "Quick lunches");
   chat.failure = { target: "delete", status: 503 };
   page.on("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Delete chat", exact: true }).click();
+  await removeChat(page, "Quick lunches");
   await expect(
     page.getByText("Chat deletion could not be confirmed.", { exact: false }),
   ).toBeVisible();
   await expect(
     page.getByText("Lemony lunch ideas", { exact: true }),
-  ).toBeVisible();
+  ).toBeAttached();
   expect(chat.deletes).toHaveLength(1);
-  await page.getByRole("button", { name: "Delete chat", exact: true }).click();
+  await removeChat(page, "Quick lunches");
   await expect(
-    page.getByRole("region", { name: "No conversation selected" }),
+    page.getByRole("region", { name: "Conversation: New chat", exact: true }),
   ).toBeVisible();
   expect(chat.deletes).toHaveLength(2);
 });
@@ -648,7 +930,10 @@ for (const failure of ["html401", "identity"] as const) {
     if (failure === "html401")
       chat.failure = { target: "history", status: 401, html: true };
     else state.sessionUser = "different-synthetic-user";
-    await page.getByRole("button", { name: "Refresh history" }).click();
+    await openChats(page);
+    await page
+      .getByRole("button", { name: "Refresh chats and messages" })
+      .click();
     await expect(
       page.getByRole("link", { name: "Sign in", exact: true }),
     ).toBeVisible();
@@ -677,7 +962,7 @@ test("a different signed-in user never restores the old account's selected conve
     page.getByRole("button", { name: "New Chat", exact: true }),
   ).toBeEnabled();
   await expect(
-    page.getByRole("region", { name: "No conversation selected" }),
+    page.getByRole("region", { name: "Conversation: New chat", exact: true }),
   ).toBeVisible();
   expect(chat.reads.slice(before).some((read) => read.includes(firstId))).toBe(
     false,

@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type ReactNode,
+  type Ref,
+} from "react";
 import { ApiError } from "./api";
 import { CartoonButton } from "@/components/ui/cartoon-button";
 import ChatComposer from "./ChatComposer";
@@ -19,39 +27,66 @@ import {
 import type { Session } from "./profile";
 import RecipeCard from "./RecipeCard";
 import RecipeActions from "./RecipeActions";
-import usePage from "./usePage";
+import { KitchenIcon, PixelArt } from "./KitchenArt";
+import useScrollPages from "./useScrollPages";
 
-function Pager({
-  index,
-  ready,
-  next,
-  noun,
-  move,
+function ScrollPane({
+  children,
+  label,
+  className,
+  onMore,
+  follow,
 }: {
-  index: number;
-  ready: boolean;
-  next: boolean;
-  noun: "chats" | "messages";
-  move: (forward: boolean) => void;
+  children: ReactNode;
+  label: string;
+  className: string;
+  onMore: () => void;
+  follow?: readonly Turn[];
 }) {
+  const scroll = useRef<HTMLDivElement>(null);
+  const intent = useRef(false);
+  useEffect(() => {
+    if (!follow?.length || !scroll.current) return;
+    intent.current = false;
+    scroll.current.scrollTop = scroll.current.scrollHeight;
+  }, [follow]);
+  function check(element: HTMLDivElement) {
+    if (!intent.current) return;
+    if (element.scrollHeight - element.scrollTop - element.clientHeight < 120) {
+      intent.current = false;
+      onMore();
+    }
+  }
   return (
-    <nav className="conversation-pager" aria-label={`${noun} pages`}>
-      <CartoonButton
-        className="secondary"
-        disabled={!ready || index === 0}
-        onClick={() => move(false)}
-      >
-        Earlier {noun}
-      </CartoonButton>
-      <span>Page {index + 1}</span>
-      <CartoonButton
-        className="secondary"
-        disabled={!ready || !next}
-        onClick={() => move(true)}
-      >
-        {noun === "chats" ? "More chats" : "Later messages"}
-      </CartoonButton>
-    </nav>
+    <div
+      ref={scroll}
+      className={className}
+      role="region"
+      aria-label={label}
+      tabIndex={0}
+      onScroll={(event) => check(event.currentTarget)}
+      onWheel={(event) => {
+        if (event.deltaY > 0) {
+          intent.current = true;
+          check(event.currentTarget);
+        }
+      }}
+      onTouchMove={() => {
+        intent.current = true;
+      }}
+      onPointerDown={() => {
+        intent.current = true;
+      }}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (["End", "PageDown", "ArrowDown", " "].includes(event.key)) {
+          intent.current = true;
+          check(event.currentTarget);
+        }
+      }}
+    >
+      {children}
+    </div>
   );
 }
 
@@ -76,6 +111,8 @@ function Transcript({
   onStarted,
   onCompleted,
   blocked,
+  persistedId,
+  ref,
 }: {
   id: string;
   title: string;
@@ -90,15 +127,17 @@ function Transcript({
   onStarted?: (turn: Turn) => void;
   onCompleted: () => void;
   blocked: boolean;
+  persistedId: string | null;
+  ref: Ref<() => void>;
 }) {
   const load = useCallback(
     (cursor: string | null, signal: AbortSignal) =>
-      prepare
+      prepare && !persistedId
         ? Promise.resolve({ items: [], nextCursor: null })
-        : listTurns(session, id, cursor, signal),
-    [id, session, prepare],
+        : listTurns(session, persistedId ?? id, cursor, signal),
+    [id, session, prepare, persistedId],
   );
-  const history = usePage(load, onExpired);
+  const history = useScrollPages(load, onExpired);
   const [recipeBusy, setRecipeBusy] = useState(false);
   const [chatBusy, setChatBusy] = useState(false);
   useEffect(() => {
@@ -125,175 +164,143 @@ function Transcript({
   );
   const loaded = history.state.kind === "ready" ? history.state.page.items : [];
   const byId = new Map(updates.map((turn) => [turn.turnId, turn]));
-  const currentPage = loaded.map((turn) => byId.get(turn.turnId) ?? turn);
-  const separate = updates
-    .filter((turn) => !loaded.some((item) => item.turnId === turn.turnId))
-    .sort((left, right) => left.turnIndex - right.turnIndex);
-  const visible = [...currentPage, ...separate];
+  const visible = [
+    ...new Map([
+      ...loaded.map(
+        (turn) => [turn.turnId, byId.get(turn.turnId) ?? turn] as const,
+      ),
+      ...updates.map((turn) => [turn.turnId, turn] as const),
+    ]).values(),
+  ].sort((left, right) => left.turnIndex - right.turnIndex);
   const refreshHistory = history.refresh;
   const refresh = useCallback(() => {
     setUpdates([]);
-    refreshHistory(true);
+    refreshHistory();
   }, [refreshHistory]);
+  useImperativeHandle(ref, () => refresh, [refresh]);
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     if (focusRequest > 0) heading.current?.focus();
   }, [focusRequest]);
   useEffect(() => {
-    if (history.index === 0 && history.state.kind === "ready") {
+    if (history.state.kind === "ready") {
       const turns = history.state.page.items;
       const recipe = turns.find((turn) => turn.recipe)?.recipe;
       const first = turns[0]?.messages[0];
       if (recipe || first)
-        onTitle(id, safeTitle(recipe?.title ?? first!.content));
+        onTitle(persistedId ?? id, safeTitle(recipe?.title ?? first!.content));
     }
-  }, [history.state, history.index, id, onTitle]);
+  }, [history.state, id, persistedId, onTitle]);
 
   return (
     <section
       className="conversation-transcript"
       aria-label={`Conversation: ${title}`}
+      data-empty={visible.length === 0 && history.state.kind === "ready"}
     >
       <div className="conversation-heading">
-        <h2 id="transcript-title" ref={heading} tabIndex={-1}>
+        <h2 id="transcript-title" ref={heading} tabIndex={-1} title={title}>
           {title}
         </h2>
-        <CartoonButton
-          className="secondary"
-          disabled={blocked || recipeBusy || chatBusy}
-          onClick={refresh}
-        >
-          Refresh history
-        </CartoonButton>
       </div>
-      {history.state.kind === "loading" && (
-        <p role="status">Loading messages...</p>
-      )}
-      {history.state.kind === "failed" && (
-        <div className="notice" role="alert">
-          <p>
-            {history.state.status === 404
-              ? "This conversation is not available. Choose another chat."
-              : history.state.status === 400
-                ? "This history page has expired or changed. Restart from the first page."
-                : "Messages could not be loaded. No history has been replaced with an empty chat."}
-          </p>
-          <CartoonButton
-            className="secondary"
-            onClick={() =>
-              history.refresh(
-                history.state.kind === "failed" && history.state.status === 400,
-              )
-            }
-          >
-            Try history again
-          </CartoonButton>
-        </div>
-      )}
-      {history.state.kind === "ready" &&
-        (history.state.page.items.length === 0 ? (
-          <p className="conversation-empty">No messages in this chat yet.</p>
-        ) : (
-          <ol
-            className="conversation-turns"
-            aria-label="Conversation transcript"
-          >
-            {currentPage.map((turn) => (
-              <li key={turn.turnId}>
-                {turn.messages.map((message) => (
-                  <article
-                    className={`conversation-message ${message.role}`}
-                    key={message.messageId}
-                  >
-                    <div className="message-heading">
-                      <strong>
-                        {message.role === "user" ? "You" : "Sous Chef"}
-                      </strong>
-                      <time dateTime={message.timestamp}>
-                        {new Date(message.timestamp).toLocaleString()}
-                      </time>
-                    </div>
-                    {message.role === "assistant" && turn.recipe ? (
-                      <RecipeCard
-                        recipe={turn.recipe}
-                        actions={
-                          turn.generatedRecipeId && (
-                            <RecipeActions
-                              generatedRecipeId={turn.generatedRecipeId}
-                              session={session}
-                              onExpired={onExpired}
-                              onBusy={setRecipeBusy}
-                              disabled={blocked || recipeBusy || chatBusy}
-                            />
-                          )
-                        }
-                      />
-                    ) : (
-                      <p>{message.content}</p>
-                    )}
-                  </article>
-                ))}
-                {turn.status !== "completed" && (
-                  <p className="turn-status">{turnStatus[turn.status]}</p>
-                )}
-              </li>
-            ))}
-          </ol>
-        ))}
-      <Pager
-        index={history.index}
-        ready={!blocked && history.state.kind === "ready"}
-        next={
-          history.state.kind === "ready" &&
-          history.state.page.nextCursor !== null
-        }
-        noun="messages"
-        move={history.move}
-      />
-      {separate.length > 0 && (
-        <section className="current-request" aria-label="Recent requests">
-          <h3>Recent requests</h3>
-          <p className="privacy-note">
-            Up to 20 recently updated requests outside the history page above.
-            Older requests remain in saved, paginated history.
-          </p>
-          {separate.map((turn) => (
-            <div key={turn.turnId}>
-              {turn.messages.map((message) => (
-                <article
-                  className={`conversation-message ${message.role}`}
-                  key={message.messageId}
-                >
-                  <strong>
-                    {message.role === "user" ? "You" : "Sous Chef"}
-                  </strong>
-                  {message.role === "assistant" && turn.recipe ? (
-                    <RecipeCard
-                      recipe={turn.recipe}
-                      actions={
-                        turn.generatedRecipeId && (
-                          <RecipeActions
-                            generatedRecipeId={turn.generatedRecipeId}
-                            session={session}
-                            onExpired={onExpired}
-                            onBusy={setRecipeBusy}
-                            disabled={blocked || recipeBusy || chatBusy}
-                          />
-                        )
-                      }
-                    />
-                  ) : (
-                    <p>{message.content}</p>
-                  )}
-                </article>
-              ))}
-              {turn.status !== "completed" && (
-                <p className="turn-status">{turnStatus[turn.status]}</p>
-              )}
+      <ScrollPane
+        className="conversation-scroll"
+        label="Messages"
+        follow={updates}
+        onMore={() => {
+          if (!blocked && !chatBusy && !recipeBusy) void history.more();
+        }}
+      >
+        {history.state.kind === "loading" && (
+          <p role="status">Loading messages...</p>
+        )}
+        {history.state.kind === "failed" && (
+          <div className="notice" role="alert">
+            <p>
+              {history.state.status === 404
+                ? "This conversation is not available. Choose another chat."
+                : history.state.status === 400
+                  ? "This history page has expired or changed. Restart from the first page."
+                  : "Messages could not be loaded. No history has been replaced with an empty chat."}
+            </p>
+            <CartoonButton
+              className="secondary"
+              onClick={() => history.refresh()}
+            >
+              Try history again
+            </CartoonButton>
+          </div>
+        )}
+        {history.state.kind === "ready" &&
+          (visible.length === 0 ? (
+            <div className="conversation-empty" aria-hidden="true">
+              <PixelArt kind="pot" />
             </div>
+          ) : (
+            <ol
+              className="conversation-turns"
+              aria-label="Conversation transcript"
+            >
+              {visible.map((turn) => (
+                <li key={turn.turnId}>
+                  {turn.messages.map((message) => (
+                    <article
+                      className={`conversation-message ${message.role}`}
+                      key={message.messageId}
+                    >
+                      <div className="message-heading">
+                        <strong>
+                          {message.role === "user" ? "You" : "Sous Chef"}
+                        </strong>
+                        <time dateTime={message.timestamp}>
+                          {new Date(message.timestamp).toLocaleString()}
+                        </time>
+                      </div>
+                      {message.role === "assistant" && turn.recipe ? (
+                        <RecipeCard
+                          recipe={turn.recipe}
+                          actions={
+                            turn.generatedRecipeId && (
+                              <RecipeActions
+                                generatedRecipeId={turn.generatedRecipeId}
+                                session={session}
+                                onExpired={onExpired}
+                                onBusy={setRecipeBusy}
+                                disabled={blocked || recipeBusy || chatBusy}
+                              />
+                            )
+                          }
+                        />
+                      ) : (
+                        <p>{message.content}</p>
+                      )}
+                    </article>
+                  ))}
+                  {turn.status !== "completed" && (
+                    <p className="turn-status">{turnStatus[turn.status]}</p>
+                  )}
+                </li>
+              ))}
+            </ol>
           ))}
-        </section>
-      )}
+        {history.loadingMore && <p role="status">Loading more messages...</p>}
+        {history.moreError !== null && (
+          <div className="notice" role="alert">
+            <p>More messages could not be loaded.</p>
+            <CartoonButton
+              className="secondary"
+              disabled={blocked || chatBusy || recipeBusy}
+              onClick={() =>
+                history.moreError === 400
+                  ? history.refresh()
+                  : void history.more(true)
+              }
+            >
+              Try history again
+            </CartoonButton>
+          </div>
+        )}
+      </ScrollPane>
       <ChatComposer
         id={id}
         owner={owner}
@@ -330,6 +337,8 @@ export default function ConversationPanel({
   const [storageNotice, setStorageNotice] = useState("");
   const [notice, setNotice] = useState("");
   const [draftId, setDraftId] = useState<string | null>(null);
+  const [viewKey, setViewKey] = useState<string | null>(null);
+  const transcriptRefresh = useRef<(() => void) | null>(null);
   const [deleting, setDeleting] = useState(false);
   const deletingRef = useRef(false);
   const [sending, setSending] = useState(false);
@@ -357,7 +366,7 @@ export default function ConversationPanel({
       listConversations(session, cursor, signal),
     [session],
   );
-  const chats = usePage(load, onExpired);
+  const chats = useScrollPages(load, onExpired);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -377,7 +386,11 @@ export default function ConversationPanel({
       }
       current.current = restored;
       setNavigation(restored);
-      setDraftId(restored.selectedId ? null : restored.creationKey);
+      const draft = restored.selectedId
+        ? null
+        : (restored.creationKey ?? crypto.randomUUID());
+      setDraftId(draft);
+      setViewKey(restored.selectedId ?? draft);
     }
     void restore().catch(() => {
       if (!controller.signal.aborted) setInitializationFailed(true);
@@ -405,6 +418,10 @@ export default function ConversationPanel({
     );
   }, []);
 
+  function closeMobileSidebar() {
+    if (window.matchMedia("(max-width: 720px)").matches) setSidebarOpen(false);
+  }
+
   function select(id: string) {
     if (!current.current || deletingRef.current || sending) return;
     if (
@@ -413,18 +430,26 @@ export default function ConversationPanel({
       !window.confirm(
         "Leave this recipe request? Unsaved input will be discarded; accepted requests are not cancelled.",
       )
-    )
+    ) {
+      closeMobileSidebar();
       return;
+    }
     remember({ ...current.current, selectedId: id, creationKey: null });
     setDraftId(null);
+    setViewKey(id);
     setFocusRequest((value) => value + 1);
     setNotice("");
-    if (window.matchMedia("(max-width: 720px)").matches) setSidebarOpen(false);
+    closeMobileSidebar();
   }
 
   function create() {
     const previous = current.current;
     if (!previous || deletingRef.current || sending) return;
+    if (draftId && !previous.selectedId && !previous.creationKey) {
+      closeMobileSidebar();
+      setFocusRequest((value) => value + 1);
+      return;
+    }
     if (
       chatDirty.current &&
       !window.confirm(
@@ -433,10 +458,12 @@ export default function ConversationPanel({
     )
       return;
     setNotice("");
-    setDraftId(crypto.randomUUID());
+    const draft = crypto.randomUUID();
+    setDraftId(draft);
+    setViewKey(draft);
     remember({ ...previous, selectedId: null, creationKey: null });
     setFocusRequest((value) => value + 1);
-    if (window.matchMedia("(max-width: 720px)").matches) setSidebarOpen(false);
+    closeMobileSidebar();
   }
 
   const prepare = useCallback(
@@ -468,16 +495,23 @@ export default function ConversationPanel({
         creationKey: null,
       });
       setDraftId(null);
-      refreshChats(true);
+      refreshChats();
     },
     [refreshChats, remember],
   );
 
-  async function remove() {
+  const newChatButton = useRef<HTMLButtonElement>(null);
+  const focusAfterDelete = useRef(false);
+  useEffect(() => {
+    if (!deleting && focusAfterDelete.current) {
+      focusAfterDelete.current = false;
+      newChatButton.current?.focus();
+    }
+  }, [deleting]);
+  async function remove(id: string) {
     const previous = current.current;
     const controller = lifetime.current;
-    if (!previous?.selectedId || !controller || deletingRef.current || sending)
-      return;
+    if (!previous || !controller || deletingRef.current || sending) return;
     if (
       !window.confirm(
         "Delete this chat and its messages? This cannot be undone. Saved recipes will be kept.",
@@ -488,18 +522,25 @@ export default function ConversationPanel({
     setDeleting(true);
     setNotice("");
     try {
-      await deleteConversation(session, previous.selectedId, controller.signal);
+      await deleteConversation(session, id, controller.signal);
       if (controller.signal.aborted || !current.current) return;
-      remember({ ...current.current, selectedId: null, creationKey: null });
-      trackDirty(false);
+      if (current.current.selectedId === id) {
+        remember({ ...current.current, selectedId: null, creationKey: null });
+        const draft = crypto.randomUUID();
+        setDraftId(draft);
+        setViewKey(draft);
+        trackDirty(false);
+        closeMobileSidebar();
+      }
       try {
-        rememberOperation(previous.owner, previous.selectedId, null);
+        rememberOperation(previous.owner, id, null);
       } catch {
         setStorageNotice(
           "Deleted chat navigation could not be cleared from browser storage.",
         );
       }
-      chats.refresh(true);
+      chats.refresh();
+      focusAfterDelete.current = true;
     } catch (error) {
       if (controller.signal.aborted) return;
       if (error instanceof ApiError && error.status === 401) onExpired();
@@ -515,7 +556,14 @@ export default function ConversationPanel({
     }
   }
 
-  const items = chats.state.kind === "ready" ? chats.state.page.items : [];
+  const items =
+    chats.state.kind === "ready"
+      ? [
+          ...new Map(
+            chats.state.page.items.map((item) => [item.conversationId, item]),
+          ).values(),
+        ]
+      : [];
   const selected = draftId ? null : (navigation?.selectedId ?? null);
   function titleFor(conversation: Conversation) {
     return conversation.title === "New conversation"
@@ -526,6 +574,11 @@ export default function ConversationPanel({
   const title = summary
     ? titleFor(summary)
     : (selected && titles[selected]) || "Conversation";
+  const choices = items.map((item) => ({
+    id: item.conversationId,
+    title: titleFor(item),
+  }));
+  if (selected && !summary) choices.unshift({ id: selected, title });
 
   return (
     <section
@@ -533,25 +586,25 @@ export default function ConversationPanel({
       aria-label="Sous Chef conversations"
     >
       <div className="conversation-toolbar">
+        <CartoonButton
+          className="secondary sidebar-toggle"
+          aria-label="Conversations"
+          title="Toggle chats"
+          aria-expanded={sidebarOpen}
+          aria-controls="conversation-sidebar"
+          onClick={() => setSidebarOpen((value) => !value)}
+        >
+          <KitchenIcon name="sidebar" />
+        </CartoonButton>
         <div>
-          <p className="eyebrow">YOUR SOUS CHEF</p>
           <h1 className="kitchen-title">Your conversations</h1>
-          <p>Separate chats. Your kitchen context, kept in its place.</p>
         </div>
         <CartoonButton
+          ref={newChatButton}
           label="New Chat"
           disabled={!navigation || deleting || sending}
           onClick={create}
         />
-        {selected && !draftId && (
-          <CartoonButton
-            className="secondary"
-            disabled={deleting || sending}
-            onClick={() => void remove()}
-          >
-            {deleting ? "Deleting chat..." : "Delete chat"}
-          </CartoonButton>
-        )}
       </div>
       {storageNotice && (
         <p className="notice" role="status">
@@ -577,98 +630,103 @@ export default function ConversationPanel({
           </CartoonButton>
         </div>
       )}
-      <CartoonButton
-        className="secondary sidebar-toggle"
-        aria-expanded={sidebarOpen}
-        aria-controls="conversation-sidebar"
-        onClick={() => setSidebarOpen((value) => !value)}
-      >
-        Conversations
-      </CartoonButton>
       <div className="conversation-layout card" data-sidebar-open={sidebarOpen}>
         <aside id="conversation-sidebar" hidden={!sidebarOpen}>
           <div className="conversation-heading">
             <h2>Chats</h2>
             <CartoonButton
-              className="secondary"
+              className="secondary chat-tool"
+              aria-label="Refresh chats and messages"
+              title="Refresh chats and messages"
               disabled={deleting || sending}
-              onClick={() => chats.refresh(true)}
+              onClick={() => {
+                chats.refresh();
+                transcriptRefresh.current?.();
+              }}
             >
-              Refresh chats
+              <KitchenIcon name="refresh" />
             </CartoonButton>
           </div>
-          {chats.state.kind === "loading" && (
-            <p role="status">Loading chats...</p>
-          )}
-          {chats.state.kind === "failed" && (
-            <div className="notice" role="alert">
-              <p>
-                Chats could not be loaded. Your saved conversations have not
-                been removed.
-              </p>
-              <CartoonButton
-                className="secondary"
-                onClick={() =>
-                  chats.refresh(
-                    chats.state.kind === "failed" && chats.state.status === 400,
-                  )
-                }
-              >
-                Try chats again
-              </CartoonButton>
-            </div>
-          )}
-          {selected && !summary && (
-            <button
-              type="button"
-              className="conversation-choice"
-              aria-current="true"
-              disabled={deleting || sending}
-              onClick={() => select(selected)}
-            >
-              <span>{title}</span>
-              <small>Selected conversation</small>
-            </button>
-          )}
-          {chats.state.kind === "ready" && items.length === 0 && (
-            <p>No conversations yet. Start with New Chat.</p>
-          )}
-          <nav aria-label="Conversations">
-            <ul className="conversation-list">
-              {items.map((item) => (
-                <li key={item.conversationId}>
-                  <button
-                    type="button"
-                    className="conversation-choice"
-                    aria-current={
-                      item.conversationId === selected ? "true" : undefined
-                    }
-                    disabled={!navigation || deleting || sending}
-                    onClick={() => select(item.conversationId)}
-                  >
-                    <span>{titleFor(item)}</span>
-                    <time dateTime={item.createdAt}>
-                      {new Date(item.createdAt).toLocaleString()}
-                    </time>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </nav>
-          <Pager
-            index={chats.index}
-            ready={chats.state.kind === "ready"}
-            next={
-              chats.state.kind === "ready" &&
-              chats.state.page.nextCursor !== null
-            }
-            noun="chats"
-            move={chats.move}
-          />
+          <ScrollPane
+            className="chat-list-scroll"
+            label="Chat list"
+            onMore={() => {
+              if (!deleting && !sending) void chats.more();
+            }}
+          >
+            {chats.state.kind === "loading" && (
+              <p role="status">Loading chats...</p>
+            )}
+            {chats.state.kind === "failed" && (
+              <div className="notice" role="alert">
+                <p>
+                  Chats could not be loaded. Your saved conversations have not
+                  been removed.
+                </p>
+                <CartoonButton
+                  className="secondary"
+                  onClick={() => chats.refresh()}
+                >
+                  Try chats again
+                </CartoonButton>
+              </div>
+            )}
+            {chats.state.kind === "ready" && items.length === 0 && (
+              <p className="privacy-note">Your chats will appear here.</p>
+            )}
+            <nav aria-label="Conversations">
+              <ul className="conversation-list">
+                {choices.map((item) => (
+                  <li key={item.id} data-selected={item.id === selected}>
+                    <button
+                      type="button"
+                      className="conversation-choice"
+                      aria-current={item.id === selected ? "true" : undefined}
+                      disabled={!navigation || deleting || sending}
+                      title={item.title}
+                      onClick={() => select(item.id)}
+                    >
+                      <span>{item.title}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="conversation-delete"
+                      aria-label="Delete chat"
+                      aria-description={item.title}
+                      title={`Delete ${item.title}`}
+                      disabled={deleting || sending}
+                      onClick={() => void remove(item.id)}
+                    >
+                      <KitchenIcon name="trash" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+            {chats.loadingMore && <p role="status">Loading more chats...</p>}
+            {chats.moreError !== null && (
+              <div className="notice" role="alert">
+                <p>More chats could not be loaded.</p>
+                <CartoonButton
+                  className="secondary"
+                  disabled={deleting || sending}
+                  onClick={() =>
+                    chats.moreError === 400
+                      ? chats.refresh()
+                      : void chats.more(true)
+                  }
+                >
+                  Try chats again
+                </CartoonButton>
+              </div>
+            )}
+          </ScrollPane>
         </aside>
         {selected || draftId ? (
           <Transcript
-            key={selected ?? draftId}
+            key={viewKey}
+            ref={transcriptRefresh}
+            persistedId={navigation!.selectedId}
             id={(selected ?? draftId)!}
             title={draftId ? "New chat" : title}
             session={session}
@@ -688,14 +746,7 @@ export default function ConversationPanel({
             className="conversation-empty"
             aria-label="No conversation selected"
           >
-            <h2>A fresh space for your next idea.</h2>
-            <p>
-              Choose a conversation or create a new chat. Each chat keeps its
-              own message history.
-            </p>
-            <p className="privacy-note">
-              Send a recipe request after selecting a chat.
-            </p>
+            <p role="status">Opening your chat...</p>
           </section>
         )}
       </div>
