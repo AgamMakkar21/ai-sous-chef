@@ -479,8 +479,7 @@ input[type="checkbox"] {
 }
 .conversation-toolbar,
 .conversation-heading,
-.message-heading,
-.conversation-pager {
+.message-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -560,7 +559,6 @@ input[type="checkbox"] {
 .conversation-choice time,
 .conversation-choice small,
 .message-heading time,
-.conversation-pager span,
 .turn-status {
   font-size: 0.75rem;
   color: var(--cp-text-soft);
@@ -568,15 +566,6 @@ input[type="checkbox"] {
 .conversation-choice[aria-current="true"] time,
 .conversation-choice[aria-current="true"] small {
   color: var(--cp-text);
-}
-.conversation-pager {
-  flex-wrap: wrap;
-  margin: 24px 0;
-  gap: 8px;
-}
-.conversation-pager .button {
-  padding: 8px 12px;
-  font-size: 0.75rem;
 }
 .conversation-message {
   border: 1px solid var(--cp-border);

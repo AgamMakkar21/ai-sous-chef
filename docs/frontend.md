@@ -274,7 +274,10 @@ The layout wraps long names/labels and stacks quick entry on narrow screens.
 ## Conversation navigation (ASC-39)
 
 The Sous Chef tab uses the existing owned conversation APIs, not a second history
-store or a model call. New Chat opens a local draft; no server conversation is
+store or a model call. A local draft is ready automatically when there is no saved
+selection. New Chat starts fresh context from an existing chat or attempted
+first send, confirming before discarding unsent input. Clicking it in an untouched
+local draft preserves that input. No server conversation is
 created until its first valid request is sent. Empty drafts are discarded on
 leaving or reloading, and saved lists exclude chats without accepted turns.
 First-send creation has a stable idempotency key and uses a freshly verified
@@ -282,9 +285,14 @@ session and CSRF token. An uncertain result or CSRF failure never automatically
 replays the write: **Check this request** explicitly repeats the same creation
 key/body before sending. The backend receipt resolves a committed creation to the
 original opaque ID, which is remembered before submitting the first request.
+Promotion to that saved chat preserves the composer and its recovery state;
+refresh and operation checks use the saved ID even if the first reply was lost.
 
-Select a saved chat and choose **Delete chat** to confirm deletion. The action
-clears selected navigation and its remembered operation, refreshes the list and
+Each sidebar row has a simple trash button to confirm deletion, without first
+selecting that chat. On hover-capable pointers, it appears only on that row's
+hover or keyboard focus; touch devices keep it visible. Deleting the selected chat opens a new local draft;
+deleting another chat preserves the current draft and selection. The action
+clears the deleted chat's remembered operation, refreshes the list and
 keeps saved Recipe History entries. Failures remain explicit and can be retried;
 active or unresolved work must finish or be closed before deletion. Chat deletion
 uses the [soft-deletion and retention contract](conversations.md#chat-lifecycle).
@@ -298,11 +306,16 @@ identity clears the displayed conversation with the rest of the private UI.
 Unavailable/corrupt browser storage produces a visible notice rather than a false
 promise of reload persistence.
 
-Conversation lists and transcripts request 20 records per page. Earlier/next
-controls fetch only the requested page, preserve server ordering and discard the
-previous page's content; there is no lifetime-history prefetch. Refresh restarts
+Conversation lists and transcripts request 20 records per page. Scrolling near
+the bottom loads one more page and retains the loaded rows, without pagination
+buttons or lifetime-history prefetch. Scrollbar, wheel, touch and keyboard
+scrolling work; scrolling triggered by a new reply does not fetch another page.
+The existing API returns turns oldest-first; later batches append chronologically.
+New replies merge into the transcript without duplicating saved turns.
+Additional-page failures preserve existing content and require explicit retry;
+repeated cursors are rejected. Refresh restarts
 the server snapshot. Expired history cursors can restart from page one. A selected
-conversation outside the current list page remains highlighted separately, without
+conversation outside the loaded list remains highlighted separately, without
 scanning every list page to locate it.
 
 Existing metadata titles are rendered as escaped text. A generic title can use
@@ -313,8 +326,10 @@ chats use **New chat**. Transcript messages are plain React text, not injected
 HTML or executable Markdown. Pending, failed and unknown outcomes stay distinct
 from completed assistant replies.
 
-The sidebar collapses on phones and supports native keyboard buttons, selection
-highlighting and focus on the selected transcript. Loading, empty, unavailable
+The chat workspace fits the viewport. Its chat list and message pane scroll
+independently above a persistent composer. The sidebar replaces the message pane
+on phones instead of stacking above it, and supports native keyboard buttons,
+selection highlighting and focus on the selected transcript. Loading, empty, unavailable
 and failed reads have separate visible states. No raw service error is displayed.
 
 Hosted use still requires the live Cosmos/authentication setup and shared
@@ -323,7 +338,7 @@ Local readiness doubles do not fabricate conversations or history.
 
 ## Chat composition and recovery (ASC-40)
 
-Select a chat to send a recipe request. Enter submits, Shift+Enter adds a line,
+Use the ready draft or select a chat to send a recipe request. Enter submits, Shift+Enter adds a line,
 and input-method composition does not submit. The client trims text and enforces
 the API's 1-4,000 Unicode-code-point limit. A synchronous guard prevents duplicate
 submissions. Each deliberate new send has a UUID idempotency key and a freshly
@@ -345,17 +360,25 @@ history, and successive sends do not replace earlier visible requests.
 Failures show **I couldn't complete that recipe request** with explicit recovery:
 
 - **Check this request** reconciles an ambiguous send using its original body
-  and key. It is not a new generation attempt. CSRF renewal never auto-replays.
+  and key, preserving any revised text in the composer. It is not a new
+  generation attempt. CSRF renewal never auto-replays.
 - **Check saved status** reads a known owned operation. Pending operations are
   polled with GET every two seconds, stopping on a terminal result, failed read,
   view departure or the local polling budget. Operation links must be exact
   relative paths for the selected conversation; arbitrary server URLs are not followed.
 - **Retry saved request** is available only for a known failed turn. It sends a
   new key with `retryOfTurnId` and the original unchanged text, preserving the
-  saved turn and user-message identities. Editing the input instead starts a new turn.
+  saved turn and user-message identities. The main send button also retries a
+  confirmed failed request when its text is unchanged. Editing the input
+  instead starts a new turn.
 - An unknown outcome blocks new sends and retries for that chat. A local timeout
   never invents a failed/cancelled result or releases the server's concurrency guard.
   Concurrent-send conflicts preserve input and reload bounded saved history for review.
+
+Unresolved requests leave the text editable but fence submission until the saved
+outcome is resolved. Completing an earlier request never clears a revised draft.
+The single **Refresh chats and messages** control reads both panes without replaying
+requests or discarding unsent text. Recovery notices scroll separately from the form.
 
 Session storage keeps at most 20 opaque conversation/operation-ID pairs under the
 hashed owner scope, in addition to the existing navigation metadata. It stores no

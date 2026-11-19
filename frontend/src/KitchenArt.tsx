@@ -92,6 +92,8 @@ const icons = {
   flame:
     "M12 2c1 6 8 7 8 13a8 8 0 0 1-16 0c0-3 2-6 4-8 0 4 2 5 3 6 2-3 2-7 1-11Z",
   trash: "M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7",
+  sidebar: "M3 4h18v16H3V4Zm6 0v16M5 8h1m-1 4h1",
+  refresh: "M20 7a9 9 0 1 0 1 8M20 3v5h-5",
 };
 
 export function KitchenIcon({ name }: { name: keyof typeof icons }) {

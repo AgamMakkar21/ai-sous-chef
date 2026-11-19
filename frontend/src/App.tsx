@@ -271,6 +271,7 @@ export default function App() {
         </div>
       </header>
       <Tabs.Root
+        className="kitchen-tabs"
         value={ready && completed && !editing ? selected : ""}
         onValueChange={selectTab}
         activationMode="automatic"

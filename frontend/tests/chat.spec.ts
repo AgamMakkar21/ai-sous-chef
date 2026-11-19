@@ -59,6 +59,7 @@ async function chatBackend(page: Page) {
       | "success"
       | "failed"
       | "pending"
+      | "lostPending"
       | "unknown"
       | "transport"
       | "partial"
@@ -100,6 +101,7 @@ async function chatBackend(page: Page) {
     if (request.method() === "GET") {
       state.reads.push(url.pathname + url.search);
       if (parts[5] === "operations") {
+        expect(parts[4]).toBe(id);
         expect(url.search).toBe("");
         const operation = state.operations.get(parts[6]!);
         if (!operation) throw new Error("Unexpected operation read.");
@@ -130,6 +132,20 @@ async function chatBackend(page: Page) {
       return;
     }
     expect(request.method()).toBe("POST");
+    if (url.pathname === "/api/v1/conversations") {
+      await route.fulfill({
+        status: 201,
+        json: {
+          data: {
+            conversationId: id,
+            title: "New conversation",
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+        },
+      });
+      return;
+    }
     if (parts[5] === "operations" && parts[7] === "close") {
       expect(request.headers()["x-csrf-token"]).toBeTruthy();
       expect(request.headers()["idempotency-key"]).toBe(parts[6]);
@@ -183,7 +199,7 @@ async function chatBackend(page: Page) {
       const status =
         mode === "failed"
           ? "failed"
-          : mode === "pending"
+          : mode === "pending" || mode === "lostPending"
             ? "pending"
             : mode === "unknown"
               ? "outcomeUnknown"
@@ -234,7 +250,7 @@ async function chatBackend(page: Page) {
     const gate = state.gate;
     state.gate = null;
     if (gate) await gate.promise;
-    if (mode === "transport") {
+    if (mode === "transport" || mode === "lostPending") {
       await route.abort("failed");
       return;
     }
@@ -442,10 +458,10 @@ test("known agent failure retries the original text with a new key and the same 
     "I couldn't complete that recipe request",
   );
   await expect(requestInput(page)).toHaveValue("Dinner with beans");
-  await expect(sendButton(page)).toBeDisabled();
+  await expect(sendButton(page)).toBeEnabled();
   const failedId = chat.turns[0]!.turnId;
   const messageId = chat.turns[0]!.messages[0]!.messageId;
-  await page.getByRole("button", { name: "Retry saved request" }).click();
+  await sendButton(page).click();
   await expect(page.getByText(reply, { exact: true })).toBeVisible();
   expect(chat.writes).toHaveLength(2);
   expect(chat.writes[1]?.key).not.toBe(chat.writes[0]?.key);
@@ -483,6 +499,129 @@ test("a committed but lost response is reconciled explicitly with the original k
   expect(chat.writes[1]?.token).toBe("r".repeat(43));
   expect(chat.generations).toBe(1);
   expect(chat.turns).toHaveLength(1);
+});
+
+test("editing after an uncertain send preserves the revision while checking the original request", async ({
+  page,
+}, info) => {
+  const { chat } = await chatBackend(page);
+  await open(page);
+  chat.mode = "transport";
+  await requestInput(page).fill("Original dinner");
+  await sendButton(page).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(requestInput(page)).toBeEditable();
+  await requestInput(page).fill("Revised dinner");
+  await expect(sendButton(page)).toBeDisabled();
+  expect(chat.writes).toHaveLength(1);
+  const check = page.getByRole("button", {
+    name: "Check this request",
+    exact: true,
+  });
+  await check.hover();
+  const button = await check.boundingBox();
+  const composer = await page
+    .getByRole("region", { name: "Recipe request", exact: true })
+    .boundingBox();
+  expect(button).not.toBeNull();
+  expect(composer).not.toBeNull();
+  expect(button!.y).toBeGreaterThanOrEqual(composer!.y + 2);
+  expect(button!.y + button!.height + 4).toBeLessThanOrEqual(
+    composer!.y + composer!.height,
+  );
+  expect(composer!.y + composer!.height).toBeLessThanOrEqual(
+    page.viewportSize()!.height,
+  );
+  await page.screenshot({
+    path: info.outputPath("editable-error.png"),
+    fullPage: true,
+  });
+  await check.click();
+  await expect(page.getByText(reply, { exact: true })).toBeVisible();
+  await expect(requestInput(page)).toHaveValue("Revised dinner");
+  expect(chat.writes[1]?.key).toBe(chat.writes[0]?.key);
+  expect(chat.writes[1]?.body).toEqual(chat.writes[0]?.body);
+  expect(chat.generations).toBe(1);
+  await expect(sendButton(page)).toBeEnabled();
+  await sendButton(page).click();
+  await expect(requestInput(page)).toHaveValue("");
+  expect(chat.writes[2]?.body.content).toBe("Revised dinner");
+  expect(chat.generations).toBe(2);
+});
+
+test("a confirmed failed request can be edited and sent as a new request", async ({
+  page,
+}) => {
+  const { chat } = await chatBackend(page);
+  await open(page);
+  chat.mode = "failed";
+  await requestInput(page).fill("Original dinner");
+  await sendButton(page).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(requestInput(page)).toBeEditable();
+  await requestInput(page).fill("Revised dinner");
+  await sendButton(page).click();
+  await expect(requestInput(page)).toHaveValue("");
+  expect(chat.writes[1]?.body).toEqual({ content: "Revised dinner" });
+  expect(chat.turns).toHaveLength(2);
+  expect(chat.turns[0]?.status).toBe("failed");
+});
+
+test("a pending reply does not erase the next draft when it completes", async ({
+  page,
+}) => {
+  const { chat, complete } = await chatBackend(page);
+  await open(page);
+  chat.mode = "pending";
+  await requestInput(page).fill("First dinner");
+  await sendButton(page).click();
+  await expect(
+    page.getByText("Status is checked automatically", { exact: false }),
+  ).toBeVisible();
+  await requestInput(page).fill("Next dinner");
+  await expect(sendButton(page)).toBeDisabled();
+  complete();
+  await expect(page.getByText(reply, { exact: true })).toBeVisible({
+    timeout: 8000,
+  });
+  await expect(requestInput(page)).toHaveValue("Next dinner");
+  await expect(sendButton(page)).toBeEnabled();
+  expect(chat.writes).toHaveLength(1);
+});
+
+test("the first chat can refresh and check a lost pending reply using its saved conversation ID", async ({
+  page,
+}) => {
+  const { chat, complete } = await chatBackend(page);
+  await page.goto("/#sous-chef");
+  chat.mode = "lostPending";
+  await requestInput(page).fill("First dinner");
+  await sendButton(page).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await requestInput(page).fill("Next dinner");
+  const toggle = page.getByRole("button", {
+    name: "Conversations",
+    exact: true,
+  });
+  if ((await toggle.getAttribute("aria-expanded")) === "false")
+    await toggle.click();
+  await page
+    .getByRole("button", { name: "Refresh chats and messages", exact: true })
+    .click();
+  if ((page.viewportSize()?.width ?? 0) <= 720) await toggle.click();
+  const check = page.getByRole("button", {
+    name: "Check saved status",
+    exact: true,
+  });
+  await expect(check).toBeVisible();
+  expect(chat.writes).toHaveLength(1);
+  complete();
+  await check.click();
+  await expect(page.getByText(reply, { exact: true })).toBeVisible();
+  await expect(requestInput(page)).toHaveValue("Next dinner");
+  await expect(sendButton(page)).toBeEnabled();
+  expect(chat.writes).toHaveLength(1);
+  expect(chat.generations).toBe(1);
 });
 
 test("pending operations survive reload and finish through read-only status polling, never another send", async ({
@@ -723,28 +862,31 @@ test("new replies remain visible outside a full history page without scanning li
   page,
 }) => {
   const { chat } = await chatBackend(page);
-  chat.turns = Array.from({ length: 20 }, (_, index) =>
+  chat.turns = Array.from({ length: 40 }, (_, index) =>
     savedTurn(`Older request ${index}`, index),
   );
   await open(page);
   const historyReads = chat.reads.filter((read) =>
     read.includes("/turns?"),
   ).length;
+  await page
+    .getByRole("region", { name: "Messages", exact: true })
+    .dispatchEvent("wheel", { deltaY: 10 });
   await requestInput(page).fill("The newest request");
   await sendButton(page).click();
   await expect(
-    page.getByRole("region", { name: "Recent requests" }),
+    page.getByRole("list", { name: "Conversation transcript" }),
   ).toContainText("The newest request");
   await expect(requestInput(page)).toHaveValue("");
   expect(chat.reads.filter((read) => read.includes("/turns?"))).toHaveLength(
     historyReads,
   );
-  expect(chat.turns).toHaveLength(21);
+  expect(chat.turns).toHaveLength(41);
   await expect(
     page
       .getByRole("list", { name: "Conversation transcript" })
       .getByRole("article"),
-  ).toHaveCount(40);
+  ).toHaveCount(42);
 });
 
 test("navigation warns before discarding a draft and cancelling preserves input without browser persistence", async ({
@@ -783,7 +925,9 @@ test("a concurrent-send conflict preserves the draft and exposes the pending tur
     "Another request owns this chat",
   );
   await expect(requestInput(page)).toHaveValue("Keep my new idea");
-  await page.getByRole("button", { name: "Later messages" }).click();
+  await page
+    .getByRole("region", { name: "Messages", exact: true })
+    .press("End");
   await expect(
     page.getByRole("region", { name: "Saved request recovery" }),
   ).toContainText("This request is pending");

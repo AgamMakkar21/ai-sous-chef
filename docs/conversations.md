@@ -144,7 +144,10 @@ Do not change Azure settings or deploy as part of local implementation.
 
 ## Chat lifecycle
 
-New Chat opens a browser-only draft. Opening another draft, switching tabs or
+First open prepares a browser-only draft when no saved selection exists.
+New Chat resets context after an existing chat or attempted first send, with an
+unsent-input confirmation. An untouched local draft is preserved.
+Opening a draft, switching tabs or
 reloading without sending does not create a conversation on the server. On the
 first send, the client creates the conversation with a stable idempotency key
 before submitting the request. Uncertain creation is reconciled with that same
@@ -163,8 +166,9 @@ chats, listing derives a label from one latest completed exchange, or one first
 accepted turn when none completed; it never loads a lifetime transcript or calls
 an AI model. These legacy labels do not modify stored history.
 
-Select a saved chat and choose Delete chat to remove it after confirmation.
-Deletion clears its selected navigation and operation reference, while leaving
+Choose the trash button beside a saved chat to remove it after confirmation.
+Deletion clears its operation reference and, when selected, replaces its navigation
+with a fresh local draft, while leaving
 other chats and saved Recipe History entries intact. It is a conditional soft
 deletion: the chat and its transcript become inaccessible immediately and
 cannot be restored through the app; underlying records follow the existing
