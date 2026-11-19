@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "./api";
 import { CartoonButton } from "@/components/ui/cartoon-button";
 import { KitchenIcon } from "./KitchenArt";
+import RecipeWaiting from "./RecipeWaiting";
 import {
   CHAT_TIMEOUT_MS,
   closeOperation,
@@ -69,6 +70,7 @@ export default function ChatComposer({
   const lifetime = useRef<AbortController | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const working = phase === "sending" || phase === "checking";
+  const waiting = phase === "sending" || phase === "pending";
   const unresolvedTurn = turns.find(
     (turn) => turn.status === "pending" || turn.status === "outcomeUnknown",
   );
@@ -388,16 +390,19 @@ export default function ChatComposer({
             <p>{notice}</p>
           </div>
         )}
-        <p className="turn-status" role="status" aria-live="polite">
-          {phase === "sending"
-            ? "Sending your request. Waiting for a saved reply..."
+        {waiting && <RecipeWaiting />}
+        <p
+          className={`turn-status${waiting ? " sr-only" : ""}`}
+          role="status"
+          aria-live="polite"
+        >
+          {waiting
+            ? "Waiting for your recipe."
             : phase === "checking"
               ? "Checking the saved request..."
-              : phase === "pending"
-                ? "Awaiting a reply. Status is checked automatically; no new generation is sent."
-                : unresolved
-                  ? "This chat has an unresolved request. Check its saved state before sending another."
-                  : ""}
+              : unresolved
+                ? "This chat has an unresolved request. Check its saved state before sending another."
+                : ""}
         </p>
         {turns.some((turn) => turn.status !== "completed") && (
           <section

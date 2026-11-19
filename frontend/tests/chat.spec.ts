@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 import type { Operation, Turn } from "../src/conversations.ts";
+import { foodFacts } from "../src/foodFacts.ts";
 import { backend } from "./backend.ts";
 
 const id = "11111111-1111-4111-8111-111111111111";
@@ -348,7 +350,7 @@ test("keyboard composition, slow sending and synchronous double submission save 
   await requestInput(page).press("Enter");
   await expect.poll(() => chat.writes.length).toBe(1);
   await expect(
-    page.getByText("Sending your request.", { exact: false }),
+    page.getByText("Waiting for your recipe.", { exact: true }),
   ).toBeVisible();
   await expect(requestInput(page)).toHaveValue("Quick dinner\nk");
   await expect(requestInput(page)).toHaveAttribute("readonly");
@@ -380,9 +382,15 @@ test("keyboard composition, slow sending and synchronous double submission save 
   expect(chat.turns).toHaveLength(2);
   expect(chat.writes[1]?.key).not.toBe(chat.writes[0]?.key);
   await expect(
-    page.getByText("Quick dinner\nk", { exact: true }),
+    page
+      .getByRole("region", { name: "Messages", exact: true })
+      .getByText("Quick dinner\nk", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("A second idea", { exact: true })).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "Messages", exact: true })
+      .getByText("A second idea", { exact: true }),
+  ).toBeVisible();
 });
 
 for (const phase of ["sending", "pending"] as const) {
@@ -410,11 +418,10 @@ for (const phase of ["sending", "pending"] as const) {
     else chat.mode = "pending";
     await requestInput(page).fill("A slow recipe request");
     await sendButton(page).click();
-    const notice =
-      phase === "sending" ? "Sending your request." : "Awaiting a reply.";
-    await expect(page.getByText(notice, { exact: false })).toBeVisible();
+    const notice = page.getByText("Waiting for your recipe.", { exact: true });
+    await expect(notice).toBeVisible();
     await page.clock.fastForward(90_000);
-    await expect(page.getByText(notice, { exact: false })).toBeVisible();
+    await expect(notice).toBeVisible();
     if (phase === "sending") gate.resolve();
     else {
       complete();
@@ -425,6 +432,147 @@ for (const phase of ["sending", "pending"] as const) {
     expect(chat.generations).toBe(1);
   });
 }
+
+test("waiting facts hold for reading, cycle all 15, pause fully readable and reset after completion", async ({
+  page,
+}, info) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.clock.install({ time: new Date("2026-11-19T20:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-11-19T20:00:01Z"));
+  const { chat } = await chatBackend(page);
+  await open(page);
+  const gate = deferred();
+  chat.gate = gate;
+  await requestInput(page).fill("A cozy soup");
+  await sendButton(page).click();
+  const waiting = page.locator(".recipe-waiting");
+  const entries = waiting.locator(".word-loader-item");
+  const fact = (index: number) => entries.nth(index);
+  const readable = (index: number) =>
+    fact(index)
+      .locator(".char")
+      .evaluateAll((chars) =>
+        chars.every((char) => getComputedStyle(char).opacity === "1"),
+      );
+  await expect(waiting).toBeVisible();
+  await page.clock.runFor(100);
+  const entrance = await fact(0)
+    .locator(".char")
+    .evaluateAll((chars) =>
+      chars.map((char) => Number(getComputedStyle(char).opacity)),
+    );
+  expect(entrance[0]).toBeGreaterThan(entrance.at(-1)!);
+  await page.clock.runFor(500);
+  await expect(fact(0)).toBeVisible();
+  expect(await readable(0)).toBe(true);
+  const steamTravel = await waiting
+    .locator(".pot-steam")
+    .first()
+    .evaluate((element) => {
+      const animation = element.getAnimations()[0]!;
+      animation.pause();
+      animation.currentTime = 500;
+      const start = getComputedStyle(element).transform;
+      animation.currentTime = 1_500;
+      const end = getComputedStyle(element).transform;
+      animation.play();
+      return { start, end };
+    });
+  expect(steamTravel.start).not.toBe(steamTravel.end);
+  await page.clock.runFor(800);
+  await expect(fact(0)).toBeVisible();
+  expect(await readable(0)).toBe(true);
+  await page.clock.runFor(1_200);
+  await expect(fact(1)).toBeVisible();
+  for (let index = 2; index <= foodFacts.length; index += 1) {
+    await page.clock.runFor(2_000);
+    await expect(fact(index % foodFacts.length)).toBeVisible();
+    expect(await readable(index % foodFacts.length)).toBe(true);
+  }
+  const pause = page.getByRole("button", { name: "Pause food facts" });
+  const pauseSize = await pause.boundingBox();
+  expect(pauseSize!.height).toBeGreaterThanOrEqual(24);
+  expect(pauseSize!.height).toBeLessThanOrEqual(28);
+  expect(pauseSize!.width).toBeLessThanOrEqual(64);
+  await pause.click();
+  await expect(waiting).toHaveAttribute("data-paused", "true");
+  await page.clock.runFor(10_000);
+  await expect(fact(0)).toBeVisible();
+  expect(await readable(0)).toBe(true);
+  await expect(waiting.locator(".pot-steam").first()).toHaveCSS(
+    "animation-play-state",
+    "paused",
+  );
+  for (const entry of await entries.all()) {
+    const overflow = await entry.evaluate(
+      (element) => element.scrollWidth > element.clientWidth + 1,
+    );
+    expect(overflow).toBe(false);
+  }
+  await page.screenshot({
+    path: info.outputPath("waiting-food-facts.png"),
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "Resume food facts" }).click();
+  await page.clock.runFor(2_000);
+  await expect(fact(1)).toBeVisible();
+  gate.resolve();
+  await expect(page.getByText(reply, { exact: true })).toBeVisible();
+  await expect(waiting).toHaveCount(0);
+  const next = deferred();
+  chat.gate = next;
+  await requestInput(page).fill("A second soup");
+  await sendButton(page).click();
+  await page.clock.runFor(600);
+  await expect(fact(0)).toBeVisible();
+  next.resolve();
+  await expect(waiting).toHaveCount(0);
+  expect(chat.generations).toBe(2);
+});
+
+test("reduced motion removes steam travel and fact staggering while keeping waiting accessible", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const { chat } = await chatBackend(page);
+  await open(page);
+  const gate = deferred();
+  chat.gate = gate;
+  await requestInput(page).fill("A quiet soup");
+  await sendButton(page).click();
+  const waiting = page.locator(".recipe-waiting");
+  await expect(waiting).toBeVisible();
+  await page.getByRole("button", { name: "Pause food facts" }).click();
+  await expect(waiting.locator(".pot-steam").first()).toHaveCSS(
+    "animation-name",
+    "none",
+  );
+  const transforms = await waiting
+    .locator(".word-loader-item")
+    .first()
+    .locator(".char")
+    .evaluateAll((chars) =>
+      chars.map((char) => getComputedStyle(char).transform),
+    );
+  expect(
+    transforms.every((value) => value === "matrix(1, 0, 0, 1, 0, 0)"),
+  ).toBe(true);
+  await expect(
+    page.getByRole("status").filter({ hasText: "Waiting for your recipe." }),
+  ).toHaveCount(1);
+  expect(
+    (await new AxeBuilder({ page }).include(".chat-composer").analyze())
+      .violations,
+  ).toEqual([]);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await expect(waiting.locator(".word-loader-item").first()).toBeVisible();
+  await expect(waiting.locator(".pot-steam").first()).toHaveCSS(
+    "animation-play-state",
+    "paused",
+  );
+  gate.resolve();
+  await expect(waiting).toHaveCount(0);
+});
 
 test("input validation preserves drafts and counts Unicode code points rather than UTF-16 units", async ({
   page,
@@ -576,7 +724,7 @@ test("a pending reply does not erase the next draft when it completes", async ({
   await requestInput(page).fill("First dinner");
   await sendButton(page).click();
   await expect(
-    page.getByText("Status is checked automatically", { exact: false }),
+    page.getByText("Waiting for your recipe.", { exact: true }),
   ).toBeVisible();
   await requestInput(page).fill("Next dinner");
   await expect(sendButton(page)).toBeDisabled();
@@ -633,7 +781,7 @@ test("pending operations survive reload and finish through read-only status poll
   await requestInput(page).fill("Slow dinner request");
   await sendButton(page).click();
   await expect(
-    page.getByText("Status is checked automatically", { exact: false }),
+    page.getByText("Waiting for your recipe.", { exact: true }),
   ).toBeVisible();
   await expect(sendButton(page)).toBeDisabled();
   const storage = await page.evaluate(() => JSON.stringify(sessionStorage));
@@ -642,7 +790,7 @@ test("pending operations survive reload and finish through read-only status poll
   page.once("dialog", (dialog) => dialog.accept());
   await page.reload();
   await expect(
-    page.getByText("Status is checked automatically", { exact: false }),
+    page.getByText("Waiting for your recipe.", { exact: true }),
   ).toBeVisible();
   expect(chat.writes).toHaveLength(1);
   complete();

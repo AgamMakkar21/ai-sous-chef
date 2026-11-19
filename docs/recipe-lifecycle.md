@@ -85,9 +85,11 @@ profile arrays, index changes or cross-partition lookup are introduced.
 
 Feedback requires an owned, explicitly cooked history snapshot; planned recipes
 return 409 `feedback_requires_cooking`. Ratings are exactly `liked`, `fine` or
-`disliked` (UI labels: Liked, Fine, Didn't Like). Notes are optional: omitted or
-`null` clears the previous note because this is a full PUT, not a partial edit.
-A supplied note is trimmed, must be nonblank and has a 2,000-character limit.
+`disliked` (UI labels: Liked, Fine, Didn't Like). Cooking notes are required on
+every feedback submission or edit: trimmed, nonblank and at most 2,000 characters.
+Omitted, `null` or blank notes are rejected; they never clear existing feedback.
+Older stored snapshots and feedback events with no note remain readable and
+processable; no history migration is required.
 Unknown properties, invalid ratings, non-string notes and oversized notes return
 422 without storage access. Ownership is derived from the verified principal;
 missing/foreign/internal record IDs return the same no-store 404.

@@ -65,7 +65,7 @@ def feedback(
 
 
 @pytest.mark.parametrize("rating", ["liked", "fine", "disliked"])
-@pytest.mark.parametrize("note", [None, NOTE, "x" * 2000, "  less salt  "])
+@pytest.mark.parametrize("note", [NOTE, "x" * 2000, "  less salt  "])
 def test_feedback_round_trips_with_one_immutable_correlated_pending_event(
     chat_api: TestClient,
     executor: FakeExecutor,
@@ -132,9 +132,9 @@ def test_replay_survives_restart_and_old_keys_cannot_undo_newer_edits(
         assert repeated.headers["etag"] == first.headers["etag"]
         second = feedback(restarted, first, note="Use more lime.", key="edit-note")
         assert second.status_code == 200 and second.json()["data"]["feedbackRevision"] == 2
-        third = feedback(restarted, second, rating="disliked", note=None, key="edit-rating")
+        third = feedback(restarted, second, rating="disliked", note="Too salty.", key="edit-rating")
         assert third.status_code == 200 and third.json()["data"]["feedbackRevision"] == 3
-        assert third.json()["data"]["note"] is None
+        assert third.json()["data"]["note"] == "Too salty."
         replay = feedback(restarted, saved)
         assert replay.json() == third.json() and replay.headers["etag"] == third.headers["etag"]
         mismatch = feedback(restarted, saved, rating="fine")
@@ -165,7 +165,7 @@ def test_identical_payload_under_new_key_is_not_new_evidence_or_learning_retry(
     assert documents(harness[0], "feedbackRevision") == before
     replay = feedback(chat_api, first, key="same-values-new-key")
     assert replay.json() == repeated.json() and replay.headers["etag"] == repeated.headers["etag"]
-    edited = feedback(chat_api, repeated, note=None, key="clear-note")
+    edited = feedback(chat_api, repeated, note="Use more lime.", key="edit-note")
     assert edited.status_code == 200
     assert edited.json()["data"]["feedbackRevision"] == 2
     assert edited.json()["data"]["processingStatus"] == "pending"
@@ -194,7 +194,7 @@ def test_cooked_state_stale_etags_and_cross_recipe_key_reuse_fail_without_new_ev
     assert first.json()["data"]["feedbackRevision"] == 1
 
 
-def test_omitting_note_clears_it_and_returning_to_old_values_is_a_genuine_new_revision(
+def test_missing_notes_do_not_clear_feedback_and_old_values_create_a_genuine_new_revision(
     chat_api: TestClient,
     executor: FakeExecutor,
     harness: tuple[Transport, SyntheticCredential],
@@ -202,17 +202,36 @@ def test_omitting_note_clears_it_and_returning_to_old_values_is_a_genuine_new_re
     saved = accept(chat_api, generate(chat_api, executor)["generatedRecipeId"], cooked=True)
     first = feedback(chat_api, saved)
     path = f"{RECIPES}/{first.json()['data']['historyId']}/feedback"
-    cleared = chat_api.put(
+    before = deepcopy(harness[0].documents)
+    missing = chat_api.put(
         path,
         json={"rating": "liked"},
         headers={"If-Match": first.headers["etag"], "Idempotency-Key": "omit-note"},
     )
-    assert cleared.status_code == 200 and cleared.json()["data"]["note"] is None
-    assert cleared.json()["data"]["feedbackRevision"] == 2
-    restored = feedback(chat_api, cleared, key="restore-original")
+    assert missing.status_code == 422 and harness[0].documents == before
+    edited = feedback(chat_api, first, note="Use more lime.", key="edit-note")
+    assert edited.status_code == 200 and edited.json()["data"]["feedbackRevision"] == 2
+    restored = feedback(chat_api, edited, key="restore-original")
     assert restored.status_code == 200 and restored.json()["data"]["feedbackRevision"] == 3
     assert restored.json()["data"]["note"] == NOTE
     assert len(documents(harness[0], "feedbackRevision")) == 3
+
+
+def test_legacy_feedback_without_notes_can_be_read_and_updated_with_required_notes(
+    chat_api: TestClient,
+    executor: FakeExecutor,
+    harness: tuple[Transport, SyntheticCredential],
+) -> None:
+    saved = accept(chat_api, generate(chat_api, executor)["generatedRecipeId"], cooked=True)
+    first = feedback(chat_api, saved)
+    documents(harness[0], "recipe")[0]["note"] = None
+    documents(harness[0], "feedbackRevision")[0]["note"] = None
+    legacy = chat_api.get(f"{RECIPES}/{first.json()['data']['historyId']}")
+    assert legacy.status_code == 200 and legacy.json()["data"]["note"] is None
+    assert legacy.json()["data"]["rating"] == "liked"
+    edited = feedback(chat_api, legacy, note="Use more lime.", key="update-legacy")
+    assert edited.status_code == 200 and edited.json()["data"]["note"] == "Use more lime."
+    assert edited.json()["data"]["feedbackRevision"] == 2
 
 
 @pytest.mark.parametrize("fault", [403, 400, 429, 503, "disconnect"])
@@ -291,6 +310,8 @@ def test_concurrent_requests_cannot_create_two_versions_from_one_etag(
         {"rating": "Didn't Like"},
         {"rating": None},
         {"rating": 1},
+        {"rating": "fine"},
+        {"rating": "fine", "note": None},
         {"rating": "fine", "note": ""},
         {"rating": "fine", "note": " "},
         {"rating": "fine", "note": 1},
@@ -334,7 +355,7 @@ def test_feedback_requires_valid_revision_and_idempotency_headers(
 ) -> None:
     before = len(harness[0].calls)
     response = chat_api.put(
-        f"{RECIPES}/{uuid4()}/feedback", json={"rating": "fine"}, headers=headers
+        f"{RECIPES}/{uuid4()}/feedback", json={"rating": "fine", "note": NOTE}, headers=headers
     )
     assert response.status_code == status, response.text
     assert len(harness[0].calls) == before

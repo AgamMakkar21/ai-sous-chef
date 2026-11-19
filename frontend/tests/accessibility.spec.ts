@@ -249,12 +249,23 @@ async function keyboardTo(page: Page, target: Locator) {
 async function activate(page: Page, target: Locator) {
   if ((await target.getAttribute("role")) === "tab") {
     await keyboardTo(page, page.getByRole("tab", { selected: true }));
-    for (let index = 0; index < 3; index++) {
+    const tabs = page
+      .getByRole("tablist", { name: "Your kitchen" })
+      .getByRole("tab");
+    const count = await tabs.count();
+    for (let index = 0; index < count; index++) {
       if (
         await target.evaluate((element) => element === document.activeElement)
       )
         break;
+      const next = await tabs.evaluateAll(
+        (elements) =>
+          (elements.findIndex((element) => element === document.activeElement) +
+            1) %
+          elements.length,
+      );
       await page.keyboard.press("ArrowRight");
+      await expect(tabs.nth(next)).toBeFocused();
     }
     await expect(target).toBeFocused();
   } else await keyboardTo(page, target);
@@ -386,7 +397,7 @@ for (const theme of ["light", "dark"]) {
     await accessible(page, info, "recipe-feedback");
     await page.getByRole("radio", { name: "Fine", exact: true }).check();
     const notes = page.getByRole("textbox", {
-      name: "Cooking notes (optional)",
+      name: "Cooking notes (required)",
     });
     await notes.fill("n".repeat(2001));
     await page
@@ -395,7 +406,7 @@ for (const theme of ["light", "dark"]) {
     await expect(notes).toBeFocused();
     await expect(notes).toHaveAttribute("aria-invalid", "true");
     await accessible(page, info, "feedback-validation");
-    await notes.fill("");
+    await notes.fill("Keep the carrots crisp.");
     await page
       .getByRole("button", { name: "Save rating", exact: true })
       .click();
@@ -517,7 +528,7 @@ test("keyboard alone completes onboarding, groceries, recipe save/cooking and fe
   ).toBeChecked();
   await page.keyboard.press("ArrowLeft");
   await expect(liked).toBeChecked();
-  const notes = page.getByRole("textbox", { name: "Cooking notes (optional)" });
+  const notes = page.getByRole("textbox", { name: "Cooking notes (required)" });
   await type(page, notes, "n".repeat(2001));
   await activate(
     page,
@@ -531,7 +542,7 @@ test("keyboard alone completes onboarding, groceries, recipe save/cooking and fe
   expect(state.writes).not.toContain("feedback");
   await type(
     page,
-    page.getByRole("textbox", { name: "Cooking notes (optional)" }),
+    page.getByRole("textbox", { name: "Cooking notes (required)" }),
     "Loved the lime.",
   );
   await activate(

@@ -493,7 +493,7 @@ recipes become eligible for the awaiting-feedback view under the lifecycle contr
 The tab has two primary areas:
 
 - **Needs your rating:** eligible cooked recipes with labeled rating choices,
-  a prominent optional note, and Submit.
+  required cooking notes, and Submit.
 - **History:** a concise paginated recipe-title/rating list, distinguishing saved
   recipes from confirmed-cooked ones.
 
@@ -513,7 +513,7 @@ individual learned preferences rather than being flattened into the overall rati
 
 ## 47. Feedback Submission Flow
 
-Submit the rating and optional note through App Service to the owned history
+Submit the rating and required cooking notes through App Service to the owned history
 record. Persist the feedback revision and learning-processing marker together.
 
 Return once the write succeeds; do not wait for extraction or claim that
@@ -598,7 +598,7 @@ the viewport and browser coverage.
 | --- | --- | --- |
 | Groceries | View/add/delete and quantity controls | Receipt scanning, expiration, categories, automatic normalization |
 | Sous Chef | New chat, sidebar/history, personalized recipes, ingredients/instructions, shopping needs, nutrition, save/cook | Images, voice, sharing, comparisons, timers |
-| Recipe History | Awaiting-rating view, three ratings, optional notes, title/rating history, asynchronous learning | Advanced filtering/search, favorites, statistics, advanced preference explanations |
+| Recipe History | Awaiting-rating view, three ratings, required cooking notes, title/rating history, asynchronous learning | Advanced filtering/search, favorites, statistics, advanced preference explanations |
 
 ## 57. Frontend-to-Backend API Requirements
 

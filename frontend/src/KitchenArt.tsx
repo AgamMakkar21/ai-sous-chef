@@ -4,7 +4,8 @@ const sprites: Record<Produce, { box: string; paths: [string, string][] }> = {
   pot: {
     box: "0 0 24 24",
     paths: [
-      ["M8 1h2v3H8zm6 0h2v2h-2zM9 4h2v2H9zm6-1h2v3h-2z", "orange"],
+      ["M8 1h2v3H8zM9 4h2v2H9z", "orange"],
+      ["M14 1h2v2h-2zM15 3h2v3h-2z", "orange"],
       ["M8 8h8v2h3v2h3v3h-3v5h-3v2H8v-2H5v-5H2v-3h3v-2h3z", "orange"],
       ["M5 12h14v2H5zm3 6h8v2H8z", "warning"],
       ["M17 15h2v5h-2zm-9 5h8v2H8z", "coral"],
@@ -63,7 +64,13 @@ const sprites: Record<Produce, { box: string; paths: [string, string][] }> = {
   },
 };
 
-export function PixelArt({ kind }: { kind: Produce }) {
+export function PixelArt({
+  kind,
+  steaming = false,
+}: {
+  kind: Produce;
+  steaming?: boolean;
+}) {
   const sprite = sprites[kind];
   return (
     <svg
@@ -71,9 +78,15 @@ export function PixelArt({ kind }: { kind: Produce }) {
       shapeRendering="crispEdges"
       aria-hidden="true"
       focusable="false"
+      className={steaming ? "is-steaming" : undefined}
     >
-      {sprite.paths.map(([path, paint]) => (
-        <path key={path} d={path} fill={`var(--cp-${paint})`} />
+      {sprite.paths.map(([path, paint], index) => (
+        <path
+          key={path}
+          d={path}
+          fill={`var(--cp-${paint})`}
+          className={kind === "pot" && index < 2 ? "pot-steam" : undefined}
+        />
       ))}
     </svg>
   );

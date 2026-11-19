@@ -153,7 +153,7 @@ none accepts a `userId` route/body field.
 | `POST /generated-recipes/{generatedRecipeId}/revisions` | Request a bounded, safety-checked revision in the source conversation; preserves lineage |
 | `GET /recipes` | Paginated saved/cooked history; optional `awaitingFeedback=true` or `rated=true`, never both |
 | `GET /recipes/{historyId}` | Snapshot, lifecycle, current feedback and safe processing status |
-| `PUT /recipes/{historyId}/feedback` | Cooked-only `liked`/`fine`/`disliked` and optional note; persist the full note as primary specific-preference evidence and atomically create a genuine feedback revision |
+| `PUT /recipes/{historyId}/feedback` | Cooked-only `liked`/`fine`/`disliked` and required nonblank cooking notes (up to 2,000 characters); persist the full note as primary specific-preference evidence and atomically create a genuine feedback revision. Legacy records without notes remain readable. |
 
 Read-only `GET /me` initialization must be duplicate-safe and create no AI work.
 Onboarding and preference updates never accept `onboardingCompleted`, learned
