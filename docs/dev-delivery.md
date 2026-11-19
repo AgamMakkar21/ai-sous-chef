@@ -120,6 +120,28 @@ exercises the real aiohttp transport against a local service double so permissiv
 mock transports cannot hide this failure. A successful static shell or anonymous
 health check alone is not proof that a signed-in kitchen can load its profile.
 
+## Dev model capacity
+
+The dev foundation parameters preserve the approved GlobalStandard allocations:
+
+| Deployment | Capacity (1,000 TPM units) | Verified TPM | Verified RPM |
+| --- | ---: | ---: | ---: |
+| `orchestrator` (`gpt-5.4-mini`) | 1,375 | 1,375,000 | 1,375 |
+| `recipe-nutrition` (`gpt-5.4`) | 900 | 900,000 | 9,000 |
+
+These are the maximum allocations available from the subscription's unused quota
+when increased, without taking capacity from other deployments. Additional
+headroom requires a quota increase or an explicitly approved reallocation.
+Extraction and unspecified deployments retain the 50-unit default; production
+has no new override. Model versions and content-safety policies are unchanged.
+`modelDeploymentCapacities` overrides only named deployments and prevents a later
+foundation deployment from resetting these allocations to the shared default.
+
+Live recipes and evaluations, including the recipe-nutrition judge, share these
+deployments. Larger allocations reduce quota contention but do not guarantee
+burst capacity, fix invalid agent/tool responses, or bypass provider throttling.
+They permit more billable usage; they are not provisioned-throughput reservations.
+
 ## One-time owner setup
 
 The source ZIP includes the app-owned USDA FoodData Central MCP server;

@@ -2,6 +2,10 @@ using '../main.bicep'
 
 param environment = 'dev'
 param telemetryEnabled = true
+param modelDeploymentCapacities = {
+  orchestrator: 1375
+  'recipe-nutrition': 900
+}
 param location = 'eastus2'
 param appServiceLocation = 'centralus'
 param appServiceIntegrationSubnetResourceId = readEnvironmentVariable('ASC_APP_SERVICE_INTEGRATION_SUBNET_RESOURCE_ID', '')

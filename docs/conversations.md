@@ -60,7 +60,7 @@ public vocabulary data only; no profile, prompt, credential or chat is sent.
 An unavailable tokenizer is not replaced with a character-count estimate.
 When chat is configured, application startup initializes this cached encoder in a
 worker thread before accepting requests. Cold vocabulary loading must not block
-the event loop or consume the shared five-second Cosmos admission budget.
+the event loop or consume the Cosmos admission budget.
 Tokenizer initialization failures prevent startup rather than becoming a misleading
 first-send database timeout. Database and overall send deadlines are unchanged.
 
@@ -342,6 +342,15 @@ their smaller configured operation deadlines. Orchestration remains bounded to
 120 seconds or the earlier send deadline; browser sending and pending-operation
 polling allow 150 seconds before reporting uncertainty. No successful response is
 returned before the completion batch is persisted.
+
+Admission has a separate aggregate Cosmos scope: the configured operation budget
+(at most five seconds) plus the ten-second optional learned-evidence allowance.
+Previously the whole scope inherited the five-second single-operation limit, so
+valid sequential evidence reads could exhaust it before mandatory history and
+the admission batch. Individual database calls still have their configured
+five-second maximum; the overall send deadline and completion reserve are unchanged.
+Optional learning timeouts omit only learning, never explicit restrictions or
+mandatory history, and do not replay admission or generation.
 
 ### Failure and explicit retry
 
