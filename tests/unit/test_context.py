@@ -22,7 +22,7 @@ from sous_chef.domain.context import (
     RequestContext,
     ResolvedPreference,
 )
-from sous_chef.domain.cosmos import HistoryQuery
+from sous_chef.domain.cosmos import CosmosError, CosmosFailure, HistoryQuery
 from sous_chef.domain.groceries import GroceryRow
 from sous_chef.domain.profiles import ExplicitPreferences
 from sous_chef.services import chat as chats
@@ -386,7 +386,7 @@ def test_slow_learned_lookup_preserves_preferences_without_extending_chat_deadli
             deadline: float,
         ) -> tuple[ResolvedPreference, ...]:
             nonlocal cancelled
-            assert 0 < deadline - monotonic() <= min(10.0, send_timeout - 5)
+            assert monotonic() < deadline <= monotonic() + min(10.0, send_timeout - 5)
             try:
                 await asyncio.sleep(2.1)
             except asyncio.CancelledError:
@@ -428,6 +428,72 @@ def test_slow_learned_lookup_preserves_preferences_without_extending_chat_deadli
         learned = executor.calls[-1].context.learned_preferences
         assert len(learned) == 1 and learned[0].value == "rice"
     assert document(harness[0]) == before
+
+
+@pytest.mark.parametrize("lookup_timeout", [False, True], ids=["slow-evidence", "optional-timeout"])
+def test_learned_lookup_does_not_exhaust_the_mandatory_admission_budget(
+    lookup_timeout: bool,
+    chat_api: TestClient,
+    executor: FakeExecutor,
+    harness: tuple[Transport, SyntheticCredential],
+    conversation_settings: Settings,
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from sous_chef.adapters import cosmos
+
+    elapsed = 0.0
+    resolved = ResolvedPreference(
+        candidate=candidate(),
+        field="likes",
+        value="rice",
+        evidence=(evidence(), evidence()),
+    )
+
+    class DelayedReader(EvidenceReader):
+        async def resolve(
+            self,
+            user: AuthenticatedUser,
+            candidates: tuple[LearnedCandidate, ...],
+            *,
+            now: datetime,
+            deadline: float,
+        ) -> tuple[ResolvedPreference, ...]:
+            nonlocal elapsed
+            elapsed += 10.0 if lookup_timeout else 6.0
+            if lookup_timeout:
+                raise CosmosError(CosmosFailure.TIMEOUT, uuid4())
+            return await super().resolve(user, candidates, now=now, deadline=deadline)
+
+    document(harness[0])["learnedPreferences"] = [
+        resolved.candidate.model_dump(mode="json", by_alias=True)
+    ]
+    before = deepcopy(document(harness[0]))
+    reader = DelayedReader((resolved,))
+    monkeypatch.setattr(cosmos, "monotonic", lambda: monotonic() + elapsed)
+    monkeypatch.setattr(chats, "monotonic", lambda: monotonic() + elapsed)
+    monkeypatch.setattr(contexts, "monotonic", lambda: monotonic() + elapsed)
+    with TestClient(
+        create_app(
+            conversation_settings,
+            chat_executor=executor,
+            learned_preference_reader=reader,
+        ),
+        headers=auth_headers,
+    ) as client:
+        conversation = create(client)
+        result = send(client, conversation)
+        assert result.status_code == 200, result.text
+        assert result.json()["data"]["status"] == "completed"
+        assert len(executor.calls) == 1
+        learned = executor.calls[0].context.learned_preferences
+        assert len(learned) == (0 if lookup_timeout else 1)
+        assert executor.calls[0].context.explicit_preferences.allergies
+        assert send(client, conversation).json() == result.json()
+        assert len(executor.calls) == 1
+    assert document(harness[0]) == before
+    assert ("learned_context_unavailable" in caplog.text) == lookup_timeout
 
 
 @pytest.mark.parametrize(

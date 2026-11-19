@@ -13,6 +13,9 @@ param deployments array
 @minValue(1)
 param capacity int = 50
 
+@description('Per-deployment capacity overrides; other deployments retain the default capacity.')
+param deploymentCapacities object = {}
+
 var accountName = '${namePrefix}-foundry-${uniqueString(resourceGroup().id)}'
 var projectName = '${namePrefix}-project'
 
@@ -141,7 +144,7 @@ resource modelDeployments 'Microsoft.CognitiveServices/accounts/deployments@2025
   name: item.name
   sku: {
     name: item.sku
-    capacity: capacity
+    capacity: deploymentCapacities[?item.name] ?? capacity
   }
   properties: {
     raiPolicyName: responsibleAiPolicy.name

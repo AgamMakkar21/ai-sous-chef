@@ -37,6 +37,9 @@ param modelDeployments array = [
   }
 ]
 
+@description('Owner-approved per-deployment capacity overrides in thousands of tokens per minute.')
+param modelDeploymentCapacities object = {}
+
 @description('Region for the App Service plan and app; may differ from other resources where quota requires.')
 @minLength(1)
 param appServiceLocation string
@@ -116,6 +119,7 @@ module foundry 'modules/foundry.bicep' = {
     namePrefix: namePrefix
     tags: tags
     deployments: modelDeployments
+    deploymentCapacities: modelDeploymentCapacities
   }
 }
 

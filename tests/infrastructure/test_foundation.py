@@ -164,6 +164,34 @@ class FoundationTests(unittest.TestCase):
             },
         )
 
+    def test_dev_model_capacity_overrides_preserve_other_deployment_defaults(self) -> None:
+        self.assertEqual(
+            self.dev["parameters"]["modelDeploymentCapacities"]["value"],
+            {"orchestrator": 1375, "recipe-nutrition": 900},
+        )
+        self.assertNotIn("modelDeploymentCapacities", self.prod["parameters"])
+        self.assertEqual(
+            self.template["parameters"]["modelDeploymentCapacities"]["defaultValue"], {}
+        )
+        foundry_module = next(
+            resource for resource in self.template["resources"] if "-foundry'" in resource["name"]
+        )
+        self.assertEqual(
+            foundry_module["properties"]["parameters"]["deploymentCapacities"]["value"],
+            "[parameters('modelDeploymentCapacities')]",
+        )
+        deployment = next(
+            resource
+            for resource in self.foundry["resources"]
+            if resource["type"] == "Microsoft.CognitiveServices/accounts/deployments"
+        )
+        self.assertEqual(self.foundry["parameters"]["capacity"]["defaultValue"], 50)
+        self.assertEqual(
+            deployment["sku"]["capacity"],
+            "[coalesce(tryGet(parameters('deploymentCapacities'), "
+            "parameters('deployments')[copyIndex()].name), parameters('capacity'))]",
+        )
+
     def test_app_service_is_https_only_with_its_own_identity_and_no_keys(self) -> None:
         resources = {resource["type"]: resource for resource in self.app["resources"]}
         plan = resources["Microsoft.Web/serverfarms"]

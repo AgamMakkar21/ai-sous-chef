@@ -39,7 +39,7 @@ from sous_chef.domain.cosmos import (
 from sous_chef.domain.orchestrator import POLICY
 from sous_chef.domain.profiles import OnboardingRequired
 from sous_chef.domain.recipe_safety import UNABLE, RecipeSafetyError
-from sous_chef.services.context import ContextService
+from sous_chef.services.context import MAX_LEARNED_CONTEXT_SECONDS, ContextService
 from sous_chef.services.conversations import (
     DEFAULT_TITLES,
     ConversationService,
@@ -340,7 +340,13 @@ class ChatService:
         if revision is not None:
             request_json += "\0" + str(revision.generated_recipe_id)
         request_hash = hashlib.sha256(request_json.encode()).hexdigest()
-        async with open_cosmos(self.settings, deadline=deadline) as repository:
+        async with open_cosmos(
+            self.settings,
+            deadline=deadline,
+            lifetime_seconds=(
+                self.settings.cosmos_operation_timeout_seconds + MAX_LEARNED_CONTEXT_SECONDS
+            ),
+        ) as repository:
             conversation = await _owned(repository, user, conversation_id)
             existing = await repository.read(user, CHAT, str(operation_id))
             if existing is not None:
