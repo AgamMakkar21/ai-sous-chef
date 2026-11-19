@@ -249,12 +249,23 @@ async function keyboardTo(page: Page, target: Locator) {
 async function activate(page: Page, target: Locator) {
   if ((await target.getAttribute("role")) === "tab") {
     await keyboardTo(page, page.getByRole("tab", { selected: true }));
-    for (let index = 0; index < 3; index++) {
+    const tabs = page
+      .getByRole("tablist", { name: "Your kitchen" })
+      .getByRole("tab");
+    const count = await tabs.count();
+    for (let index = 0; index < count; index++) {
       if (
         await target.evaluate((element) => element === document.activeElement)
       )
         break;
+      const next = await tabs.evaluateAll(
+        (elements) =>
+          (elements.findIndex((element) => element === document.activeElement) +
+            1) %
+          elements.length,
+      );
       await page.keyboard.press("ArrowRight");
+      await expect(tabs.nth(next)).toBeFocused();
     }
     await expect(target).toBeFocused();
   } else await keyboardTo(page, target);
