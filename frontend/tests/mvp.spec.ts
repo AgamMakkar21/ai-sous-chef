@@ -237,13 +237,13 @@ test("MVP sign-in, onboarding and three-tab journey persist across reload", asyn
     .click();
   await page.getByRole("radio", { name: "Liked", exact: true }).check();
   await page
-    .getByRole("textbox", { name: "Cooking notes (optional)" })
+    .getByRole("textbox", { name: "Cooking notes (required)" })
     .fill("Synthetic browser note: I loved the carrot.");
   await page.getByRole("button", { name: "Save rating", exact: true }).click();
   await expect(
     page
       .getByRole("status")
-      .filter({ hasText: "Personalization is processed separately" }),
+      .filter({ hasText: "Your rating and notes are saved." }),
   ).toBeVisible();
   await page.reload();
   await page.getByRole("tab", { name: "Groceries", exact: true }).click();
@@ -273,7 +273,7 @@ test("MVP sign-in, onboarding and three-tab journey persist across reload", asyn
     page.getByRole("radio", { name: "Liked", exact: true }),
   ).toBeChecked();
   await expect(
-    page.getByRole("textbox", { name: "Cooking notes (optional)" }),
+    page.getByRole("textbox", { name: "Cooking notes (required)" }),
   ).toHaveValue("Synthetic browser note: I loved the carrot.");
   expect(profile.state.profile?.allergies).toEqual(["peanut"]);
 });

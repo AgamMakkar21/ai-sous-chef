@@ -16,14 +16,22 @@ presented as account data.
 **Save to Cook** stores a planned recipe; **Cook This** explicitly confirms cooking.
 Both use the existing lifecycle APIs with CSRF and idempotency keys. A previously
 planned recipe uses the conditional `/cooked` transition, not a second snapshot.
-Recipe History shows paginated **Needs your rating** and **Saved and cooked**
-lists; planned recipes never acquire a fabricated cooking date or rating.
+Recipe History places the paginated **Needs your rating** queue beside the
+**Saved and cooked** library on desktop, stacked on smaller screens. Recipe rows
+show a title, date, state and one action; each collection retains independent
+pagination, shown only when there is another page. Planned recipes never acquire
+a fabricated cooking date or rating.
 Open a recipe to read its original stored snapshot, nutrition, provenance,
 save/cook dates and notes. Pantry labels describe the saved snapshot, not current
 inventory. **I've cooked this** makes a planned recipe eligible for feedback.
 
 Feedback uses required, keyboard-accessible **Liked**, **Fine**, and **Didn't Like**
-radio labels plus an optional note bounded to 2,000 Unicode characters. Saving or
+radio labels plus required cooking notes bounded to 2,000 Unicode characters.
+Empty or whitespace-only notes block saving with an inline error and focus on
+the notes field. The feedback API enforces the same requirement. Older stored
+ratings without notes remain readable; editing them requires adding notes.
+The detail view places feedback beside the original recipe on desktop and
+above it on smaller screens. Saving or
 editing uses the detail API's ETag and a stable idempotency key. Failures retain
 the draft and require loading the saved version before another explicit save;
 an uncertain transport response is never described as a confirmed failure or
@@ -46,6 +54,31 @@ live acceptance still requires hosted sign-in and the configured Cosmos backend.
 ASC-64 / [#59](https://github.com/AgamMakkar21/ai-sous-chef/issues/59) adds
 [keyboard, responsive and accessibility acceptance checks](accessibility-acceptance.md),
 including the recorded walkthrough, browser evidence and testing limitations.
+
+## Recipe waiting state
+
+`frontend/src/components/ui/word-loader.tsx` adapts the supplied GSAP character
+loader. The app already supports React/TypeScript, Tailwind through Vite, and
+shadcn aliases: `@/components/ui` resolves to `frontend/src/components/ui`, with
+styles in `frontend/src/kitchen.css`. No framework migration, extra context
+provider, stock photography or icon dependency is needed.
+
+While a request is sending or its saved operation remains pending, the existing
+pixel pot has independently rising steam and fifteen short food facts rotate.
+Each fact has a half-second character entrance, a **one-second readable hold**,
+and a half-second exit. Words wrap as units on narrow screens. The compact Pause
+control retains a 28px tap target and freezes both the
+steam and a fully readable fact; Resume continues the sequence. Reduced motion
+uses simultaneous opacity fades without steam travel or letter staggering.
+Screen readers receive one stable waiting status rather than new announcements
+for every fact. Completion, failure, uncertainty and navigation unmount the
+loader and clean up its timeline; request/recovery behavior is unchanged.
+
+`frontend/src/foodFacts.ts` keeps the fact list and individual source URLs
+together. Sources are Royal Botanic Gardens, Kew; the Royal Horticultural Society;
+Missouri Botanical Garden; and University of Minnesota Extension. These are
+static, editorial facts, not generated nutrition, dietary advice or recipe
+grounding; showing them makes no network requests.
 
 ## Visual design
 

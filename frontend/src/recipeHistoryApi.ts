@@ -149,7 +149,7 @@ export async function changeRecipe(
         kind: "feedback";
         current: RecipeSnapshot;
         rating: Rating;
-        note: string | null;
+        note: string;
       },
   key: string,
 ): Promise<RecipeSnapshot> {

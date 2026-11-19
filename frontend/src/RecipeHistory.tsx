@@ -109,6 +109,12 @@ function FeedbackForm({
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (lock.current || !rating || needsReview) return;
+    if (!note.trim()) {
+      setInvalidNote(true);
+      setError("Add cooking notes before saving your rating.");
+      noteInput.current?.focus();
+      return;
+    }
     if ([...note.trim()].length > 2000) {
       setInvalidNote(true);
       setError("Keep your note to 2,000 characters or fewer.");
@@ -121,7 +127,7 @@ function FeedbackForm({
     setError("");
     setInvalidNote(false);
     setNotice("");
-    const input = { rating, note: note.trim() || null };
+    const input = { rating, note: note.trim() };
     const payload = JSON.stringify(input);
     if (
       attempt.current?.payload !== payload ||
@@ -160,10 +166,10 @@ function FeedbackForm({
     <form
       className="rating-form"
       aria-label="Recipe feedback"
+      noValidate
       onSubmit={(event) => void submit(event)}
     >
-      <h2>{current.data.rating ? "Your feedback" : "How did it turn out?"}</h2>
-      <p>Save a rating now. Personalization is processed separately.</p>
+      <h2>Your feedback</h2>
       <fieldset disabled={busy || needsReview}>
         <legend>Recipe rating (required)</legend>
         <div className="rating-options">
@@ -182,7 +188,7 @@ function FeedbackForm({
           ))}
         </div>
         <label className="field" htmlFor={`${id}-note`}>
-          <span>Cooking notes (optional)</span>
+          <span>Cooking notes (required)</span>
           <textarea
             id={`${id}-note`}
             ref={noteInput}
@@ -198,10 +204,12 @@ function FeedbackForm({
             aria-describedby={`${id}-note-help${invalidNote ? ` ${id}-error` : ""}`}
             rows={3}
             maxLength={4000}
+            required
+            placeholder="What would you repeat or change?"
           />
         </label>
         <p id={`${id}-note-help`} className="privacy-note">
-          Up to 2,000 characters. These notes stay with this recipe.
+          Up to 2,000 characters.
         </p>
         <CartoonButton
           label={
@@ -329,51 +337,53 @@ function RecipeDetail({
             <h1 ref={heading} tabIndex={-1}>
               {current.data.recipe.title}
             </h1>
-            <span className="history-state">{stateLabel(current.data)}</span>
-            <p>
-              Saved {date(current.data.savedAt)}
-              {current.data.cookedAt &&
-                ` / Cooked ${date(current.data.cookedAt)}`}
-            </p>
-            <p>
-              The original saved recipe is shown below. Pantry availability
-              reflects the time it was saved.
-            </p>
+            <div className="history-meta">
+              <span className="history-state" data-state={current.data.state}>
+                {stateLabel(current.data)}
+              </span>
+              <span>Saved {date(current.data.savedAt)}</span>
+              {current.data.cookedAt && (
+                <span>Cooked {date(current.data.cookedAt)}</span>
+              )}
+            </div>
           </div>
           {notice && (
             <p className="success-notice" role="status">
               {notice}
             </p>
           )}
-          {current.data.state === "planned" ? (
-            <div className="history-cook">
-              <h2>Ready after you cook</h2>
-              <p>
-                This recipe is planned, not cooked. Confirm only after making
-                it.
+          <div className="history-detail-layout">
+            {current.data.state === "planned" ? (
+              <div className="history-cook">
+                <h2>Cooked this recipe?</h2>
+                <p>Confirm after cooking to add your rating and notes.</p>
+                <CartoonButton
+                  className="primary"
+                  disabled={busy}
+                  onClick={() => void cook()}
+                >
+                  {busy ? "Saving..." : "I've cooked this"}
+                </CartoonButton>
+              </div>
+            ) : (
+              <FeedbackForm
+                {...props}
+                current={current}
+                onSaved={(saved) => {
+                  setCurrent(saved);
+                  props.onDirty(false);
+                  setNotice("Your rating and notes are saved.");
+                }}
+              />
+            )}
+            <div className="history-recipe">
+              <h2>Saved recipe</h2>
+              <p className="history-snapshot-note">
+                Your original saved recipe. Pantry reflects when saved.
               </p>
-              <CartoonButton
-                className="primary"
-                disabled={busy}
-                onClick={() => void cook()}
-              >
-                {busy ? "Saving..." : "I've cooked this"}
-              </CartoonButton>
+              <RecipeCard recipe={current.data.recipe} />
             </div>
-          ) : (
-            <FeedbackForm
-              {...props}
-              current={current}
-              onSaved={(saved) => {
-                setCurrent(saved);
-                props.onDirty(false);
-                setNotice(
-                  "Your rating and notes are saved. Personalization is processed separately.",
-                );
-              }}
-            />
-          )}
-          <RecipeCard recipe={current.data.recipe} />
+          </div>
         </>
       )}
     </section>
@@ -399,13 +409,12 @@ function HistoryList({
   useEffect(() => watchRecipeHistory(() => refresh(true)), [refresh]);
   const heading = pending ? "Needs your rating" : "Saved and cooked";
   return (
-    <section className="history-section" aria-label={heading}>
+    <section
+      className="history-section"
+      aria-label={heading}
+      data-pending={pending}
+    >
       <h2>{heading}</h2>
-      <p>
-        {pending
-          ? "A quick note for the next time you cook."
-          : "Your saved recipes and the feedback you gave them."}
-      </p>
       {page.state.kind === "loading" && (
         <p role="status">
           Loading {pending ? "recipes to rate" : "recipe history"}...
@@ -429,15 +438,19 @@ function HistoryList({
               <li key={item.historyId}>
                 <div>
                   <h3>{item.title}</h3>
-                  <p>
-                    {item.cookedAt
-                      ? `Cooked ${date(item.cookedAt)}`
-                      : `Saved ${date(item.savedAt)}`}
-                  </p>
+                  <div className="history-meta">
+                    {!pending && (
+                      <span className="history-state" data-state={item.state}>
+                        {stateLabel(item)}
+                      </span>
+                    )}
+                    <span>
+                      {item.cookedAt
+                        ? `Cooked ${date(item.cookedAt)}`
+                        : `Saved ${date(item.savedAt)}`}
+                    </span>
+                  </div>
                 </div>
-                {!pending && (
-                  <span className="history-state">{stateLabel(item)}</span>
-                )}
                 <CartoonButton
                   className={`${pending ? "primary" : "secondary"}`}
                   aria-label={`${pending ? "Rate" : "View"} ${item.title}`}
@@ -455,23 +468,26 @@ function HistoryList({
               : "No recipes saved yet. Save a recipe from Sous Chef to find it here."}
           </p>
         ))}
-      <nav className="conversation-pager" aria-label={`${heading} pages`}>
-        <CartoonButton
-          className="secondary"
-          disabled={page.state.kind !== "ready" || page.index === 0}
-          onClick={() => page.move(false)}
-        >
-          Previous
-        </CartoonButton>
-        <span>Page {page.index + 1}</span>
-        <CartoonButton
-          className="secondary"
-          disabled={page.state.kind !== "ready" || !page.state.page.nextCursor}
-          onClick={() => page.move(true)}
-        >
-          Next
-        </CartoonButton>
-      </nav>
+      {page.state.kind === "ready" &&
+        (page.index > 0 || page.state.page.nextCursor) && (
+          <nav className="conversation-pager" aria-label={`${heading} pages`}>
+            <CartoonButton
+              className="secondary"
+              disabled={page.index === 0}
+              onClick={() => page.move(false)}
+            >
+              Previous
+            </CartoonButton>
+            <span>Page {page.index + 1}</span>
+            <CartoonButton
+              className="secondary"
+              disabled={!page.state.page.nextCursor}
+              onClick={() => page.move(true)}
+            >
+              Next
+            </CartoonButton>
+          </nav>
+        )}
     </section>
   );
 }
@@ -527,10 +543,11 @@ export default function RecipeHistory(props: Props) {
         <h1 className="kitchen-title" ref={heading} tabIndex={-1}>
           Recipe History
         </h1>
-        <p>Saved for later. Cooked your way.</p>
       </header>
-      <HistoryList {...props} pending onOpen={setSelected} />
-      <HistoryList {...props} pending={false} onOpen={setSelected} />
+      <div className="history-collections">
+        <HistoryList {...props} pending onOpen={setSelected} />
+        <HistoryList {...props} pending={false} onOpen={setSelected} />
+      </div>
     </div>
   );
 }

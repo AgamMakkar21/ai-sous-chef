@@ -15,7 +15,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@gsap/react": "2.1.2",
     "@radix-ui/react-tabs": "1.2.1",
+    "gsap": "3.15.1",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },

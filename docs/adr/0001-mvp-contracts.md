@@ -401,7 +401,7 @@ rather than creating unused implementations in advance.
 | Authentication and settings | Sign-in, first-time onboarding, edit explicit preferences, allergies, restrictions, nutrition goals, skill, and time |
 | Groceries tab | List/add/delete groceries; known quantity increase/decrease; explicit unknown amounts; truthful pending/failure states |
 | Sous Chef tab | New conversation, conversation sidebar/history, chat, personalized structured recipes, ingredients/instructions, shopping needs, nutrition status/provenance, save/cook/reject/revision actions |
-| Recipe History tab | Saved-versus-cooked state, mark cooked, cooked meals awaiting rating, `liked`/`fine`/`disliked`, prominent optional notes explaining what to repeat or change, paginated title/rating history |
+| Recipe History tab | Saved-versus-cooked state, mark cooked, cooked meals awaiting rating, `liked`/`fine`/`disliked`, required cooking notes explaining what to repeat or change, paginated title/rating history |
 | Shared UX | Responsive mobile and laptop layouts, touch and keyboard access, fresh cross-tab state, and loading/empty/error states |
 | Learning | Asynchronous nano-model interpretation of user notes into actionable, evidence-linked preferences; replay-safe confidence and evidence counts |
 

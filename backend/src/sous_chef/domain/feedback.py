@@ -10,7 +10,7 @@ from sous_chef.domain.recipe_lifecycle import LifecycleModel, Rating, Reason
 
 class SubmitFeedback(ConversationModel):
     rating: Rating
-    note: Reason | None = Field(default=None, repr=False)
+    note: Reason = Field(repr=False)
 
 
 class FeedbackRevision(LifecycleModel):

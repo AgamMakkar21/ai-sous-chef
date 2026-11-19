@@ -263,7 +263,7 @@ test("save, cook, rate and edit round-trip through history without application r
   await page.getByRole("radio", { name: "Liked", exact: true }).focus();
   await page.keyboard.press("Space");
   await page
-    .getByRole("textbox", { name: "Cooking notes (optional)" })
+    .getByRole("textbox", { name: "Cooking notes (required)" })
     .fill("Original note: less salt next time.");
   await page.screenshot({
     path: testInfo.outputPath("feedback.png"),
@@ -271,14 +271,14 @@ test("save, cook, rate and edit round-trip through history without application r
   });
   await page.getByRole("button", { name: "Save rating", exact: true }).click();
   await expect(page.getByRole("status")).toContainText(
-    "Personalization is processed separately",
+    "Your rating and notes are saved.",
   );
   await expect(
     page.getByRole("radio", { name: "Liked", exact: true }),
   ).toBeChecked();
   await page.getByRole("radio", { name: "Fine", exact: true }).check();
   await page
-    .getByRole("textbox", { name: "Cooking notes (optional)" })
+    .getByRole("textbox", { name: "Cooking notes (required)" })
     .fill("Edited note.");
   await page.getByRole("button", { name: "Save feedback changes" }).click();
   await expect(
@@ -314,7 +314,7 @@ test("save, cook, rate and edit round-trip through history without application r
     page.getByRole("radio", { name: "Fine", exact: true }),
   ).toBeChecked();
   await expect(
-    page.getByRole("textbox", { name: "Cooking notes (optional)" }),
+    page.getByRole("textbox", { name: "Cooking notes (required)" }),
   ).toHaveValue("Edited note.");
   await expect(
     page.getByRole("region", { name: "Cooking steps" }),
@@ -353,13 +353,13 @@ test("failed rating retains input and explicitly reloads before retry with a fre
   await page.getByRole("button", { name: "Rate Saved soup" }).click();
   await page.getByRole("radio", { name: "Didn't Like" }).check();
   await page
-    .getByRole("textbox", { name: "Cooking notes (optional)" })
+    .getByRole("textbox", { name: "Cooking notes (required)" })
     .fill("Keep my input");
   state.mutationFailure = 412;
   await page.getByRole("button", { name: "Save rating", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("rating wasn't saved");
   await expect(
-    page.getByRole("textbox", { name: "Cooking notes (optional)" }),
+    page.getByRole("textbox", { name: "Cooking notes (required)" }),
   ).toHaveValue("Keep my input");
   await expect(page.getByRole("radio", { name: "Didn't Like" })).toBeChecked();
   await expect(page.getByText("private-provider-details")).toHaveCount(0);
@@ -411,6 +411,9 @@ test("uncertain feedback success is reconciled without an automatic second write
   await page.goto("/#recipe-history");
   await page.getByRole("button", { name: "Rate Rice", exact: true }).click();
   await page.getByRole("radio", { name: "Fine", exact: true }).check();
+  await page
+    .getByRole("textbox", { name: "Cooking notes (required)" })
+    .fill("Keep the carrots crisp.");
   state.commitThenLose = true;
   await page.getByRole("button", { name: "Save rating", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("could not be confirmed");
@@ -442,6 +445,9 @@ test("lists paginate independently and render honest planned, cooked and rated s
   await expect(list).toContainText("Saved soup");
   await expect(list).toContainText("Planned");
   await expect(list).toContainText("Needs your rating");
+  await expect(
+    page.getByRole("navigation", { name: "Needs your rating pages" }),
+  ).toHaveCount(0);
   await page.screenshot({
     path: testInfo.outputPath("history.png"),
     fullPage: true,
@@ -489,6 +495,9 @@ test("loading, empty, failed and malformed lists are distinct", async ({
   await expect(
     page.getByText("No recipes saved yet.", { exact: false }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Saved and cooked pages" }),
+  ).toHaveCount(0);
   let release!: () => void;
   const wait = new Promise<void>((resolve) => {
     release = resolve;
@@ -520,6 +529,9 @@ test("missing detail revisions fail visibly, expiry clears data, and changed acc
   state.revisionless = false;
   await page.getByRole("button", { name: "Reload recipe" }).click();
   await page.getByRole("radio", { name: "Liked", exact: true }).check();
+  await page
+    .getByRole("textbox", { name: "Cooking notes (required)" })
+    .fill("Use more lime.");
   auth.state.sessionUser = "different-user";
   await page.getByRole("button", { name: "Save rating", exact: true }).click();
   await expect(
@@ -559,6 +571,9 @@ test("cross-tab invalidation refreshes mounted history after save", async ({
   await other.getByRole("tab", { name: "Recipe History" }).click();
   await other.getByRole("button", { name: "Rate Simple carrot rice" }).click();
   await other.getByRole("radio", { name: "Liked", exact: true }).check();
+  await other
+    .getByRole("textbox", { name: "Cooking notes (required)" })
+    .fill("Use more lime.");
   await other.getByRole("button", { name: "Save rating", exact: true }).click();
   await expect(
     page.getByRole("region", { name: "Needs your rating", exact: true }),
@@ -580,7 +595,7 @@ test("feedback navigation warns about unsaved changes and enforces the note limi
   await page.getByRole("button", { name: "Rate Rice", exact: true }).click();
   await page.getByRole("radio", { name: "Fine", exact: true }).check();
   await page
-    .getByRole("textbox", { name: "Cooking notes (optional)" })
+    .getByRole("textbox", { name: "Cooking notes (required)" })
     .fill("a".repeat(2001));
   await page.getByRole("button", { name: "Save rating", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("2,000 characters");
@@ -591,11 +606,108 @@ test("feedback navigation warns about unsaved changes and enforces the note limi
     page.getByRole("radio", { name: "Fine", exact: true }),
   ).toBeChecked();
   await page
-    .getByRole("textbox", { name: "Cooking notes (optional)" })
+    .getByRole("textbox", { name: "Cooking notes (required)" })
     .fill(" ");
+  await page.getByRole("button", { name: "Save rating", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Add cooking notes");
+  await expect(
+    page.getByRole("textbox", { name: "Cooking notes (required)" }),
+  ).toBeFocused();
+  expect(state.writes).toHaveLength(0);
+  await page
+    .getByRole("textbox", { name: "Cooking notes (required)" })
+    .fill("");
+  await page.getByRole("button", { name: "Save rating", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Add cooking notes");
+  expect(state.writes).toHaveLength(0);
+  await page
+    .getByRole("textbox", { name: "Cooking notes (required)" })
+    .fill("  Keep the carrots crisp.  ");
   await page.getByRole("button", { name: "Save rating", exact: true }).click();
   await expect(page.getByRole("status")).toContainText(
     "Your rating and notes are saved",
   );
-  expect(state.records[0].data.note).toBeNull();
+  expect(state.records[0].data.note).toBe("Keep the carrots crisp.");
+});
+
+test("legacy ratings without notes remain readable and need notes for an edit", async ({
+  page,
+}) => {
+  const item = record("Old favorite", true);
+  item.data.rating = "liked";
+  item.data.awaitingFeedback = false;
+  item.data.feedbackRevision = 1;
+  const { state } = await historyBackend(page, historyState([item]));
+  await page.goto("/#recipe-history");
+  await page.getByRole("button", { name: "View Old favorite" }).click();
+  await expect(
+    page.getByRole("radio", { name: "Liked", exact: true }),
+  ).toBeChecked();
+  const notes = page.getByRole("textbox", { name: "Cooking notes (required)" });
+  await expect(notes).toHaveValue("");
+  await expect(notes).toHaveAttribute("required", "");
+  await page.getByRole("radio", { name: "Fine", exact: true }).check();
+  await page.getByRole("button", { name: "Save feedback changes" }).click();
+  await expect(page.getByRole("alert")).toContainText("Add cooking notes");
+  expect(state.writes).toHaveLength(0);
+  await notes.fill("Use less salt.");
+  await page.getByRole("button", { name: "Save feedback changes" }).click();
+  await expect(page.getByRole("status")).toContainText(
+    "Your rating and notes are saved",
+  );
+  expect(item.data.feedbackRevision).toBe(2);
+});
+
+test("history collections and feedback fit narrow screens in both themes", async ({
+  page,
+}, testInfo) => {
+  const item = record(
+    "A very long recipe title " + "vegetables".repeat(12),
+    true,
+  );
+  await historyBackend(page, historyState([item, record("Soup")]));
+  for (const theme of ["dark", "light"]) {
+    await page.goto(`/?scoutTheme=${theme}#recipe-history`);
+    await expect(
+      page.getByRole("button", {
+        name: `Rate ${item.data.recipe.title}`,
+        exact: true,
+      }),
+    ).toBeVisible();
+    for (const width of [1440, 1024, 768, 390, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(width);
+      const collections = await page
+        .locator(".history-section")
+        .evaluateAll((sections) =>
+          sections.map((section) => {
+            const { x, y, width, height } = section.getBoundingClientRect();
+            return { x, y, width, height };
+          }),
+        );
+      if (width >= 1024) expect(collections[0].y).toBe(collections[1].y);
+      else
+        expect(collections[1].y).toBeGreaterThanOrEqual(
+          collections[0].y + collections[0].height,
+        );
+    }
+    await page.setViewportSize(testInfo.project.use.viewport!);
+    await page
+      .getByRole("button", {
+        name: `Rate ${item.data.recipe.title}`,
+        exact: true,
+      })
+      .click();
+    await expect(
+      page.getByRole("textbox", { name: "Cooking notes (required)" }),
+    ).toBeVisible();
+    for (const width of [1440, 1024, 768, 390, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(width);
+    }
+  }
 });
