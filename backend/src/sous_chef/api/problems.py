@@ -14,6 +14,7 @@ from sous_chef.domain.cosmos import CosmosError, CosmosFailure
 from sous_chef.domain.feedback import FeedbackRequiresCooking
 from sous_chef.domain.groceries import GROCERY_FIELDS, DuplicateGrocery, GroceryLimitReached
 from sous_chef.domain.profiles import PREFERENCE_FIELDS, OnboardingRequired
+from sous_chef.domain.receipts import ReceiptError
 from sous_chef.domain.recipe_lifecycle import RecipeLifecycleConflict
 from sous_chef.domain.recipe_safety import RecipeSafetyError
 from sous_chef.settings import ConfigurationError
@@ -45,6 +46,10 @@ def problem_response(
 
 
 def register_problem_handlers(app: FastAPI) -> None:
+    @app.exception_handler(ReceiptError)
+    async def receipt_error(_request: Request, exc: ReceiptError) -> JSONResponse:
+        return problem_response(exc.status, exc.code, "Receipt import failed", exc.detail)
+
     @app.exception_handler(FeedbackRequiresCooking)
     async def feedback_requires_cooking(
         _request: Request, _exc: FeedbackRequiresCooking

@@ -215,8 +215,19 @@ export type GroceryInput = {
   quantity: number | null;
   unit: GroceryUnit | null;
 };
-export type Grocery = GroceryInput & { groceryId: string };
-export type Inventory = { items: Grocery[]; etag: string };
+export type Grocery = GroceryInput & {
+  groceryId: string;
+  receipt?: {
+    importId: string;
+    quantitySource: "printed" | "estimated" | "user";
+    estimateReason: string | null;
+  };
+};
+export type Inventory = {
+  items: Grocery[];
+  etag: string;
+  receiptImportEnabled?: boolean;
+};
 export type GroceryChange =
   | { method: "POST"; input: GroceryInput }
   | { method: "PATCH"; id: string; input: { quantity: number | null } }
@@ -231,6 +242,8 @@ export async function getGroceries(signal?: AbortSignal): Promise<Inventory> {
     !Array.isArray(value.items) ||
     value.items.length > 200 ||
     value.nextCursor !== null ||
+    (value.receiptImportEnabled !== undefined &&
+      typeof value.receiptImportEnabled !== "boolean") ||
     !etag ||
     etag.length > 256 ||
     !/^"[^"\r\n]+"$/.test(etag)
@@ -261,14 +274,35 @@ export async function getGroceries(signal?: AbortSignal): Promise<Inventory> {
       !isGroceryUnit(row.unit)
     )
       throw new ApiError(502, "invalid_response");
+    const receipt = row.receipt;
+    if (
+      receipt !== undefined &&
+      (!isRecord(receipt) ||
+        typeof receipt.importId !== "string" ||
+        !["printed", "estimated", "user"].includes(
+          String(receipt.quantitySource),
+        ) ||
+        !(
+          receipt.estimateReason === null ||
+          typeof receipt.estimateReason === "string"
+        ))
+    )
+      throw new ApiError(502, "invalid_response");
     items.push({
       groceryId: row.groceryId,
       name: row.name,
       quantity: row.quantity,
       unit: row.unit,
+      ...(receipt === undefined
+        ? {}
+        : { receipt: receipt as Grocery["receipt"] }),
     });
   }
-  return { items, etag };
+  return {
+    items,
+    etag,
+    receiptImportEnabled: value.receiptImportEnabled === true,
+  };
 }
 
 export async function changeGroceries(
@@ -292,4 +326,68 @@ export async function changeGroceries(
         : {}),
     },
   );
+}
+
+export type ReceiptNotice = { name: string; reason: string };
+export type ReceiptResult = {
+  importId: string;
+  added: number;
+  merged: number;
+  estimated: number;
+  skipped: ReceiptNotice[];
+  needsReview: ReceiptNotice[];
+  alreadyImported: boolean;
+};
+
+function isReceiptNotices(value: unknown): value is ReceiptNotice[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= 200 &&
+    value.every(
+      (notice) =>
+        isRecord(notice) &&
+        typeof notice.name === "string" &&
+        typeof notice.reason === "string",
+    )
+  );
+}
+
+export async function uploadReceipt(
+  session: Session,
+  inventory: Inventory,
+  file: File,
+  key: string,
+): Promise<ReceiptResult> {
+  const value = await json(
+    await request(
+      "/api/v1/groceries/receipts",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": file.type || "application/octet-stream",
+          "X-CSRF-Token": session.csrfToken,
+          "If-Match": inventory.etag,
+          "Idempotency-Key": key,
+        },
+        body: file,
+      },
+      120_000,
+    ),
+  );
+  if (
+    !isRecord(value) ||
+    typeof value.importId !== "string" ||
+    typeof value.alreadyImported !== "boolean" ||
+    ![value.added, value.merged, value.estimated].every(
+      (count) =>
+        typeof count === "number" &&
+        Number.isInteger(count) &&
+        count >= 0 &&
+        count <= 200,
+    ) ||
+    !isReceiptNotices(value.skipped) ||
+    !isReceiptNotices(value.needsReview)
+  )
+    throw new ApiError(502, "invalid_response");
+  return value as ReceiptResult;
 }

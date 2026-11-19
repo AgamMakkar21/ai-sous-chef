@@ -1,4 +1,4 @@
-"""Explicit inventory inputs and views; quantities are never inferred."""
+"""Explicit inventory inputs and views with optional receipt provenance."""
 
 from decimal import Decimal
 from typing import Annotated, Literal, Self
@@ -129,6 +129,16 @@ class GroceryRow(GroceryModel):
         Annotated[str, StringConstraints(strict=True, min_length=1, max_length=255)] | None
     ) = None
     updated_at: AwareDatetime
+    receipt: "GroceryReceipt | None" = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class GroceryReceipt(ProfileModel):
+    import_id: UUID4
+    quantity_source: Literal["printed", "estimated", "user"]
+    estimate_reason: Annotated[str, StringConstraints(max_length=300)] | None = None
+
+
+GroceryRow.model_rebuild()
 
 
 class GroceryEnvelope(ProfileModel):
@@ -138,6 +148,7 @@ class GroceryEnvelope(ProfileModel):
 class GroceryList(ProfileModel):
     items: tuple[GroceryRow, ...] = Field(max_length=MAX_GROCERIES)
     next_cursor: None = None
+    receipt_import_enabled: bool = Field(default=False, exclude_if=lambda value: not value)
 
 
 class DuplicateGrocery(ValueError):

@@ -144,6 +144,14 @@ class GroceryService:
                 row = GroceryRow.model_validate(
                     {**row.model_dump(by_alias=True), "ingredientId": None}
                 )
+            if row.receipt is not None and request.model_fields_set & {"quantity", "name", "unit"}:
+                row = row.model_copy(
+                    update={
+                        "receipt": row.receipt.model_copy(
+                            update={"quantity_source": "user", "estimate_reason": None}
+                        )
+                    }
+                )
             _unique(rows, row)
             updated = tuple(row if item.grocery_id == grocery_id else item for item in rows)
             revision = await _write(repository, user, etag, updated)

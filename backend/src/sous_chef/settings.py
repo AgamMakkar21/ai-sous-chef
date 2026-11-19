@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     environment: Literal["local", "dev", "prod"]
     adapter_mode: Literal["local", "live"]
     agents_enabled: bool = True
+    receipts_enabled: bool = False
+    receipt_model_deployment: str = Field(default="orchestrator", pattern=_DEPLOYMENT_NAME)
     telemetry_enabled: bool = False
     telemetry_sample_ratio: float = Field(default=1, ge=0, le=1, allow_inf_nan=False)
     readiness_timeout_seconds: float = Field(default=2, gt=0, le=10, allow_inf_nan=False)

@@ -23,6 +23,7 @@ from test_cosmos_repository import SyntheticCredential, Transport
 from test_cosmos_repository import harness as harness
 from test_grocery_api import GROCERIES, add
 from test_profile_api import ME, onboard, preferences, signed_token
+from test_receipts import FakeReceiptReader, receipt_image
 from test_recipe_queries import seed_history
 from test_recipe_safety import full_recipe
 
@@ -88,11 +89,13 @@ REVISE_CASE = EndpointCase(
     body={"reason": "matrix requested revision"},
     guarded_record="turn",
 )
+RECEIPT_CASE = EndpointCase("POST", "/api/v1/groceries/receipts")
 CASES = (
     EndpointCase("GET", ME),
     EndpointCase("PUT", ME + "/onboarding", body=preferences()),
     EndpointCase("PATCH", ME + "/preferences", body={"likes": ["matrix updated taste"]}),
     EndpointCase("GET", GROCERIES),
+    RECEIPT_CASE,
     EndpointCase("POST", GROCERIES, 201, {"name": "matrix added grocery"}),
     EndpointCase("PATCH", GROCERIES + "/{grocery_id}", body={"quantity": 2}),
     EndpointCase("DELETE", GROCERIES + "/{grocery_id}", 204),
@@ -169,6 +172,7 @@ class TwoUserApi:
     transport: Transport
     executor: FakeExecutor
     users: tuple[UserData, UserData]
+    receipt_reader: FakeReceiptReader
 
     def profile(self, actor: UserData) -> dict[str, Any]:
         return self.transport.documents[("Users", actor.user.user_id, actor.user.user_id)]
@@ -201,8 +205,13 @@ class TwoUserApi:
                 "If-Match": revision,
                 "Idempotency-Key": "matrix-request",
                 **(headers or {}),
+                **({"Content-Type": "image/png"} if case == RECEIPT_CASE and body is None else {}),
             },
-            json=payload,
+            **(
+                {"content": receipt_image()}
+                if case == RECEIPT_CASE and body is None
+                else {"json": payload}
+            ),
             params=params,
         )
 
@@ -222,8 +231,14 @@ def two_user_api(
 ) -> Iterator[TwoUserApi]:
     transport, _ = harness
     executor = FakeExecutor(transport)
+    receipt_reader = FakeReceiptReader()
     with TestClient(
-        create_app(conversation_settings, chat_executor=executor), base_url="https://testserver"
+        create_app(
+            conversation_settings.model_copy(update={"receipts_enabled": True}),
+            chat_executor=executor,
+            receipt_reader=receipt_reader,
+        ),
+        base_url="https://testserver",
     ) as client:
         users = []
         for subject in ("matrix-alice", "matrix-bob"):
@@ -277,7 +292,7 @@ def two_user_api(
                 )
             )
         del client.headers["Authorization"]
-        yield TwoUserApi(client, transport, executor, (users[0], users[1]))
+        yield TwoUserApi(client, transport, executor, (users[0], users[1]), receipt_reader)
 
 
 def assert_problem(response: Response, status: int, code: str) -> dict[str, Any]:
@@ -477,8 +492,13 @@ def test_deleted_owner_cannot_read_or_recreate_state_with_a_still_valid_token(
     response = api.client.request(
         case.method,
         actor.path(case),
-        headers={**actor.headers, "If-Match": revision, "Idempotency-Key": "after-deletion"},
-        json=payload,
+        headers={
+            **actor.headers,
+            "If-Match": revision,
+            "Idempotency-Key": "after-deletion",
+            **({"Content-Type": "image/png"} if case == RECEIPT_CASE else {}),
+        },
+        **({"content": receipt_image()} if case == RECEIPT_CASE else {"json": payload}),
     )
     assert_problem(response, 404, "not_found")
     actor.assert_private(response)
@@ -564,6 +584,7 @@ def test_client_user_id_is_rejected_without_storage_or_execution(
     actor, other = two_user_api.users
     calls = len(two_user_api.transport.calls)
     executions = len(two_user_api.executor.calls)
+    receipt_reads = two_user_api.receipt_reader.calls
     before = deepcopy(two_user_api.transport.documents)
     response = two_user_api.request(
         case,
@@ -575,6 +596,7 @@ def test_client_user_id_is_rejected_without_storage_or_execution(
     other.assert_private(response)
     assert len(two_user_api.transport.calls) == calls
     assert len(two_user_api.executor.calls) == executions
+    assert two_user_api.receipt_reader.calls == receipt_reads
     assert two_user_api.transport.documents == before
 
 
