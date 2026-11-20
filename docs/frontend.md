@@ -64,9 +64,10 @@ styles in `frontend/src/kitchen.css`. No framework migration, extra context
 provider, stock photography or icon dependency is needed.
 
 While a request is sending or its saved operation remains pending, the existing
-pixel pot has independently rising steam and fifteen short food facts rotate.
-Each fact has a half-second character entrance, a **one-second readable hold**,
-and a half-second exit. Words wrap as units on narrow screens. The compact Pause
+pixel pot has independently rising steam and twenty-six short food facts rotate.
+The static, bold warm-accent **Did you know...** introduction and animated fact form one short
+question. Each fact has a half-second character entrance, a **two-second readable
+hold**, and a half-second exit. Words wrap as units on narrow screens. The compact Pause
 control retains a 28px tap target and freezes both the
 steam and a fully readable fact; Resume continues the sequence. Reduced motion
 uses simultaneous opacity fades without steam travel or letter staggering.
@@ -75,10 +76,26 @@ for every fact. Completion, failure, uncertainty and navigation unmount the
 loader and clean up its timeline; request/recovery behavior is unchanged.
 
 `frontend/src/foodFacts.ts` keeps the fact list and individual source URLs
-together. Sources are Royal Botanic Gardens, Kew; the Royal Horticultural Society;
-Missouri Botanical Garden; and University of Minnesota Extension. These are
+together. The twenty-six facts are independently condensed from
+[WeAreTeachers' food facts](https://www.weareteachers.com/fun-food-facts/),
+with qualifiers retained where needed. These are
 static, editorial facts, not generated nutrition, dietary advice or recipe
 grounding; showing them makes no network requests.
+
+## Cooking profile and first-run setup
+
+Both screens use the same form with all nine existing preference fields.
+**Food safety** leads across the full width, with allergies, strict restrictions
+and explicit confirmation whenever safety fields change or setup is incomplete.
+**Your tastes** and **Cooking routine** sit beside each other above 900px and
+stack below that; individual fields stack at 600px. One shared list-entry hint,
+short examples and optional-list labels replace the numbered explanation cards.
+Controls retain readable 16px text on phones and textareas remain resizable.
+
+The layout does not change validation, safety acknowledgement, onboarding
+completion, partial updates, CSRF/ETag handling, draft retention or explicit
+saved-version review after an uncertain write. Medical-advice and empty-safety
+field guidance remain visible.
 
 ## Visual design
 
@@ -109,8 +126,10 @@ storage and still works for the current page when storage is unavailable.
 The supplied Jersey 10 headline subset and its SIL Open Font License are bundled
 inside the existing single-file build; no font CDN is contacted. The license
 remains in an inert template rather than a visible footer. The frontend subset
-covers all three fixed page headings; rebuild it before introducing other display
-text. It was generated from the official `google/fonts` Jersey 10 source at commit
+covers all three fixed tab headings plus **COOKING PROFILE** and **KITCHEN SETUP**;
+rebuild it before introducing other display text. Profile/setup acceptance checks
+verify that every displayed title character uses the bundled font rather than
+fallback lettering. It was generated from the official `google/fonts` Jersey 10 source at commit
 `3c5464b4dc90bd091348526b68428650ece8e13e`. The independently packaged login
 subset still covers its unchanged **YOUR KITCHEN** headline.
 
