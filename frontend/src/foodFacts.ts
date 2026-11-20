@@ -1,68 +1,108 @@
+const source = "https://www.weareteachers.com/fun-food-facts/";
+
 export const foodFacts = [
   {
-    text: "Bananas are berries.",
-    source: "https://www.kew.org/plants/cavendish-banana",
+    text: "raspberries belong to the rose family?",
+    source,
   },
   {
-    text: "Vanilla comes from orchids.",
-    source: "https://www.kew.org/plants/vanilla",
+    text: "cucumbers are about 95% water?",
+    source,
   },
   {
-    text: "Cinnamon is tree bark.",
-    source: "https://www.kew.org/plants/cinnamon",
+    text: "figs hide their flowers inside?",
+    source,
   },
   {
-    text: "Cloves are flower buds.",
-    source:
-      "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:601421-1/general-information",
+    text: "bananas and watermelons are botanical berries?",
+    source,
   },
   {
-    text: "Coffee beans are seeds.",
-    source: "https://www.kew.org/plants/arabica-coffee",
+    text: "strawberries aren't botanical berries?",
+    source,
   },
   {
-    text: "Peanuts are legumes, not nuts.",
-    source: "https://www.kew.org/plants/peanut",
+    text: "early cultivated carrots were purple or yellow?",
+    source,
   },
   {
-    text: "One pineapple, many fused fruits.",
-    source:
-      "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:12322-2/general-information",
+    text: "carrots turn sweeter in cold weather?",
+    source,
   },
   {
-    text: "Saffron comes from crocus flowers.",
-    source: "https://www.rhs.org.uk/herbs/saffron",
+    text: "mushrooms take in oxygen and release carbon dioxide?",
+    source,
   },
   {
-    text: "Ginger is an underground stem.",
-    source: "https://www.kew.org/plants/ginger",
+    text: "most supermarket wasabi is really horseradish?",
+    source,
   },
   {
-    text: "Capers are unopened flower buds.",
-    source:
-      "https://www.missouribotanicalgarden.org/PlantFinder/PlantFinderDetails.aspx?taxonid=278921&bt=9",
+    text: "ripe cranberries can bounce?",
+    source,
   },
   {
-    text: "Nutmeg and mace share a fruit.",
-    source:
-      "https://www.kew.org/read-and-watch/marianne-north-gallery-a-spice-sensation",
+    text: "potatoes are about 80% water?",
+    source,
   },
   {
-    text: "Allspice is a berry, not a blend.",
-    source: "https://www.kew.org/read-and-watch/christmas-spices",
+    text: "Japanese growers make square watermelons using boxes?",
+    source,
   },
   {
-    text: "Broccoli heads are flower buds.",
-    source:
-      "https://extension.umn.edu/garden-and-home/yard-and-garden/gardening-in-minnesota/growing-broccoli",
+    text: "kiwifruit originally came from China?",
+    source,
   },
   {
-    text: "Cacao flowers grow on trunks.",
-    source: "https://www.kew.org/plants/cacao-tree",
+    text: "a court classified tomatoes as vegetables for taxes?",
+    source,
   },
   {
-    text: "Black pepper grows on vines.",
-    source:
-      "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:682369-1/general-information",
+    text: "air makes up about a quarter of an apple?",
+    source,
+  },
+  {
+    text: "lettuce belongs to the sunflower family?",
+    source,
+  },
+  {
+    text: "eggplants can be white, green, or orange?",
+    source,
+  },
+  {
+    text: "ripe oranges can stay green in warm climates?",
+    source,
+  },
+  {
+    text: "a banana cluster is called a hand?",
+    source,
+  },
+  {
+    text: "there are over 7,500 apple varieties?",
+    source,
+  },
+  {
+    text: "almonds are seeds rather than true nuts?",
+    source,
+  },
+  {
+    text: "cashews hang beneath cashew apples?",
+    source,
+  },
+  {
+    text: "saffron is harvested from crocus flowers?",
+    source,
+  },
+  {
+    text: "vanilla pods grow on orchids?",
+    source,
+  },
+  {
+    text: "cinnamon starts as tree bark?",
+    source,
+  },
+  {
+    text: "every Froot Loops color has the same flavor?",
+    source,
   },
 ] as const;

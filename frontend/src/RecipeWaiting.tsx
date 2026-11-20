@@ -14,6 +14,9 @@ export default function RecipeWaiting() {
       <div className="waiting-pot" aria-hidden="true">
         <PixelArt kind="pot" steaming />
       </div>
+      <p className="waiting-fact-intro" aria-hidden="true">
+        Did you know...
+      </p>
       <WordLoader words={facts} paused={paused} />
       <CartoonButton
         className="fact-toggle secondary"

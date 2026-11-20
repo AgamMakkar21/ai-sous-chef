@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { writeFile } from "node:fs/promises";
 import { backend, preferences } from "./backend.ts";
 
 async function openProfile(page: Page) {
@@ -6,7 +7,7 @@ async function openProfile(page: Page) {
     .getByRole("button", { name: "Cooking profile", exact: true })
     .click();
   await expect(
-    page.getByRole("heading", { name: "A little more you. A better fit." }),
+    page.getByRole("heading", { name: "Cooking profile", exact: true }),
   ).toBeVisible();
 }
 
@@ -16,7 +17,7 @@ test("first-run onboarding saves all nine fields and persists after reload", asy
   const { writes } = await backend(page, null);
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "Let's make this kitchen yours." }),
+    page.getByRole("heading", { name: "Kitchen setup", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("tab", { name: "Groceries", exact: true }),
@@ -44,7 +45,7 @@ test("first-run onboarding saves all nine fields and persists after reload", asy
   await page
     .getByLabel("I have reviewed my allergies", { exact: false })
     .check();
-  await page.getByRole("button", { name: "Save and open my kitchen" }).click();
+  await page.getByRole("button", { name: "Save and continue" }).click();
   await expect(
     page
       .getByRole("status")
@@ -80,9 +81,9 @@ test("backend completion overrides browser storage and asks for explicit safety 
   );
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "Let's make this kitchen yours." }),
+    page.getByRole("heading", { name: "Kitchen setup", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Save and open my kitchen" }).click();
+  await page.getByRole("button", { name: "Save and continue" }).click();
   await expect(
     page.getByText("Confirm your food-safety preferences before continuing."),
   ).toBeVisible();
@@ -475,3 +476,86 @@ test("preferences remain escaped and the form fits a narrow viewport in both the
     ),
   ).toBe(true);
 });
+
+for (const onboarding of [true, false]) {
+  test(`${onboarding ? "setup" : "profile"} keeps every field usable across compact and wide layouts`, async ({
+    page,
+  }, info) => {
+    await backend(page, onboarding ? null : preferences);
+    for (const theme of ["light", "dark"]) {
+      await page.goto(`/?scoutTheme=${theme}`);
+      if (!onboarding) await openProfile(page);
+      const profile = page.locator(".profile-section");
+      const fallbackCharacters = await profile
+        .getByRole("heading", { level: 1 })
+        .evaluate(async (element) => {
+          const text = (element.textContent ?? "").toUpperCase();
+          await document.fonts.load('72px "Jersey 10"', text);
+          const context = document.createElement("canvas").getContext("2d");
+          if (!context) throw new Error("Missing font measurement context.");
+          return [...new Set(text.replace(/\s/g, ""))].filter((character) => {
+            context.font = '72px "Jersey 10", monospace';
+            const monospaceWidth = context.measureText(character).width;
+            context.font = '72px "Jersey 10", serif';
+            return context.measureText(character).width !== monospaceWidth;
+          });
+        });
+      expect(fallbackCharacters).toEqual([]);
+      await expect(profile.getByRole("textbox")).toHaveCount(6);
+      await expect(profile.getByRole("combobox")).toHaveCount(2);
+      await expect(profile.getByRole("spinbutton")).toHaveCount(1);
+      for (const width of [1440, 1024, 768, 390, 320]) {
+        await page.setViewportSize({ width, height: 900 });
+        const tastes = await profile
+          .getByRole("region", { name: "Your tastes" })
+          .boundingBox();
+        const routine = await profile
+          .getByRole("region", { name: "Cooking routine" })
+          .boundingBox();
+        if (width > 900) {
+          expect(Math.abs(tastes!.y - routine!.y)).toBeLessThan(2);
+          expect(routine!.x).toBeGreaterThan(tastes!.x);
+        } else {
+          expect(routine!.y).toBeGreaterThanOrEqual(tastes!.y + tastes!.height);
+        }
+        for (const control of await profile
+          .locator("textarea, select, input[type=number]")
+          .all()) {
+          await expect(control).toBeVisible();
+          const box = await control.boundingBox();
+          expect(box!.x).toBeGreaterThanOrEqual(0);
+          expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+          expect(box!.height).toBeGreaterThanOrEqual(44);
+          expect(
+            await control.evaluate((element) =>
+              parseFloat(getComputedStyle(element).fontSize),
+            ),
+          ).toBeGreaterThanOrEqual(16);
+        }
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= window.innerWidth,
+          ),
+        ).toBe(true);
+        if (width === 1440 || width === 390) {
+          await page.screenshot({
+            path: info.outputPath(`${theme}-${width}.png`),
+            fullPage: true,
+          });
+        }
+        if (theme === "light" && width === 1440) {
+          const snapshot = await page.evaluate(() => {
+            const html = document.documentElement.cloneNode(true);
+            if (!(html instanceof HTMLElement))
+              throw new Error("Missing rendered profile document.");
+            html
+              .querySelectorAll("script")
+              .forEach((script) => script.remove());
+            return `<!doctype html>${html.outerHTML}`;
+          });
+          await writeFile(info.outputPath("layout-snapshot.html"), snapshot);
+        }
+      }
+    }
+  });
+}

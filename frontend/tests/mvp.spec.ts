@@ -180,7 +180,7 @@ test("MVP sign-in, onboarding and three-tab journey persist across reload", asyn
   await page.goto("/");
   await page.getByRole("link", { name: "Sign in", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Let's make this kitchen yours." }),
+    page.getByRole("heading", { name: "Kitchen setup", exact: true }),
   ).toBeVisible();
   await page.getByLabel("Food allergies", { exact: true }).fill("peanut");
   await page
@@ -197,7 +197,7 @@ test("MVP sign-in, onboarding and three-tab journey persist across reload", asyn
     .getByRole("checkbox", { name: /^I have reviewed my allergies/ })
     .check();
   await page
-    .getByRole("button", { name: "Save and open my kitchen", exact: true })
+    .getByRole("button", { name: "Save and continue", exact: true })
     .click();
   await expect(
     page

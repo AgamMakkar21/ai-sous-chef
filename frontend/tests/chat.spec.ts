@@ -433,9 +433,10 @@ for (const phase of ["sending", "pending"] as const) {
   });
 }
 
-test("waiting facts hold for reading, cycle all 15, pause fully readable and reset after completion", async ({
+test("waiting facts hold for two seconds, cycle every fact, pause fully readable and reset after completion", async ({
   page,
 }, info) => {
+  test.setTimeout(90_000);
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.clock.install({ time: new Date("2026-11-19T20:00:00Z") });
   await page.clock.pauseAt(new Date("2026-11-19T20:00:01Z"));
@@ -447,6 +448,7 @@ test("waiting facts hold for reading, cycle all 15, pause fully readable and res
   await sendButton(page).click();
   const waiting = page.locator(".recipe-waiting");
   const entries = waiting.locator(".word-loader-item");
+  const intro = waiting.locator(".waiting-fact-intro");
   const fact = (index: number) => entries.nth(index);
   const readable = (index: number) =>
     fact(index)
@@ -455,6 +457,14 @@ test("waiting facts hold for reading, cycle all 15, pause fully readable and res
         chars.every((char) => getComputedStyle(char).opacity === "1"),
       );
   await expect(waiting).toBeVisible();
+  await expect(entries).toHaveCount(26);
+  await expect(intro).toHaveText("Did you know...");
+  for (const entry of await entries.all()) {
+    const text = `Did you know ${await entry.getAttribute("data-fact")}`;
+    expect(text).toMatch(/^Did you know [^.!?]+\?$/);
+    expect(text.split(/\s+/).length).toBeLessThanOrEqual(14);
+  }
+  const introBox = await intro.boundingBox();
   await page.clock.runFor(100);
   const entrance = await fact(0)
     .locator(".char")
@@ -465,6 +475,7 @@ test("waiting facts hold for reading, cycle all 15, pause fully readable and res
   await page.clock.runFor(500);
   await expect(fact(0)).toBeVisible();
   expect(await readable(0)).toBe(true);
+  expect(await intro.boundingBox()).toEqual(introBox);
   const steamTravel = await waiting
     .locator(".pot-steam")
     .first()
@@ -479,13 +490,13 @@ test("waiting facts hold for reading, cycle all 15, pause fully readable and res
       return { start, end };
     });
   expect(steamTravel.start).not.toBe(steamTravel.end);
-  await page.clock.runFor(800);
+  await page.clock.runFor(1_800);
   await expect(fact(0)).toBeVisible();
   expect(await readable(0)).toBe(true);
   await page.clock.runFor(1_200);
   await expect(fact(1)).toBeVisible();
   for (let index = 2; index <= foodFacts.length; index += 1) {
-    await page.clock.runFor(2_000);
+    await page.clock.runFor(3_000);
     await expect(fact(index % foodFacts.length)).toBeVisible();
     expect(await readable(index % foodFacts.length)).toBe(true);
   }
@@ -514,7 +525,7 @@ test("waiting facts hold for reading, cycle all 15, pause fully readable and res
     fullPage: true,
   });
   await page.getByRole("button", { name: "Resume food facts" }).click();
-  await page.clock.runFor(2_000);
+  await page.clock.runFor(3_000);
   await expect(fact(1)).toBeVisible();
   gate.resolve();
   await expect(page.getByText(reply, { exact: true })).toBeVisible();

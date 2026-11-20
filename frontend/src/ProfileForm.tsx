@@ -27,15 +27,18 @@ type Props = {
 };
 
 const guidance: Partial<Record<Field, string>> = {
-  allergies:
-    "One food or allergen per line. Leave blank only if you have no food allergies.",
-  dietaryRestrictions:
-    "One strict restriction per line, such as vegetarian, vegan, or pescatarian. Unsupported restrictions will be flagged, not silently accepted.",
-  likes: "One food or flavor per line. Optional.",
-  dislikes: "One food or flavor per line. Optional.",
-  preferredCuisines: "One cuisine per line. Optional.",
-  nutritionGoals:
-    "One preference per line. Informational recipe personalization only, not medical advice or a treatment plan.",
+  allergies: "Leave blank only if you have no allergies.",
+  dietaryRestrictions: "Strict food rules only. Leave blank if none.",
+  nutritionGoals: "Preferences only, not medical advice.",
+};
+
+const examples: Partial<Record<Field, string>> = {
+  allergies: "e.g. peanuts\nshellfish",
+  dietaryRestrictions: "e.g. vegetarian",
+  likes: "e.g. lemon\nbasil",
+  dislikes: "e.g. olives",
+  preferredCuisines: "e.g. Italian\nKorean",
+  nutritionGoals: "e.g. more vegetables",
 };
 
 export default function ProfileForm({
@@ -211,19 +214,27 @@ export default function ProfileForm({
   function textField(field: Field) {
     return (
       <div className="field" key={field}>
-        <label htmlFor={`profile-${field}`}>{labels[field]}</label>
-        <p className="field-help" id={`${field}-help`}>
-          {guidance[field]}
-        </p>
+        <div className="profile-field-label">
+          <label htmlFor={`profile-${field}`}>{labels[field]}</label>
+          {field !== "allergies" && field !== "dietaryRestrictions" && (
+            <span>Optional</span>
+          )}
+        </div>
         <textarea
           id={`profile-${field}`}
           name={field}
-          rows={3}
+          rows={2}
           value={draft[field]}
+          placeholder={examples[field]}
           onChange={(event) => edit(field, event.target.value)}
           aria-invalid={Boolean(errors[field])}
-          aria-describedby={`${field}-help${errors[field] ? ` ${field}-error` : ""}`}
+          aria-describedby={`profile-list-help${guidance[field] ? ` ${field}-help` : ""}${errors[field] ? ` ${field}-error` : ""}`}
         />
+        {guidance[field] && (
+          <p className="field-help" id={`${field}-help`}>
+            {guidance[field]}
+          </p>
+        )}
         {errors[field] && (
           <p className="field-error" id={`${field}-error`}>
             {errors[field]}
@@ -267,36 +278,26 @@ export default function ProfileForm({
 
   return (
     <section className="profile-section" aria-labelledby="profile-title">
-      <div className="section-heading">
-        <p className="eyebrow">
-          {onboarding ? "WELCOME TO YOUR KITCHEN" : "YOUR COOKING PROFILE"}
-        </p>
-        <h1 id="profile-title" tabIndex={-1}>
-          {onboarding
-            ? "Let's make this kitchen yours."
-            : "A little more you. A better fit."}
+      <header className="profile-header">
+        <h1 id="profile-title" className="kitchen-title" tabIndex={-1}>
+          {onboarding ? "Kitchen setup" : "Cooking profile"}
         </h1>
-        <p>
-          {onboarding
-            ? "Start with what matters to you. You can update these preferences anytime."
-            : "Edit your explicit preferences. Nothing here changes automatically or starts an AI request."}
+        <p className="field-help" id="profile-list-help">
+          Lists: one item per line.
         </p>
-      </div>
+      </header>
       <form ref={form} onSubmit={submit} noValidate>
         {notice && (
           <div className="notice" role="alert">
             {notice}
           </div>
         )}
-        <fieldset className="form-fields" disabled={busy}>
-          <section className="card">
-            <div className="card-heading">
-              <span className="step">01</span>
-              <div>
-                <h2>Food safety comes first</h2>
-                <p>Tell us explicitly what your recipes must respect.</p>
-              </div>
-            </div>
+        <fieldset className="form-fields profile-layout" disabled={busy}>
+          <section
+            className="profile-group profile-safety"
+            aria-labelledby="profile-safety-title"
+          >
+            <h2 id="profile-safety-title">Food safety</h2>
             <div className="field-grid">
               {textField("allergies")}
               {textField("dietaryRestrictions")}
@@ -318,8 +319,8 @@ export default function ProfileForm({
                     }
                   />
                   <span>
-                    I have reviewed my allergies and strict restrictions. Empty
-                    fields mean I have none to declare.
+                    I have reviewed my allergies and restrictions. Blank means
+                    none.
                   </span>
                 </label>
                 {confirmationError && (
@@ -330,14 +331,11 @@ export default function ProfileForm({
               </div>
             )}
           </section>
-          <section className="card">
-            <div className="card-heading">
-              <span className="step">02</span>
-              <div>
-                <h2>Find your kind of delicious</h2>
-                <p>Soft preferences, not extra safety restrictions.</p>
-              </div>
-            </div>
+          <section
+            className="profile-group"
+            aria-labelledby="profile-taste-title"
+          >
+            <h2 id="profile-taste-title">Your tastes</h2>
             <div className="field-grid">
               {textField("likes")}
               {textField("dislikes")}
@@ -350,14 +348,11 @@ export default function ProfileForm({
               ])}
             </div>
           </section>
-          <section className="card">
-            <div className="card-heading">
-              <span className="step">03</span>
-              <div>
-                <h2>Fit your everyday routine</h2>
-                <p>Make room for your time, experience, and preferences.</p>
-              </div>
-            </div>
+          <section
+            className="profile-group"
+            aria-labelledby="profile-routine-title"
+          >
+            <h2 id="profile-routine-title">Cooking routine</h2>
             <div className="field-grid">
               {selectField("cookingSkill", [
                 "beginner",
@@ -368,9 +363,6 @@ export default function ProfileForm({
                 <label htmlFor="profile-typicalTimeBudgetMinutes">
                   {labels.typicalTimeBudgetMinutes}
                 </label>
-                <p className="field-help" id="time-help">
-                  A whole number from 5 to 240 minutes.
-                </p>
                 <input
                   id="profile-typicalTimeBudgetMinutes"
                   name="typicalTimeBudgetMinutes"
@@ -385,6 +377,9 @@ export default function ProfileForm({
                   aria-invalid={Boolean(errors.typicalTimeBudgetMinutes)}
                   aria-describedby={`time-help${errors.typicalTimeBudgetMinutes ? " time-error" : ""}`}
                 />
+                <p className="field-help" id="time-help">
+                  5-240 minutes.
+                </p>
                 {errors.typicalTimeBudgetMinutes && (
                   <p className="field-error" id="time-error">
                     {errors.typicalTimeBudgetMinutes}
@@ -470,7 +465,7 @@ export default function ProfileForm({
                   busy
                     ? "Working..."
                     : onboarding
-                      ? "Save and open my kitchen"
+                      ? "Save and continue"
                       : "Save profile"
                 }
                 type="submit"

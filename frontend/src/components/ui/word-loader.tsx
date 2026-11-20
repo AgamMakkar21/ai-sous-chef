@@ -92,7 +92,7 @@ export default function WordLoader({
                   stagger,
                   ease: "power2.out",
                 },
-                "+=1",
+                "+=2",
               )
               .set(entry, { autoAlpha: 0 });
           });

@@ -301,10 +301,7 @@ async function onboarding(page: Page) {
     page.getByLabel("I have reviewed my allergies", { exact: false }),
   );
   await page.keyboard.press("Space");
-  await activate(
-    page,
-    page.getByRole("button", { name: "Save and open my kitchen" }),
-  );
+  await activate(page, page.getByRole("button", { name: "Save and continue" }));
   await expect(
     page.getByRole("heading", {
       name: "YOUR PANTRY",
@@ -322,12 +319,10 @@ for (const theme of ["light", "dark"]) {
     const { auth, state, recipe } = await kitchen(page, true, true);
     await page.goto(`/?scoutTheme=${theme}`);
     await expect(
-      page.getByRole("heading", { name: "Let's make this kitchen yours." }),
+      page.getByRole("heading", { name: "Kitchen setup", exact: true }),
     ).toBeVisible();
     await accessible(page, info, "onboarding");
-    await page
-      .getByRole("button", { name: "Save and open my kitchen" })
-      .click();
+    await page.getByRole("button", { name: "Save and continue" }).click();
     await expect(page.getByRole("alert")).toBeVisible();
     await accessible(page, info, "onboarding-errors");
     await onboarding(page);
@@ -429,7 +424,7 @@ for (const theme of ["light", "dark"]) {
       .getByRole("button", { name: "Cooking profile", exact: true })
       .click();
     await expect(
-      page.getByRole("heading", { name: "A little more you. A better fit." }),
+      page.getByRole("heading", { name: "Cooking profile", exact: true }),
     ).toBeVisible();
     await accessible(page, info, "profile-editor");
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -451,7 +446,7 @@ test("keyboard alone completes onboarding, groceries, recipe save/cooking and fe
   const { auth, state, recipe } = await kitchen(page, true);
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "Let's make this kitchen yours." }),
+    page.getByRole("heading", { name: "Kitchen setup", exact: true }),
   ).toBeVisible();
   await onboarding(page);
   await expect(page.locator("#main-content")).toBeFocused();
